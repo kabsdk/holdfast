@@ -6,6 +6,21 @@ rule_files:
 evaluation_interval: 1m
 
 tests:
+  # A restic password added outside Holdfast pages at once.
+  - interval: 1m
+    input_series:
+      - series: 'holdfast_repository_foreign_keys{host="web01"}'
+        values: '1x10'
+      - series: 'holdfast_repository_foreign_keys{host="db01"}'
+        values: '0x10'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: HoldfastRepositoryKeyAdded
+        exp_alerts:
+          - exp_labels: {severity: page, host: web01}
+            exp_annotations:
+              summary: "web01: a restic password was added to its repository outside Holdfast (holdfast host show web01)"
+
   # Snapshots that disappeared page at once; snapshots Holdfast did not make raise a ticket after an hour.
   - interval: 1m
     input_series:

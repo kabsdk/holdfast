@@ -25,6 +25,35 @@ type Facts struct {
 	HostnameFQDN  string    `json:"hostname_fqdn"` // what `hostname -f` says
 	Timezone      string    `json:"timezone"`
 	Now           time.Time `json:"now"` // the agent's clock, so the server can see skew
+	// RestoreBounds are the host's own limits on restores, from agent.yaml. The server shows them and
+	// refuses early, but the agent decides (decision 030, plan-m2 Q5).
+	RestoreBounds *RestoreBounds `json:"restore_bounds,omitempty"`
+}
+
+// RestoreBounds limit what a restore may do on this host. Only root on the host can change them.
+type RestoreBounds struct {
+	Root                  string `json:"root" yaml:"root"`                                       // new directories go under it
+	AllowInPlace          bool   `json:"allow_in_place" yaml:"allow_in_place"`                   // overwrite the original files
+	AllowOtherDirectories bool   `json:"allow_other_directories" yaml:"allow_other_directories"` // any other target directory
+}
+
+// Restore targets.
+const (
+	TargetNew       = "new"       // a new root-only directory under the bounds' root (the default)
+	TargetInPlace   = "in_place"  // the original location, after a safety backup
+	TargetDirectory = "directory" // another directory
+)
+
+// RestoreSpec is a restore the server asks the agent to run (spec §5.4).
+type RestoreSpec struct {
+	Snapshot  string   `json:"snapshot"` // the full snapshot ID
+	Target    string   `json:"target"`
+	Directory string   `json:"directory,omitempty"` // for TargetDirectory
+	Exclude   []string `json:"exclude,omitempty"`   // what was left out
+	Include   []string `json:"include,omitempty"`   // "restore only this"
+	DryRun    bool     `json:"dry_run,omitempty"`
+	JobID     string   `json:"job_id,omitempty"` // the snapshot's job, for the in-place safety backup
+	User      string   `json:"user"`             // who asked, for the default directory's name
 }
 
 // EnrollRequest is sent once, with a single-use code.
@@ -118,14 +147,16 @@ type Credentials struct {
 const (
 	CommandBackupNow = "backup_now"
 	CommandCheckNow  = "check_now" // `holdfast check`: run the repository check now
+	CommandRestore   = "restore"   // run a restore (plan-m2 §3)
 )
 
 // Command is work queued for the agent. Commands are re-sent until acknowledged; the agent
 // deduplicates them by ID.
 type Command struct {
-	ID    string `json:"id"`
-	Kind  string `json:"kind"`
-	JobID string `json:"job_id,omitempty"`
+	ID      string       `json:"id"`
+	Kind    string       `json:"kind"`
+	JobID   string       `json:"job_id,omitempty"`
+	Restore *RestoreSpec `json:"restore,omitempty"`
 }
 
 // PollResponse answers a poll. Config and Credentials are present only when they changed.
@@ -147,9 +178,11 @@ const (
 
 // Event kinds.
 const (
-	KindBackup = "backup"
-	KindCheck  = "check"  // restic check of the host's repository, run by the agent
-	KindNotice = "notice" // something the agent found and repaired, such as changed credential files
+	KindBackup     = "backup"
+	KindCheck      = "check"       // restic check of the host's repository, run by the agent
+	KindNotice     = "notice"      // something the agent found and repaired, such as changed credential files
+	KindRestore    = "restore"     // a restore, or its dry run
+	KindPreRestore = "pre_restore" // the safety backup an in-place restore takes first
 )
 
 // Event is the final result of one run. The agent spools it on disk until the server acknowledges it.
@@ -172,6 +205,9 @@ type Event struct {
 	TotalBytes   int64      `json:"total_bytes,omitempty"`
 	ResticExit   int        `json:"restic_exit"`
 	Error        string     `json:"error,omitempty"`
+	// Detail carries what a kind needs beyond the common fields, such as a restore's target and its
+	// safety backup. Never a secret, never file contents.
+	Detail map[string]string `json:"detail,omitempty"`
 }
 
 // EventsRequest delivers spooled events.

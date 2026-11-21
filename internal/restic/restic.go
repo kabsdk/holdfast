@@ -433,6 +433,75 @@ func (r Runner) Restore(ctx context.Context, snapshot, target string, include []
 	return err
 }
 
+// RestoreOptions describe one restore through the agent (plan-m2 §3).
+type RestoreOptions struct {
+	Target  string
+	Include []string // restore only these
+	Exclude []string // leave these out
+	DryRun  bool
+}
+
+// RestoreSummary is restic restore's JSON summary.
+type RestoreSummary struct {
+	TotalFiles    int64 `json:"total_files"`
+	FilesRestored int64 `json:"files_restored"`
+	FilesSkipped  int64 `json:"files_skipped"`
+	TotalBytes    int64 `json:"total_bytes"`
+	BytesRestored int64 `json:"bytes_restored"`
+}
+
+// RestoreWith restores a snapshot, keeping metadata: --sparse keeps holes, and --verify re-reads what was
+// written. A dry run writes nothing and reports what would be restored.
+func (r Runner) RestoreWith(ctx context.Context, snapshot string, o RestoreOptions) (RestoreSummary, error) {
+	args := []string{"restore", snapshot, "--target", o.Target, "--json"}
+	if o.DryRun {
+		args = append(args, "--dry-run")
+	} else {
+		args = append(args, "--sparse", "--verify")
+	}
+	for _, p := range o.Include {
+		args = append(args, "--include", p)
+	}
+	for _, p := range o.Exclude {
+		args = append(args, "--exclude", p)
+	}
+	out, err := r.run(ctx, args...)
+	var sum RestoreSummary
+	found := false
+	_ = eachJSONLine(out, func(line []byte) error {
+		var probe struct {
+			MessageType string `json:"message_type"`
+		}
+		if json.Unmarshal(line, &probe) == nil && probe.MessageType == "summary" && json.Unmarshal(line, &sum) == nil {
+			found = true
+		}
+		return nil
+	})
+	if err != nil {
+		return sum, err
+	}
+	if !found {
+		return sum, errors.New("restic restore printed no summary")
+	}
+	return sum, nil
+}
+
+// SnapshotInfo returns one snapshot.
+func (r Runner) SnapshotInfo(ctx context.Context, id string) (Snapshot, error) {
+	out, err := r.run(ctx, "snapshots", "--json", id)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	var s []Snapshot
+	if err := json.Unmarshal(out, &s); err != nil {
+		return Snapshot{}, err
+	}
+	if len(s) != 1 {
+		return Snapshot{}, fmt.Errorf("snapshot %s not found", id)
+	}
+	return s[0], nil
+}
+
 // tailBuffer keeps the last max bytes written to it.
 type tailBuffer struct {
 	max int

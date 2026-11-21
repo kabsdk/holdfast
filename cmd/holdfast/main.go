@@ -30,7 +30,7 @@ func main() {
 	root := &cobra.Command{Use: "holdfast", Short: "Holdfast command line (a client of the Holdfast API)", SilenceUsage: true}
 	root.PersistentFlags().StringVar(&socketPath, "socket", envOr("HOLDFAST_SOCKET", "/run/holdfast/api.sock"), "API socket of holdfast-server")
 	root.PersistentFlags().BoolVar(&asJSON, "json", false, "print the API's JSON answer")
-	root.AddCommand(statusCmd(), hostCmd(), jobCmd(), snapshotCmd(), revisionCmd(), auditCmd(), checkCmd(), escrowCmd())
+	root.AddCommand(statusCmd(), hostCmd(), jobCmd(), snapshotCmd(), restoreCmd(), restoresCmd(), searchCmd(), revisionCmd(), auditCmd(), checkCmd(), escrowCmd())
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
 	}
@@ -215,6 +215,7 @@ type hostView struct {
 	Snapshots         int            `json:"snapshots"`
 	NotMadeByHoldfast int            `json:"not_made_by_holdfast"`
 	Disappeared       int            `json:"disappeared"`
+	ForeignKeys       []string       `json:"foreign_keys"`
 	CatalogueError    string         `json:"catalogue_error"`
 	Agent             *struct {
 		LastSeenAt      *time.Time `json:"last_seen_at"`
@@ -293,6 +294,11 @@ func hostCmd() *cobra.Command {
 			fmt.Printf("ALERT: %d snapshots disappeared from the repository without Holdfast deleting them.\n"+
 				"  They can be recovered from S3's old versions until the bucket's lifecycle rule expires them.\n"+
 				"  holdfast snapshot list %s --all shows them; holdfast host acknowledge %s clears this.\n", h.Disappeared, h.FQDN, h.FQDN)
+		}
+		if len(h.ForeignKeys) > 0 {
+			fmt.Printf("ALERT: %d restic passwords were added to the repository outside Holdfast; whoever holds one can read every backup.\n"+
+				"  Key IDs: %s. Remove the ones you did not add (restic key remove), then holdfast host acknowledge %s.\n",
+				len(h.ForeignKeys), strings.Join(h.ForeignKeys, ", "), h.FQDN)
 		}
 		if h.NotMadeByHoldfast > 0 {
 			fmt.Printf("warning: %d snapshots in the repository were not made by Holdfast; Holdfast leaves them alone\n", h.NotMadeByHoldfast)
@@ -396,9 +402,9 @@ func hostCmd() *cobra.Command {
 	setKey.Flags().StringVar(&setKeyFile, "s3-key-file", "", "a root-only file of AWS_ACCESS_KEY_ID= and AWS_SECRET_ACCESS_KEY= lines, or - for stdin")
 	setKey.Flags().StringVarP(&setKeyMsg, "message", "m", "", "why the key is replaced, for the audit log")
 	c.AddCommand(setKey)
-	c.AddCommand(&cobra.Command{Use: "acknowledge <fqdn>", Short: "Clear the alert for snapshots that disappeared (the record of them stays)", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, a []string) error {
-		var res struct{ Acknowledged int }
-		raw, err := call("POST", "/api/v1/hosts/"+url.PathEscape(a[0])+"/snapshots/acknowledge", nil, &res)
+	c.AddCommand(&cobra.Command{Use: "acknowledge <fqdn>", Short: "Clear the red alerts for changes made outside Holdfast, after looking into them", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, a []string) error {
+		var res struct{ Snapshots, Keys int }
+		raw, err := call("POST", "/api/v1/hosts/"+url.PathEscape(a[0])+"/acknowledge", nil, &res)
 		if err != nil {
 			return err
 		}
@@ -406,7 +412,7 @@ func hostCmd() *cobra.Command {
 			printJSON(raw)
 			return nil
 		}
-		fmt.Printf("acknowledged %d disappeared snapshots of %s\n", res.Acknowledged, a[0])
+		fmt.Printf("acknowledged on %s: %d disappeared snapshots (their record stays), %d repository keys added outside Holdfast (now accepted)\n", a[0], res.Snapshots, res.Keys)
 		return nil
 	}})
 	c.AddCommand(&cobra.Command{Use: "enroll-code <fqdn>", Short: "Issue a new 15-minute enrollment code (revokes the open one)", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, a []string) error {

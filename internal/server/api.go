@@ -64,7 +64,10 @@ func (s *Server) APIHandler(local bool) http.Handler {
 	mux.HandleFunc("GET /api/v1/hosts/{fqdn}/snapshots/{id}/files", s.apiFiles)
 	mux.HandleFunc("GET /api/v1/hosts/{fqdn}/snapshots/{id}/changes", s.apiChanges)
 	mux.HandleFunc("GET /api/v1/hosts/{fqdn}/find", s.apiFind)
-	mux.HandleFunc("POST /api/v1/hosts/{fqdn}/snapshots/acknowledge", s.apiAcknowledge)
+	mux.HandleFunc("POST /api/v1/hosts/{fqdn}/acknowledge", s.apiAcknowledge)
+	mux.HandleFunc("POST /api/v1/hosts/{fqdn}/snapshots/{id}/restore", s.apiRestore)
+	mux.HandleFunc("GET /api/v1/restores", s.apiRestores)
+	mux.HandleFunc("GET /api/v1/search", s.apiSearch)
 	mux.HandleFunc("PUT /api/v1/hosts/{fqdn}/jobs/{job}", s.apiSetJob)
 	mux.HandleFunc("POST /api/v1/hosts/{fqdn}/jobs/{job}/run", s.apiRunNow)
 	mux.HandleFunc("GET /api/v1/revisions", s.apiRevisions)
@@ -212,13 +215,48 @@ func (s *Server) apiFind(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, found)
 }
 
-func (s *Server) apiAcknowledge(w http.ResponseWriter, r *http.Request) {
-	n, err := s.AcknowledgeDisappeared(r.Context(), actorOf(r), r.PathValue("fqdn"))
+func (s *Server) apiRestore(w http.ResponseWriter, r *http.Request) {
+	var in RestoreInput
+	if !decode(w, r, &in) {
+		return
+	}
+	res, err := s.Restore(r.Context(), actorOf(r), r.PathValue("fqdn"), r.PathValue("id"), in)
 	if err != nil {
 		apiError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"acknowledged": n})
+	writeJSON(w, http.StatusAccepted, res)
+}
+
+func (s *Server) apiSearch(w http.ResponseWriter, r *http.Request) {
+	res, err := s.Search(r.Context(), r.URL.Query().Get("q"))
+	if err != nil {
+		apiError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+func (s *Server) apiRestores(w http.ResponseWriter, r *http.Request) {
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	if limit <= 0 || limit > 1000 {
+		limit = 100
+	}
+	v, err := s.Restores(r.Context(), limit)
+	if err != nil {
+		apiError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, v)
+}
+
+func (s *Server) apiAcknowledge(w http.ResponseWriter, r *http.Request) {
+	got, err := s.AcknowledgeOutside(r.Context(), actorOf(r), r.PathValue("fqdn"))
+	if err != nil {
+		apiError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, got)
 }
 
 func (s *Server) apiSetS3Key(w http.ResponseWriter, r *http.Request) {

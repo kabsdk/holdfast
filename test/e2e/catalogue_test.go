@@ -76,11 +76,11 @@ func TestSnapshotCatalogueAndReads(t *testing.T) {
 
 	// Changes against the previous snapshot of the job, metadata included.
 	var ch struct {
-		Against                   string
-		Added, Removed            int
-		Content                   int `json:"content_changed"`
-		Metadata                  int `json:"metadata_changed"`
-		Changes                   []struct{ Path, Modifier string }
+		Against        string
+		Added, Removed int
+		Content        int `json:"content_changed"`
+		Metadata       int `json:"metadata_changed"`
+		Changes        []struct{ Path, Modifier string }
 	}
 	out = e.cli("snapshot", "changes", fqdn, newest.ShortID)
 	must(t, json.Unmarshal(out, &ch))
@@ -136,15 +136,58 @@ func TestSnapshotCatalogueAndReads(t *testing.T) {
 	if out, err := e.cliErr("snapshot", "files", fqdn, older.ShortID); err == nil || !strings.Contains(string(out), "no longer in the repository") {
 		t.Fatalf("reading a snapshot that has gone: %v %s", err, out)
 	}
-	e.cli("host", "acknowledge", fqdn)
-	if d := e.hostRaw(fqdn)["disappeared"]; d != float64(0) {
-		t.Fatalf("after acknowledge, disappeared = %v", d)
+
+	// Search still finds it, marked as disappeared; and it finds hosts and jobs by name (spec §5.6).
+	var sr struct {
+		Hosts     []string
+		Jobs      []struct{ FQDN string }
+		Snapshots []struct{ ID, State string }
+	}
+	must(t, json.Unmarshal(e.cli("search", older.ShortID), &sr))
+	if len(sr.Snapshots) != 1 || sr.Snapshots[0].ID != older.ID || sr.Snapshots[0].State != "disappeared" {
+		t.Fatalf("search for a disappeared snapshot: %+v", sr)
+	}
+	sr.Hosts, sr.Jobs = nil, nil
+	must(t, json.Unmarshal(e.cli("search", "cat01"), &sr))
+	if len(sr.Hosts) != 1 || sr.Hosts[0] != fqdn {
+		t.Fatalf("search for a host: %+v", sr)
+	}
+	sr.Jobs = nil
+	must(t, json.Unmarshal(e.cli("search", "dat"), &sr))
+	if len(sr.Jobs) != 1 || sr.Jobs[0].FQDN != fqdn {
+		t.Fatalf("search for a job: %+v", sr)
+	}
+	// A restic password added by hand, with the host's own key: shown and alerted.
+	newPass := filepath.Join(t.TempDir(), "new-password")
+	must(t, os.WriteFile(newPass, []byte("someone-elses-password"), 0o600))
+	if out, err := resticCmd(host, "key", "add", "--new-password-file", newPass).CombinedOutput(); err != nil {
+		t.Fatalf("restic key add: %v %s", err, out)
+	}
+	list("--refresh")
+	if keys, _ := e.hostRaw(fqdn)["foreign_keys"].([]any); len(keys) != 1 {
+		t.Fatalf("a key added by hand is not shown: %v", e.hostRaw(fqdn)["foreign_keys"])
+	}
+	if m := metrics(t, e.url+"/metrics"); m[`holdfast_repository_foreign_keys{host="cat01.example.com"}`] != 1 {
+		t.Fatal("the added key is not exported as a metric")
+	}
+
+	var ack struct{ Snapshots, Keys int }
+	must(t, json.Unmarshal(e.cli("host", "acknowledge", fqdn), &ack))
+	if ack.Snapshots != 1 || ack.Keys != 1 {
+		t.Fatalf("acknowledge: %+v", ack)
+	}
+	if h := e.hostRaw(fqdn); h["disappeared"] != float64(0) || h["foreign_keys"] != nil {
+		t.Fatalf("after acknowledge: disappeared %v, foreign keys %v", h["disappeared"], h["foreign_keys"])
+	}
+	list("--refresh") // the accepted key stays accepted
+	if h := e.hostRaw(fqdn); h["foreign_keys"] != nil {
+		t.Fatalf("an acknowledged key came back as foreign: %v", h["foreign_keys"])
 	}
 	actions := map[string]bool{}
 	for _, a := range e.audit(fqdn) {
 		actions[a.Action] = true
 	}
-	if !actions["snapshot.disappeared"] || !actions["snapshot.disappearance_acknowledged"] {
+	if !actions["snapshot.disappeared"] || !actions["repository.key_added_outside"] || !actions["host.outside_changes_acknowledged"] {
 		t.Fatalf("audit: %v", actions)
 	}
 	if out, err := e.cliErr("snapshot", "files", fqdn, "not-hex"); err == nil || !strings.Contains(string(out), "hex") {

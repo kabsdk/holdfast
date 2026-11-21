@@ -22,6 +22,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/kabsdk/holdfast/internal/config"
+	"github.com/kabsdk/holdfast/internal/proto"
 	"github.com/kabsdk/holdfast/internal/server/storage"
 )
 
@@ -423,20 +424,21 @@ func (q *Q) enrollmentCode(ctx context.Context, fqdn, codeHash string, now time.
 
 // Agent is the server's view of one host's agent.
 type Agent struct {
-	FQDN               string     `json:"fqdn"`
-	EnrolledAt         time.Time  `json:"enrolled_at"`
-	LastSeenAt         *time.Time `json:"last_seen_at,omitempty"`
-	AgentVersion       string     `json:"agent_version"`
-	ResticVersion      string     `json:"restic_version"`
-	OSID               string     `json:"os_id"`
-	OSVersion          string     `json:"os_version"`
-	HostnameFQDN       string     `json:"hostname_fqdn"`
-	Timezone           string     `json:"timezone"`
-	ClockOffsetMS      int64      `json:"clock_offset_ms"`
-	AppliedRevision    int64      `json:"applied_revision"`
-	AppliedSHA256      string     `json:"applied_sha256"`
-	AppliedAt          *time.Time `json:"applied_at,omitempty"`
-	CredentialsVersion int        `json:"credentials_version"`
+	FQDN               string               `json:"fqdn"`
+	EnrolledAt         time.Time            `json:"enrolled_at"`
+	LastSeenAt         *time.Time           `json:"last_seen_at,omitempty"`
+	AgentVersion       string               `json:"agent_version"`
+	ResticVersion      string               `json:"restic_version"`
+	OSID               string               `json:"os_id"`
+	OSVersion          string               `json:"os_version"`
+	HostnameFQDN       string               `json:"hostname_fqdn"`
+	Timezone           string               `json:"timezone"`
+	ClockOffsetMS      int64                `json:"clock_offset_ms"`
+	AppliedRevision    int64                `json:"applied_revision"`
+	AppliedSHA256      string               `json:"applied_sha256"`
+	AppliedAt          *time.Time           `json:"applied_at,omitempty"`
+	CredentialsVersion int                  `json:"credentials_version"`
+	RestoreBounds      *proto.RestoreBounds `json:"restore_bounds,omitempty"` // the host's own limits (plan-m2 Q5)
 }
 
 // EnrollAgent records (or replaces, on re-enrollment) the agent's credential and marks the host enrolled.
@@ -466,27 +468,41 @@ type Heartbeat struct {
 	AppliedRevision                                                      int64
 	AppliedSHA256                                                        string
 	CredentialsVersion                                                   int
+	RestoreBounds                                                        *proto.RestoreBounds
 }
 
 // RecordHeartbeat updates the agent row. applied_at moves only when the applied sha256 changes.
 func (q *Q) RecordHeartbeat(ctx context.Context, fqdn string, h Heartbeat, now time.Time) error {
+	var bounds any
+	if h.RestoreBounds != nil {
+		b, err := json.Marshal(h.RestoreBounds)
+		if err != nil {
+			return err
+		}
+		bounds = b
+	}
 	_, err := q.db.Exec(ctx, `UPDATE agents SET last_seen_at = $2, agent_version = $3, restic_version = $4, os_id = $5, os_version = $6,
 		hostname_fqdn = $7, timezone = $8, clock_offset_ms = $9,
 		applied_at = CASE WHEN applied_sha256 IS DISTINCT FROM $11 THEN $2 ELSE applied_at END,
-		applied_revision = $10, applied_sha256 = $11, credentials_version = $12
+		applied_revision = $10, applied_sha256 = $11, credentials_version = $12, restore_bounds = COALESCE($13, restore_bounds)
 		WHERE fqdn = $1`,
 		fqdn, now, h.AgentVersion, h.ResticVersion, h.OSID, h.OSVersion, h.HostnameFQDN, h.Timezone, h.ClockOffsetMS,
-		h.AppliedRevision, h.AppliedSHA256, h.CredentialsVersion)
+		h.AppliedRevision, h.AppliedSHA256, h.CredentialsVersion, bounds)
 	return err
 }
 
 const agentCols = `fqdn, enrolled_at, last_seen_at, agent_version, restic_version, os_id, os_version, hostname_fqdn, timezone,
-	clock_offset_ms, applied_revision, applied_sha256, applied_at, credentials_version`
+	clock_offset_ms, applied_revision, applied_sha256, applied_at, credentials_version, restore_bounds`
 
 func scanAgent(row pgx.Row) (Agent, error) {
 	var a Agent
+	var bounds []byte
 	err := row.Scan(&a.FQDN, &a.EnrolledAt, &a.LastSeenAt, &a.AgentVersion, &a.ResticVersion, &a.OSID, &a.OSVersion, &a.HostnameFQDN,
-		&a.Timezone, &a.ClockOffsetMS, &a.AppliedRevision, &a.AppliedSHA256, &a.AppliedAt, &a.CredentialsVersion)
+		&a.Timezone, &a.ClockOffsetMS, &a.AppliedRevision, &a.AppliedSHA256, &a.AppliedAt, &a.CredentialsVersion, &bounds)
+	if err == nil && len(bounds) > 0 {
+		a.RestoreBounds = &proto.RestoreBounds{}
+		err = json.Unmarshal(bounds, a.RestoreBounds)
+	}
 	return a, notFound(err)
 }
 
@@ -600,35 +616,44 @@ func (q *Q) HostsMissingEscrow(ctx context.Context) (int, error) {
 
 // Event is a stored run result.
 type Event struct {
-	FQDN         string     `json:"fqdn"`
-	ID           string     `json:"id"`
-	Kind         string     `json:"kind"`
-	JobID        string     `json:"job_id"`
-	CommandID    string     `json:"command_id,omitempty"`
-	Status       string     `json:"status"`
-	ScheduledFor *time.Time `json:"scheduled_for,omitempty"`
-	SpreadDelayS int        `json:"spread_delay_s"`
-	Started      time.Time  `json:"started"`
-	Finished     time.Time  `json:"finished"`
-	Revision     int64      `json:"revision"`
-	SnapshotID   string     `json:"snapshot_id,omitempty"`
-	FilesNew     int64      `json:"files_new"`
-	FilesChanged int64      `json:"files_changed"`
-	BytesAdded   int64      `json:"bytes_added"`
-	TotalFiles   int64      `json:"total_files"`
-	TotalBytes   int64      `json:"total_bytes"`
-	ResticExit   int        `json:"restic_exit"`
-	Error        string     `json:"error,omitempty"`
+	FQDN         string            `json:"fqdn"`
+	ID           string            `json:"id"`
+	Kind         string            `json:"kind"`
+	JobID        string            `json:"job_id"`
+	CommandID    string            `json:"command_id,omitempty"`
+	Status       string            `json:"status"`
+	ScheduledFor *time.Time        `json:"scheduled_for,omitempty"`
+	SpreadDelayS int               `json:"spread_delay_s"`
+	Started      time.Time         `json:"started"`
+	Finished     time.Time         `json:"finished"`
+	Revision     int64             `json:"revision"`
+	SnapshotID   string            `json:"snapshot_id,omitempty"`
+	FilesNew     int64             `json:"files_new"`
+	FilesChanged int64             `json:"files_changed"`
+	BytesAdded   int64             `json:"bytes_added"`
+	TotalFiles   int64             `json:"total_files"`
+	TotalBytes   int64             `json:"total_bytes"`
+	ResticExit   int               `json:"restic_exit"`
+	Error        string            `json:"error,omitempty"`
+	Detail       map[string]string `json:"detail,omitempty"`
 }
 
 // InsertEvent stores an event once. It returns false if the event was stored before (a re-sent
 // event), in which case nothing else changes. A new event updates the job's status and the counters.
 func (q *Q) InsertEvent(ctx context.Context, e Event) (bool, error) {
+	detail := e.Detail
+	if detail == nil {
+		detail = map[string]string{}
+	}
+	detailJSON, err := json.Marshal(detail)
+	if err != nil {
+		return false, err
+	}
 	tag, err := q.db.Exec(ctx, `INSERT INTO events (fqdn, id, kind, job_id, command_id, status, scheduled_for, spread_delay_s, started_at, finished_at,
-		revision, snapshot_id, files_new, files_changed, bytes_added, total_files, total_bytes, restic_exit, error)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19) ON CONFLICT (fqdn, id) DO NOTHING`,
+		revision, snapshot_id, files_new, files_changed, bytes_added, total_files, total_bytes, restic_exit, error, detail)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20) ON CONFLICT (fqdn, id) DO NOTHING`,
 		e.FQDN, e.ID, e.Kind, e.JobID, e.CommandID, e.Status, e.ScheduledFor, e.SpreadDelayS, e.Started, e.Finished,
-		e.Revision, e.SnapshotID, e.FilesNew, e.FilesChanged, e.BytesAdded, e.TotalFiles, e.TotalBytes, e.ResticExit, e.Error)
+		e.Revision, e.SnapshotID, e.FilesNew, e.FilesChanged, e.BytesAdded, e.TotalFiles, e.TotalBytes, e.ResticExit, e.Error, detailJSON)
 	if err != nil || tag.RowsAffected() == 0 {
 		return false, err
 	}
@@ -662,9 +687,18 @@ func (q *Q) InsertEvent(ctx context.Context, e Event) (bool, error) {
 
 // ListEvents returns a host's events, newest first.
 func (q *Q) ListEvents(ctx context.Context, fqdn string, limit int) ([]Event, error) {
+	return q.queryEvents(ctx, `WHERE fqdn = $1 ORDER BY finished_at DESC, received_at DESC LIMIT $2`, fqdn, limit)
+}
+
+// ListRestores returns the restores of every host, newest first (spec §5.5).
+func (q *Q) ListRestores(ctx context.Context, limit int) ([]Event, error) {
+	return q.queryEvents(ctx, `WHERE kind = 'restore' ORDER BY finished_at DESC, received_at DESC LIMIT $1`, limit)
+}
+
+func (q *Q) queryEvents(ctx context.Context, where string, args ...any) ([]Event, error) {
 	rows, err := q.db.Query(ctx, `SELECT fqdn, id, kind, job_id, command_id, status, scheduled_for, spread_delay_s, started_at, finished_at,
-		revision, snapshot_id, files_new, files_changed, bytes_added, total_files, total_bytes, restic_exit, error
-		FROM events WHERE fqdn = $1 ORDER BY finished_at DESC, received_at DESC LIMIT $2`, fqdn, limit)
+		revision, snapshot_id, files_new, files_changed, bytes_added, total_files, total_bytes, restic_exit, error, detail
+		FROM events `+where, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -672,9 +706,13 @@ func (q *Q) ListEvents(ctx context.Context, fqdn string, limit int) ([]Event, er
 	var out []Event
 	for rows.Next() {
 		var e Event
+		var detail []byte
 		if err := rows.Scan(&e.FQDN, &e.ID, &e.Kind, &e.JobID, &e.CommandID, &e.Status, &e.ScheduledFor, &e.SpreadDelayS, &e.Started, &e.Finished,
-			&e.Revision, &e.SnapshotID, &e.FilesNew, &e.FilesChanged, &e.BytesAdded, &e.TotalFiles, &e.TotalBytes, &e.ResticExit, &e.Error); err != nil {
+			&e.Revision, &e.SnapshotID, &e.FilesNew, &e.FilesChanged, &e.BytesAdded, &e.TotalFiles, &e.TotalBytes, &e.ResticExit, &e.Error, &detail); err != nil {
 			return nil, err
+		}
+		if len(detail) > 2 {
+			_ = json.Unmarshal(detail, &e.Detail)
 		}
 		out = append(out, e)
 	}
@@ -738,37 +776,74 @@ func (q *Q) ListRunCounters(ctx context.Context) ([]RunCounter, error) {
 
 // Command is work queued for an agent.
 type Command struct {
-	ID        string    `json:"id"`
-	FQDN      string    `json:"fqdn"`
-	Kind      string    `json:"kind"`
-	JobID     string    `json:"job_id,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
-	CreatedBy string    `json:"created_by"`
+	ID        string          `json:"id"`
+	FQDN      string          `json:"fqdn"`
+	Kind      string          `json:"kind"`
+	JobID     string          `json:"job_id,omitempty"`
+	CreatedAt time.Time       `json:"created_at"`
+	CreatedBy string          `json:"created_by"`
+	Payload   json.RawMessage `json:"payload,omitempty"`    // a restore's spec
+	ExpiresAt *time.Time      `json:"expires_at,omitempty"` // not sent once this has passed
 }
 
 // EnqueueCommand queues a command.
 func (q *Q) EnqueueCommand(ctx context.Context, c Command) error {
-	_, err := q.db.Exec(ctx, `INSERT INTO commands (id, fqdn, kind, job_id, created_at, created_by) VALUES ($1, $2, $3, $4, $5, $6)`,
-		c.ID, c.FQDN, c.Kind, c.JobID, c.CreatedAt, c.CreatedBy)
+	var payload any
+	if len(c.Payload) > 0 {
+		payload = []byte(c.Payload)
+	}
+	_, err := q.db.Exec(ctx, `INSERT INTO commands (id, fqdn, kind, job_id, created_at, created_by, payload, expires_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		c.ID, c.FQDN, c.Kind, c.JobID, c.CreatedAt, c.CreatedBy, payload, c.ExpiresAt)
 	return err
 }
 
-// PendingCommands returns the host's commands that the agent has not acknowledged yet.
-func (q *Q) PendingCommands(ctx context.Context, fqdn string) ([]Command, error) {
-	rows, err := q.db.Query(ctx, `SELECT id, fqdn, kind, job_id, created_at, created_by FROM commands WHERE fqdn = $1 AND acked_at IS NULL ORDER BY created_at`, fqdn)
-	if err != nil {
-		return nil, err
-	}
+const commandCols = `id, fqdn, kind, job_id, created_at, created_by, payload, expires_at`
+
+func scanCommands(rows pgx.Rows) ([]Command, error) {
 	defer rows.Close()
 	var out []Command
 	for rows.Next() {
 		var c Command
-		if err := rows.Scan(&c.ID, &c.FQDN, &c.Kind, &c.JobID, &c.CreatedAt, &c.CreatedBy); err != nil {
+		var payload []byte
+		if err := rows.Scan(&c.ID, &c.FQDN, &c.Kind, &c.JobID, &c.CreatedAt, &c.CreatedBy, &payload, &c.ExpiresAt); err != nil {
 			return nil, err
 		}
+		c.Payload = payload
 		out = append(out, c)
 	}
 	return out, rows.Err()
+}
+
+// PendingCommands returns the host's commands that the agent has not acknowledged yet, and that have
+// neither expired nor been cancelled.
+func (q *Q) PendingCommands(ctx context.Context, fqdn string) ([]Command, error) {
+	rows, err := q.db.Query(ctx, `SELECT `+commandCols+` FROM commands WHERE fqdn = $1 AND acked_at IS NULL AND cancelled_at IS NULL
+		AND (expires_at IS NULL OR expires_at > now()) ORDER BY created_at`, fqdn)
+	if err != nil {
+		return nil, err
+	}
+	return scanCommands(rows)
+}
+
+// ExpireCommands cancels the commands whose time ran out before their agent picked them up, and returns
+// them (plan-m2 Q6).
+func (q *Q) ExpireCommands(ctx context.Context, now time.Time) ([]Command, error) {
+	rows, err := q.db.Query(ctx, `UPDATE commands SET cancelled_at = $1 WHERE acked_at IS NULL AND cancelled_at IS NULL
+		AND expires_at IS NOT NULL AND expires_at <= $1 RETURNING `+commandCols, now)
+	if err != nil {
+		return nil, err
+	}
+	return scanCommands(rows)
+}
+
+// PendingRestores returns every queued restore that no agent has picked up yet, oldest first.
+func (q *Q) PendingRestores(ctx context.Context) ([]Command, error) {
+	rows, err := q.db.Query(ctx, `SELECT `+commandCols+` FROM commands WHERE kind = 'restore' AND acked_at IS NULL AND cancelled_at IS NULL
+		ORDER BY created_at`)
+	if err != nil {
+		return nil, err
+	}
+	return scanCommands(rows)
 }
 
 // AckCommands marks the host's commands as received by the agent.

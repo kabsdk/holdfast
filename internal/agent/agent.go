@@ -288,6 +288,8 @@ func (a *Agent) facts(ctx context.Context) proto.Facts {
 		}
 	}
 	f.Now = a.now().UTC()
+	bounds := a.cfg.Restore
+	f.RestoreBounds = &bounds
 	return f
 }
 
@@ -726,6 +728,8 @@ func (a *Agent) execCommand(ctx context.Context, c proto.Command) {
 		a.runBackup(ctx, *job, c.ID, nil, 0)
 	case proto.CommandCheckNow:
 		a.runCheck(ctx, c.ID)
+	case proto.CommandRestore:
+		a.runRestore(ctx, c)
 	default:
 		now := a.now().UTC()
 		a.spool(proto.Event{Kind: c.Kind, CommandID: c.ID, Status: proto.StatusFailed, Started: now, Finished: now, Error: "unknown command kind"})

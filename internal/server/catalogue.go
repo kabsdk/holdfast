@@ -99,6 +99,27 @@ func (s *Server) RefreshCatalogue(ctx context.Context, fqdn string) error {
 	if gone > 0 {
 		s.log.Warn("snapshots disappeared from a repository without Holdfast deleting them", "host", fqdn, "count", gone)
 	}
+	// The repository's passwords: one added outside Holdfast raises a banner (decision 032).
+	if keys, err := r.Keys(ctx); err != nil {
+		s.log.Warn("listing the repository's keys", "host", fqdn, "err", err)
+	} else {
+		ids := make([]string, 0, len(keys))
+		for _, k := range keys {
+			ids = append(ids, k.ID)
+		}
+		err := s.st.InTx(ctx, func(q *store.Q) error {
+			_, fresh, err := q.RecordRepositoryKeys(ctx, fqdn, ids)
+			if err != nil || len(fresh) == 0 {
+				return err
+			}
+			s.log.Warn("a restic password was added to a repository outside Holdfast", "host", fqdn, "keys", fresh)
+			return q.Audit(ctx, store.AuditEntry{Actor: systemActor.Name, Source: systemActor.Source, Action: "repository.key_added_outside", FQDN: fqdn,
+				Detail: map[string]any{"keys": fresh}})
+		})
+		if err != nil {
+			return err
+		}
+	}
 	if added > 0 {
 		s.log.Debug("catalogue refreshed", "host", fqdn, "added", added)
 	}
@@ -366,22 +387,33 @@ func (s *Server) Find(ctx context.Context, fqdn, pattern string) ([]FoundIn, err
 	return out, nil
 }
 
-// AcknowledgeDisappeared clears a host's "disappeared" banner, after an admin has looked into it. The
-// tombstones stay, and stay searchable.
-func (s *Server) AcknowledgeDisappeared(ctx context.Context, a Actor, fqdn string) (int, error) {
+// Acknowledged is what AcknowledgeOutside cleared.
+type Acknowledged struct {
+	Snapshots int `json:"snapshots"` // disappeared snapshots; their tombstones stay, and stay searchable
+	Keys      int `json:"keys"`      // repository keys added outside Holdfast, now accepted as known
+}
+
+// AcknowledgeOutside clears a host's red banners after an admin has looked into them (decision 032).
+func (s *Server) AcknowledgeOutside(ctx context.Context, a Actor, fqdn string) (Acknowledged, error) {
 	if _, err := s.st.Q().GetHost(ctx, fqdn); err != nil {
-		return 0, fmt.Errorf("host %s: %w", fqdn, err)
+		return Acknowledged{}, fmt.Errorf("host %s: %w", fqdn, err)
 	}
-	var n int
+	var got Acknowledged
 	err := s.st.InTx(ctx, func(q *store.Q) error {
 		var err error
-		if n, err = q.AcknowledgeDisappeared(ctx, fqdn, s.now()); err != nil || n == 0 {
+		if got.Snapshots, err = q.AcknowledgeDisappeared(ctx, fqdn, s.now()); err != nil {
 			return err
 		}
-		return q.Audit(ctx, store.AuditEntry{Actor: a.Name, Source: a.Source, Action: "snapshot.disappearance_acknowledged", FQDN: fqdn,
-			Detail: map[string]any{"count": n}})
+		if got.Keys, err = q.AcknowledgeRepositoryKeys(ctx, fqdn); err != nil {
+			return err
+		}
+		if got.Snapshots == 0 && got.Keys == 0 {
+			return nil
+		}
+		return q.Audit(ctx, store.AuditEntry{Actor: a.Name, Source: a.Source, Action: "host.outside_changes_acknowledged", FQDN: fqdn,
+			Detail: map[string]any{"snapshots": got.Snapshots, "keys": got.Keys}})
 	})
-	return n, err
+	return got, err
 }
 
 // ErrTimeout is returned as 504 when a read ran out of time.

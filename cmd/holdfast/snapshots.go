@@ -44,6 +44,47 @@ func human(n uint64) string {
 	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGTPE"[exp])
 }
 
+func searchCmd() *cobra.Command {
+	return &cobra.Command{Use: "search <text>", Short: "Find hosts, jobs and snapshot IDs, including snapshots that are gone", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, a []string) error {
+		var res struct {
+			Hosts []string
+			Jobs  []struct {
+				FQDN  string
+				JobID string `json:"job_id"`
+			}
+			Snapshots []struct {
+				FQDN    string
+				ShortID string    `json:"short_id"`
+				Time    time.Time `json:"time"`
+				JobID   string    `json:"job_id"`
+				State   string
+			}
+		}
+		raw, err := call("GET", "/api/v1/search?"+url.Values{"q": {a[0]}}.Encode(), nil, &res)
+		if err != nil {
+			return err
+		}
+		if asJSON {
+			printJSON(raw)
+			return nil
+		}
+		for _, h := range res.Hosts {
+			fmt.Printf("host      %s\n", h)
+		}
+		for _, j := range res.Jobs {
+			fmt.Printf("job       %s/%s\n", j.FQDN, j.JobID)
+		}
+		for _, s := range res.Snapshots {
+			state := ""
+			if s.State != "present" {
+				state = "  " + strings.ToUpper(s.State)
+			}
+			fmt.Printf("snapshot  %s  %s  %s  %s%s\n", s.ShortID, s.FQDN, s.JobID, s.Time.Local().Format("2006-01-02 15:04"), state)
+		}
+		return nil
+	}}
+}
+
 func snapshotCmd() *cobra.Command {
 	c := &cobra.Command{Use: "snapshot", Short: "Snapshots: list, files, changes and find (names and metadata only)"}
 

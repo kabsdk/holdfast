@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -168,7 +169,8 @@ func (s *Server) Poll(ctx context.Context, fqdn string, req proto.PollRequest, w
 	q := s.st.Q()
 	if err := q.RecordHeartbeat(ctx, fqdn, store.Heartbeat{AgentVersion: req.Facts.AgentVersion, ResticVersion: req.Facts.ResticVersion,
 		OSID: req.Facts.OSID, OSVersion: req.Facts.OSVersion, HostnameFQDN: req.Facts.HostnameFQDN, Timezone: req.Facts.Timezone,
-		ClockOffsetMS: offset, AppliedRevision: req.Applied.Revision, AppliedSHA256: req.Applied.SHA256, CredentialsVersion: req.CredentialsVersion}, now); err != nil {
+		ClockOffsetMS: offset, AppliedRevision: req.Applied.Revision, AppliedSHA256: req.Applied.SHA256, CredentialsVersion: req.CredentialsVersion,
+		RestoreBounds: req.Facts.RestoreBounds}, now); err != nil {
 		return proto.PollResponse{}, err
 	}
 	if err := q.AckCommands(ctx, fqdn, req.AckedCommands, now); err != nil {
@@ -230,7 +232,14 @@ func (s *Server) pollAnswer(ctx context.Context, fqdn string, req proto.PollRequ
 	}
 	for _, c := range cmds {
 		if !acked[c.ID] {
-			resp.Commands = append(resp.Commands, proto.Command{ID: c.ID, Kind: c.Kind, JobID: c.JobID})
+			pc := proto.Command{ID: c.ID, Kind: c.Kind, JobID: c.JobID}
+			if c.Kind == proto.CommandRestore && len(c.Payload) > 0 {
+				pc.Restore = &proto.RestoreSpec{}
+				if err := json.Unmarshal(c.Payload, pc.Restore); err != nil {
+					return resp, false, fmt.Errorf("restore command %s: %w", c.ID, err)
+				}
+			}
+			resp.Commands = append(resp.Commands, pc)
 			changed = true
 		}
 	}
@@ -264,7 +273,7 @@ func (s *Server) Events(ctx context.Context, fqdn string, evs []proto.Event) ([]
 			_, err := q.InsertEvent(ctx, store.Event{FQDN: fqdn, ID: e.ID, Kind: e.Kind, JobID: e.JobID, CommandID: e.CommandID, Status: e.Status,
 				ScheduledFor: e.ScheduledFor, SpreadDelayS: e.SpreadDelayS, Started: e.Started, Finished: e.Finished, Revision: e.Revision,
 				SnapshotID: e.SnapshotID, FilesNew: e.FilesNew, FilesChanged: e.FilesChanged, BytesAdded: e.BytesAdded,
-				TotalFiles: e.TotalFiles, TotalBytes: e.TotalBytes, ResticExit: e.ResticExit, Error: e.Error})
+				TotalFiles: e.TotalFiles, TotalBytes: e.TotalBytes, ResticExit: e.ResticExit, Error: e.Error, Detail: e.Detail})
 			return err
 		})
 		if err != nil {

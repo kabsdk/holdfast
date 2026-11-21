@@ -120,6 +120,14 @@ groups:
         annotations:
           summary: "{{ $labels.host }}: {{ $value }} snapshots disappeared without Holdfast deleting them (holdfast host show {{ $labels.host }})"
 
+      - alert: HoldfastRepositoryKeyAdded
+        # A restic password was added to the repository outside Holdfast (decision 032): whoever holds it
+        # can read every backup of the host.
+        expr: holdfast_repository_foreign_keys > 0
+        labels: {severity: page}
+        annotations:
+          summary: "{{ $labels.host }}: a restic password was added to its repository outside Holdfast (holdfast host show {{ $labels.host }})"
+
       - alert: HoldfastSnapshotsNotMadeByHoldfast
         # Someone ran restic backup by hand. Holdfast leaves those snapshots alone, and never cleans them up.
         expr: holdfast_snapshots_not_made_by_holdfast > 0

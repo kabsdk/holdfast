@@ -449,6 +449,17 @@ func (s *Server) initRepository(ctx context.Context, fqdn string) error {
 	if err := r.Init(ctx); err != nil {
 		return fmt.Errorf("initialising the repository of %s: %w", fqdn, err)
 	}
+	// The keys the repository has now are Holdfast's own: any later one was added outside it (decision 032).
+	r.NoLock = true
+	if keys, err := r.Keys(ctx); err == nil {
+		ids := make([]string, 0, len(keys))
+		for _, k := range keys {
+			ids = append(ids, k.ID)
+		}
+		if _, _, err := s.st.Q().RecordRepositoryKeys(ctx, fqdn, ids); err != nil {
+			s.log.Warn("recording the repository's keys", "host", fqdn, "err", err)
+		}
+	}
 	return nil
 }
 
@@ -643,6 +654,7 @@ type HostView struct {
 	Snapshots         int       `json:"snapshots"`
 	NotMadeByHoldfast int       `json:"not_made_by_holdfast"`
 	Disappeared       int       `json:"disappeared"`
+	ForeignKeys       []string  `json:"foreign_keys,omitempty"` // repository keys (passwords) added outside Holdfast
 	Jobs              []JobView `json:"jobs"`
 }
 
@@ -676,6 +688,10 @@ func (s *Server) Hosts(ctx context.Context) ([]HostView, error) {
 	if err != nil {
 		return nil, err
 	}
+	foreign, err := q.ForeignRepositoryKeys(ctx)
+	if err != nil {
+		return nil, err
+	}
 	now := s.now()
 	out := make([]HostView, 0, len(hosts))
 	for _, h := range hosts {
@@ -703,7 +719,7 @@ func (s *Server) Hosts(ctx context.Context) ([]HostView, error) {
 		// such as the daily check, so it is compared with the config as rendered now, not with the hash
 		// stored when the revision was saved.
 		c := counts[h.FQDN]
-		v.Snapshots, v.NotMadeByHoldfast, v.Disappeared = c.Snapshots, c.NotMadeByHoldfast, c.Disappeared
+		v.Snapshots, v.NotMadeByHoldfast, v.Disappeared, v.ForeignKeys = c.Snapshots, c.NotMadeByHoldfast, c.Disappeared, foreign[h.FQDN]
 		v.DesiredSHA256 = s.renderHost(head.Config, h.FQDN).SHA256
 		v.InSync = v.Agent != nil && v.Agent.AppliedSHA256 == v.DesiredSHA256
 		hc := head.Config.Hosts[h.FQDN]

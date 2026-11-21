@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"go.yaml.in/yaml/v3"
+
+	"github.com/kabsdk/holdfast/internal/proto"
 )
 
 // Config is /etc/holdfast/agent.yaml, written by `holdfast-agent enroll`.
@@ -21,6 +23,9 @@ type Config struct {
 	PollTimeout    time.Duration `yaml:"poll_timeout"`
 	Tick           time.Duration `yaml:"tick"`       // scheduler resolution
 	RetryLock      time.Duration `yaml:"retry_lock"` // how long a backup waits for maintenance's lock
+	// Restore bounds what a restore may do on this host (decision 030, plan-m2 Q5). Only root here can
+	// change them: the server cannot.
+	Restore proto.RestoreBounds `yaml:"restore"`
 }
 
 // Defaults fills in what an install leaves out.
@@ -39,6 +44,9 @@ func (c *Config) Defaults() {
 	}
 	if c.RetryLock <= 0 {
 		c.RetryLock = 15 * time.Minute
+	}
+	if c.Restore.Root == "" {
+		c.Restore.Root = "/var/restore"
 	}
 }
 

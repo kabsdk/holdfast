@@ -102,6 +102,24 @@ func (q *Q) ListSnapshots(ctx context.Context, fqdn string, f SnapshotFilter) ([
 	return out, rows.Err()
 }
 
+// SearchSnapshots finds snapshots of any host by an ID prefix, tombstones included (spec §5.6).
+func (q *Q) SearchSnapshots(ctx context.Context, prefix string, limit int) ([]Snapshot, error) {
+	rows, err := q.db.Query(ctx, `SELECT `+snapshotCols+` FROM snapshots s WHERE s.id LIKE $1 || '%' ORDER BY s.time DESC LIMIT $2`, prefix, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Snapshot{}
+	for rows.Next() {
+		s, err := scanSnapshot(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
 // ErrAmbiguous is returned for a snapshot ID prefix that matches more than one snapshot.
 var ErrAmbiguous = fmt.Errorf("the snapshot ID prefix matches more than one snapshot: %w", ErrConflict)
 
@@ -137,6 +155,69 @@ func (q *Q) AcknowledgeDisappeared(ctx context.Context, fqdn string, now time.Ti
 	tag, err := q.db.Exec(ctx, `UPDATE snapshots SET acknowledged_at = $2
 		WHERE fqdn = $1 AND gone_at IS NOT NULL AND NOT deleted_by_holdfast AND acknowledged_at IS NULL`, fqdn, now)
 	return int(tag.RowsAffected()), err
+}
+
+// RecordRepositoryKeys compares a fresh `restic key list` with the keys Holdfast knows, and keeps the others
+// as foreign. With no known keys yet, as for a repository made before this was recorded, the first list
+// becomes the known one. It returns the foreign IDs.
+func (q *Q) RecordRepositoryKeys(ctx context.Context, fqdn string, ids []string) (foreign, fresh []string, err error) {
+	var known, before []string
+	if err := q.db.QueryRow(ctx, `SELECT repo_keys_known, repo_keys_foreign FROM hosts WHERE fqdn = $1`, fqdn).Scan(&known, &before); err != nil {
+		return nil, nil, notFound(err)
+	}
+	if len(known) == 0 {
+		_, err := q.db.Exec(ctx, `UPDATE hosts SET repo_keys_known = $2, repo_keys_foreign = '{}' WHERE fqdn = $1`, fqdn, nonNil(ids))
+		return []string{}, []string{}, err
+	}
+	in := func(list []string) map[string]bool {
+		m := map[string]bool{}
+		for _, k := range list {
+			m[k] = true
+		}
+		return m
+	}
+	isKnown, wasForeign := in(known), in(before)
+	foreign, fresh = []string{}, []string{}
+	for _, id := range ids {
+		if !isKnown[id] {
+			foreign = append(foreign, id)
+			if !wasForeign[id] {
+				fresh = append(fresh, id)
+			}
+		}
+	}
+	_, err = q.db.Exec(ctx, `UPDATE hosts SET repo_keys_foreign = $2 WHERE fqdn = $1`, fqdn, foreign)
+	return foreign, fresh, err
+}
+
+// AcknowledgeRepositoryKeys accepts a host's foreign keys as known, which clears that banner. It returns
+// how many it accepted.
+func (q *Q) AcknowledgeRepositoryKeys(ctx context.Context, fqdn string) (int, error) {
+	var foreign []string
+	if err := q.db.QueryRow(ctx, `SELECT repo_keys_foreign FROM hosts WHERE fqdn = $1`, fqdn).Scan(&foreign); err != nil {
+		return 0, notFound(err)
+	}
+	_, err := q.db.Exec(ctx, `UPDATE hosts SET repo_keys_known = repo_keys_known || repo_keys_foreign, repo_keys_foreign = '{}' WHERE fqdn = $1`, fqdn)
+	return len(foreign), err
+}
+
+// ForeignRepositoryKeys returns, per host, the repository keys Holdfast did not make.
+func (q *Q) ForeignRepositoryKeys(ctx context.Context) (map[string][]string, error) {
+	rows, err := q.db.Query(ctx, `SELECT fqdn, repo_keys_foreign FROM hosts WHERE cardinality(repo_keys_foreign) > 0`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string][]string{}
+	for rows.Next() {
+		var f string
+		var ids []string
+		if err := rows.Scan(&f, &ids); err != nil {
+			return nil, err
+		}
+		out[f] = ids
+	}
+	return out, rows.Err()
 }
 
 // CatalogueCounts are what the decision 032 banners show for one host.

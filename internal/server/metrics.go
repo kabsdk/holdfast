@@ -136,6 +136,12 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(&b, "holdfast_snapshots_not_made_by_holdfast{host=%q} %d\n", h.FQDN, h.NotMadeByHoldfast)
 		fmt.Fprintf(&b, "holdfast_snapshots_disappeared{host=%q} %d\n", h.FQDN, h.Disappeared)
 	}
+	gauge("holdfast_repository_foreign_keys", "Repository keys (restic passwords) added outside Holdfast (decision 032).")
+	for _, h := range hosts {
+		if h.CatalogueRefreshedAt != nil {
+			fmt.Fprintf(&b, "holdfast_repository_foreign_keys{host=%q} %d\n", h.FQDN, len(h.ForeignKeys))
+		}
+	}
 	gauge("holdfast_storage_contract_ok", "1 if the host's keys passed every storage check at the last test (decision 029).")
 	gauge("holdfast_storage_contract_failed", "1 for each storage check (code) that failed at the last test.")
 	gauge("holdfast_storage_checked_timestamp_seconds", "When the host's storage contract was last tested.")
