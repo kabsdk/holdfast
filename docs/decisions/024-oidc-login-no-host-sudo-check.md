@@ -16,7 +16,7 @@ Status: accepted, 2026-11-21
   host's sudoers files, which Holdfast neither controls nor audits. Permissions would be hard to predict, and
   checking them would require the host to be online.
 
-*The second reason is inferred. Confirm or correct it.*
+*The reasons were inferred when the record was written. You accepted them on 2026-11-21, leaving the call to me ("Whatever you recommend").*
 
 ## Consequences
 

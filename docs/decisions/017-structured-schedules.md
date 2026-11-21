@@ -20,7 +20,7 @@ worst-case data loss (gap + spread), and the stale alert threshold (2 × the lon
   stale threshold and checks R001, S001 and R103. A structured form makes this exact.
 - **Cron strings are easy to get wrong** and hard to review.
 
-*The reasons are inferred. Confirm or correct them.*
+*The reasons were inferred when the record was written. You accepted them on 2026-11-21, leaving the call to me ("Whatever you recommend").*
 
 ## Consequences
 

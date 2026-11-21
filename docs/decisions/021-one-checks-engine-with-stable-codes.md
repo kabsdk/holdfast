@@ -23,7 +23,7 @@ CLI.
   author reviewed (`--accept R102,R104`), and the audit log shows which warnings someone chose to override.
 - **One engine means the interfaces cannot disagree** about what is allowed.
 
-*The reasons are inferred. Confirm or correct them.*
+*The reasons were inferred when the record was written. You accepted them on 2026-11-21, leaving the call to me ("Whatever you recommend").*
 
 ## Consequences
 

@@ -17,7 +17,7 @@ Status: accepted, 2026-11-21
 - **The alert rules are part of the product.** Their thresholds come from the product's own metrics, such
   as the longest gap, so they are tested and versioned with the code.
 
-*The reasons are inferred. Confirm or correct them.*
+*The reasons were inferred when the record was written. You accepted them on 2026-11-21, leaving the call to me ("Whatever you recommend").*
 
 ## Consequences
 

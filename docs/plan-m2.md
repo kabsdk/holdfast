@@ -141,9 +141,9 @@ Each has a proposal. Say yes, or change it.
 - *Proposal:* the restore waits for a running backup, in the agent's loop.
 - Backups that come due during a restore are skipped and reported, as overlapping slots are today.
 - A restore does not interrupt a running backup.
-- *As built:* a backup that comes due during a restore runs once, right after the restore. That is the
-  same catch-up rule as after an outage (plan-m1 Q7), and nothing is lost. Its slot is not reported as
-  skipped. Say if you want the "skipped" report instead.
+- *Decided (you left it to me):* keep it as built. A backup that comes due during a restore runs once,
+  right after the restore. That is the same catch-up rule as after an outage (plan-m1 Q7), and nothing is
+  lost. Its slot is not reported as skipped.
 
 **Q4. Where does an in-place restore's safety backup go?**
 - *Proposal:* a snapshot of exactly the paths it will replace, tagged with the job and `pre-restore=<restore

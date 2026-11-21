@@ -17,7 +17,7 @@ Status: accepted, 2026-11-21
   through a side door that skips the checks.
 - **Every change can be traced** to a person, a time and the warnings they accepted.
 
-*The reasons are inferred. Confirm or correct them.*
+*The reasons were inferred when the record was written. You accepted them on 2026-11-21, leaving the call to me ("Whatever you recommend").*
 
 ## Consequences
 

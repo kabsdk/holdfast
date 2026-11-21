@@ -16,7 +16,7 @@ is no inheritance between them (spec §6.2).
 - **What a role can do is in one list.** There is no need to follow an inheritance chain.
 - **Per-host bindings fit how teams own hosts.**
 
-*The reasons are inferred. Confirm or correct them.*
+*The reasons were inferred when the record was written. You accepted them on 2026-11-21, leaving the call to me ("Whatever you recommend").*
 
 ## Consequences
 

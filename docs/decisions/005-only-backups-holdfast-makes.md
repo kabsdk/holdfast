@@ -13,7 +13,7 @@ Holdfast can only vouch for what it configures, schedules, checks and can restor
 would show a green status for something whose retention, restorability and credentials Holdfast does not
 control. That looks like protection without being protection.
 
-*The reason is inferred. Confirm or correct it.*
+*The reasons were inferred when the record was written. You accepted them on 2026-11-21, leaving the call to me ("Whatever you recommend").*
 
 ## Consequences
 

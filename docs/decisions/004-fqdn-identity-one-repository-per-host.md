@@ -18,7 +18,7 @@ Status: accepted, 2026-11-21
 - **Credentials are scoped to one repository.** One repository per host means one repository password and
   one S3 key per host. A compromised host exposes only its own data.
 
-*The reasons are inferred. Confirm or correct them.*
+*The reasons were inferred when the record was written. You accepted them on 2026-11-21, leaving the call to me ("Whatever you recommend").*
 
 ## Consequences
 

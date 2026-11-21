@@ -19,7 +19,7 @@ window.
 
 **Coverage is what the operator cares about.** It is the set of restore points that survive.
 
-*The reason is inferred. The rule itself is stated in the brief.*
+*The reasons were inferred when the record was written. You accepted them on 2026-11-21, leaving the call to me ("Whatever you recommend").*
 
 ## Consequences
 

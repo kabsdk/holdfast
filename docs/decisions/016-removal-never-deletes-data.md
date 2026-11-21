@@ -14,7 +14,7 @@ Status: accepted, 2026-11-21
 Removing a host from the config is routine. Destroying its backups is not, and the two must not be one
 click apart. A host that has been removed is often exactly the host someone later needs to restore.
 
-*The reason is inferred. Confirm or correct it.*
+*The reasons were inferred when the record was written. You accepted them on 2026-11-21, leaving the call to me ("Whatever you recommend").*
 
 ## Consequences
 

@@ -50,7 +50,9 @@ is one example.
     - **Cut:** the library, profiles and "Jobs with the old values" (M5).
     - **Cut:** `content_view`, which replaces decision 026. No file contents ever leave a host.
     - **Deferred:** the engine abstraction of decision 001, until a second engine exists.
-11. **The 21 decision records whose reasons were inferred** go to you, to confirm or delete.
+11. **The 21 decision records whose reasons were inferred** go to you, to confirm or delete. *Done
+    2026-11-21:* three were replaced (010, 020 and 026), and you accepted the reasons of the other 18,
+    leaving the call to me.
 12. **Off-site corrections:**
     - No key is shared across sites, which drops O10's "same key on both clusters".
     - A restore from site B reads the whole repository. Drop the "one snapshot, for a limited time" grant.

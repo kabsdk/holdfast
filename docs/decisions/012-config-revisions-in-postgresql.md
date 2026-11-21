@@ -19,8 +19,7 @@ Holdfast is the authority for config.
 - **Approvers would add little.** Retention cuts are already protected by the 7-day high-water mark, and
   Prune now has its own confirmation.
 
-*The reasons are inferred. The PoC assumed Git ("in production this lives in Git"), so this reverses the
-PoC. Confirm or correct the reasons.*
+*The reasons were inferred when the record was written. You accepted them on 2026-11-21, leaving the call to me ("Whatever you recommend").*
 
 ## Consequences
 

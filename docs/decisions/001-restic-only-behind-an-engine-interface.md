@@ -22,7 +22,7 @@ A PostgreSQL-native engine (physical base backups, WAL archiving, PITR) is plann
   its restore points are a continuous range, not a list of snapshots. The UI must not offer what an engine
   cannot do.
 
-*The reason for "restic only" is inferred from the PoC. Confirm or correct it.*
+*The reasons were inferred when the record was written. You accepted them on 2026-11-21, leaving the call to me ("Whatever you recommend").*
 
 ## Review
 

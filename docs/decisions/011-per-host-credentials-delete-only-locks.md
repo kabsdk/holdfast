@@ -21,7 +21,7 @@ Status: accepted, 2026-11-21
 - **A raw restic console would bypass the protections.** It would get around the checks, the 7-day
   protection and the audit log.
 
-*The reasons are inferred. Confirm or correct them.*
+*The reasons were inferred when the record was written. You accepted them on 2026-11-21, leaving the call to me ("Whatever you recommend").*
 
 ## Consequences
 

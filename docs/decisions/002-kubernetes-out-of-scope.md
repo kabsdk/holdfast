@@ -14,7 +14,7 @@ own Barman Cloud plugin backups.
 - Kubernetes workloads do not fit Holdfast's model. There, the unit of protection is volumes and API
   objects. In Holdfast it is a host identified by its FQDN, with one repository.
 
-*The second reason is inferred. Confirm or correct it.*
+*The reasons were inferred when the record was written. You accepted them on 2026-11-21, leaving the call to me ("Whatever you recommend").*
 
 ## Consequences
 

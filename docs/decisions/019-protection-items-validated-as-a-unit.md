@@ -14,7 +14,7 @@ A retention policy only means something relative to its schedule:
 
 If the two were validated separately, each half could pass while the combination is wrong.
 
-*The reason is inferred. Confirm or correct it.*
+*The reasons were inferred when the record was written. You accepted them on 2026-11-21, leaving the call to me ("Whatever you recommend").*
 
 ## Consequences
 
