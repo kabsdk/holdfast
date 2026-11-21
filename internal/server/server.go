@@ -623,7 +623,9 @@ type HostView struct {
 	DesiredRevision int64        `json:"desired_revision"`
 	DesiredSHA256   string       `json:"desired_sha256"` // what the host's agent should run now
 	InSync          bool         `json:"in_sync"`
-	Jobs            []JobView    `json:"jobs"`
+	// ResticWarning is set when the agent runs another restic than the one Holdfast is tested with.
+	ResticWarning string    `json:"restic_warning,omitempty"`
+	Jobs          []JobView `json:"jobs"`
 }
 
 // OnlineWithin is how recently an agent must have polled to count as online.
@@ -668,6 +670,9 @@ func (s *Server) Hosts(ctx context.Context) ([]HostView, error) {
 			a := a
 			v.Agent = &a
 			v.Online = a.LastSeenAt != nil && now.Sub(*a.LastSeenAt) < OnlineWithin
+			if a.ResticVersion != "" && a.ResticVersion != restic.PinnedVersion {
+				v.ResticWarning = fmt.Sprintf("this host runs restic %s; Holdfast is tested with %s, which the agent's package ships", a.ResticVersion, restic.PinnedVersion)
+			}
 		}
 		if rev, _, err := q.HostDesired(ctx, h.FQDN); err == nil {
 			v.DesiredRevision = rev

@@ -112,6 +112,15 @@ groups:
         annotations:
           summary: "{{ $labels.host }}: restic check has not succeeded for 3 days"
 
+      - alert: HoldfastResticNotPinned
+        # The agent runs a restic other than the one Holdfast is tested with, which its package ships
+        # (decision 032): someone replaced the binary, or the package is old.
+        expr: holdfast_agent_restic_pinned == 0
+        for: 1h
+        labels: {severity: ticket}
+        annotations:
+          summary: "{{ $labels.host }} runs another restic than the one Holdfast is tested with (holdfast host show {{ $labels.host }})"
+
       - alert: HoldfastStorageContractBroken
         # A host key may do more than docs/storage.md allows, or the server can no longer maintain the
         # host's repository (decision 029). The daily check finds it, so it can be up to a day old.

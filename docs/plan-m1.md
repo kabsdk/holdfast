@@ -37,7 +37,7 @@ proposal. Each sits behind an interface where that matters, so it can change. **
 | Q7 (runs) | The first backup runs right after enrollment. A missed slot catches up once. One restic process per host. A slot whose job is still running is skipped and reported. No retry, until you decide. |
 | Q8 (drift) | In sync when the sha256 of the applied host config matches the desired one. A save from a stale base revision is refused. Role bindings are part of the revision. |
 | Q9 (FQDN) | Lower-case letters, digits and hyphens, at least two labels. Re-enrollment keeps the repository. A mismatch with `hostname -f` is a warning, not a refusal. |
-| Q10 (restic) | Pin restic 0.19.1. The agent reports its version. Bundling comes with packaging. |
+| Q10 (restic) | Pin restic 0.19.1 (`restic.PinnedVersion`). The agent reports its version, and the server warns about any other (decision 032, built). The agent's package ships the pinned restic, and the agent never downloads anything. |
 | Q11 (extra options) | None. |
 | Q12 (tags and job IDs) | Tags are `job=<id>` only. The job ID is an immutable slug. |
 | Q13 (built-in excludes) | The restic cache and the agent's state directory are always excluded. Database directories are handled in profiles (M5). |

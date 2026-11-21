@@ -255,6 +255,62 @@ func TestDailyCheckAfterBackup(t *testing.T) {
 	}
 }
 
+// TestChangedCredentialFilesAreRepaired: the credential files are Holdfast's own. If someone changes them
+// on the host, the agent records it once in the host's history, and asks the server for them again by
+// reporting version 0 (decision 032).
+func TestChangedCredentialFilesAreRepaired(t *testing.T) {
+	daily := schedule.Schedule{Every: &schedule.Every{N: 1, Unit: "hours", From: "00:00"}, Zone: "UTC"}
+	var now atomic.Int64
+	now.Store(at("2026-11-20 10:00:00"))
+	a := testAgent(t, daily, &now)
+	creds := proto.Credentials{Version: 3, RepoPassword: "repo-password", S3AccessKeyID: "HOSTKEY", S3SecretAccessKey: "host-secret"}
+	if err := a.applyCredentials(creds); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	backup := func(when string) {
+		t.Helper()
+		now.Store(at(when))
+		j, st, ok := a.due(a.now())
+		if !ok {
+			t.Fatalf("no backup due at %s", when)
+		}
+		a.runScheduled(ctx, j, st)
+	}
+	notices := func() int {
+		n := 0
+		for _, ev := range spooled(t, a) {
+			if ev.Kind == proto.KindNotice {
+				n++
+			}
+		}
+		return n
+	}
+	backup("2026-11-20 10:00:00")
+	if notices() != 0 || a.credVer != 3 {
+		t.Fatalf("untouched files: %d notices, version %d", notices(), a.credVer)
+	}
+	env := filepath.Join(a.cfg.CredentialsDir, "s3.env")
+	if err := os.WriteFile(env, []byte("AWS_ACCESS_KEY_ID=SOMEONE-ELSES\nAWS_SECRET_ACCESS_KEY=x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	backup("2026-11-20 11:00:00")
+	backup("2026-11-20 12:00:00")
+	if notices() != 1 || a.credVer != 0 {
+		t.Fatalf("changed files: %d notices (want 1), version %d (want 0, so the server sends them again)", notices(), a.credVer)
+	}
+	if err := a.applyCredentials(creds); err != nil { // the server's answer
+		t.Fatal(err)
+	}
+	backup("2026-11-20 13:00:00")
+	if notices() != 1 || a.credVer != 3 {
+		t.Fatalf("after the server sent them again: %d notices, version %d", notices(), a.credVer)
+	}
+	if b, _ := os.ReadFile(env); !strings.Contains(string(b), "HOSTKEY") {
+		t.Fatalf("the files were not repaired: %s", b)
+	}
+}
+
 // writeSlowRestic is the fake restic, plus a marker file written during the backup so the test can
 // move its clock while the run is in progress.
 func writeSlowRestic(t *testing.T, marker string) string {

@@ -148,7 +148,8 @@ const (
 // Event kinds.
 const (
 	KindBackup = "backup"
-	KindCheck  = "check" // restic check of the host's repository, run by the agent
+	KindCheck  = "check"  // restic check of the host's repository, run by the agent
+	KindNotice = "notice" // something the agent found and repaired, such as changed credential files
 )
 
 // Event is the final result of one run. The agent spools it on disk until the server acknowledges it.

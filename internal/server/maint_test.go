@@ -2,12 +2,15 @@ package server
 
 import (
 	"context"
+	"net/http/httptest"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/kabsdk/holdfast/internal/proto"
+	"github.com/kabsdk/holdfast/internal/restic"
 	"github.com/kabsdk/holdfast/internal/server/storage"
 )
 
@@ -95,5 +98,24 @@ func TestChecksAndTheDailyStorageTest(t *testing.T) {
 	}
 	if h, _ := s.Host(ctx, fqdn); h.Storage == nil || !h.Storage.CheckedAt.Equal(clock.Now()) {
 		t.Fatalf("the host view must show the latest storage test: %+v", h.Storage)
+	}
+
+	// Another restic than the pinned one is warned about, in the host view and in the metrics (decision 032).
+	for _, tc := range []struct {
+		version, metric string
+		warned          bool
+	}{{"0.18.0", `holdfast_agent_restic_pinned{host="web01.example.com"} 0`, true}, {restic.PinnedVersion, `holdfast_agent_restic_pinned{host="web01.example.com"} 1`, false}} {
+		if _, err := s.Poll(ctx, fqdn, proto.PollRequest{Applied: applied, CredentialsVersion: 1, Facts: proto.Facts{ResticVersion: tc.version}}, 0); err != nil {
+			t.Fatal(err)
+		}
+		h, _ := s.Host(ctx, fqdn)
+		if (h.ResticWarning != "") != tc.warned {
+			t.Errorf("restic %s: warning %q", tc.version, h.ResticWarning)
+		}
+		rec := httptest.NewRecorder()
+		s.AgentHandler().ServeHTTP(rec, httptest.NewRequest("GET", "/metrics", nil))
+		if !strings.Contains(rec.Body.String(), tc.metric) {
+			t.Errorf("restic %s: metrics lack %s", tc.version, tc.metric)
+		}
 	}
 }

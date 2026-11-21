@@ -6,6 +6,24 @@ rule_files:
 evaluation_interval: 1m
 
 tests:
+  # A host that runs another restic raises a ticket after an hour, not at once (an upgrade in progress).
+  - interval: 1m
+    input_series:
+      - series: 'holdfast_agent_restic_pinned{host="web01"}'
+        values: '0x120'
+      - series: 'holdfast_agent_restic_pinned{host="db01"}'
+        values: '1x120'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: HoldfastResticNotPinned
+        exp_alerts: []
+      - eval_time: 90m
+        alertname: HoldfastResticNotPinned
+        exp_alerts:
+          - exp_labels: {severity: ticket, host: web01}
+            exp_annotations:
+              summary: "web01 runs another restic than the one Holdfast is tested with (holdfast host show web01)"
+
   # The server is down, so its schedule series are missing. The witness alone still raises staleness,
   # with its own -stale-after of 48h (decision 030).
   - interval: 1m

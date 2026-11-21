@@ -402,6 +402,9 @@ func (a *Agent) applyCredentials(c proto.Credentials) error {
 	if err := writeFileAtomic(filepath.Join(a.cfg.CredentialsDir, "s3.env"), []byte(env), 0o600); err != nil {
 		return err
 	}
+	if err := writeFileAtomic(a.path("credentials.sha256"), []byte(credentialsDigest([]byte(c.RepoPassword), []byte(env))), 0o600); err != nil {
+		return err
+	}
 	if err := writeFileAtomic(a.path("credentials.version"), []byte(fmt.Sprint(c.Version)), 0o600); err != nil {
 		return err
 	}
@@ -410,6 +413,38 @@ func (a *Agent) applyCredentials(c proto.Credentials) error {
 	a.mu.Unlock()
 	a.log.Info("applied credentials", "version", c.Version)
 	return nil
+}
+
+func credentialsDigest(pass, env []byte) string {
+	sum := sha256.Sum256(append(append(append([]byte{}, pass...), 0), env...))
+	return hex.EncodeToString(sum[:])
+}
+
+// verifyCredentials checks, before each run, that the credential files still hold what the server sent
+// (decision 032). They are Holdfast's own files. If someone changed them, the agent records it in the
+// host's history and asks the server for them again: its next poll reports version 0, and the server
+// sends the current ones. The run goes ahead, and its result shows whether the changed files worked.
+func (a *Agent) verifyCredentials() {
+	want, err := os.ReadFile(a.path("credentials.sha256"))
+	if err != nil {
+		return // credentials not received yet, or written by an agent from before this check
+	}
+	pass, err1 := os.ReadFile(filepath.Join(a.cfg.CredentialsDir, "repo.pass"))
+	env, err2 := os.ReadFile(filepath.Join(a.cfg.CredentialsDir, "s3.env"))
+	if errors.Join(err1, err2) == nil && credentialsDigest(pass, env) == strings.TrimSpace(string(want)) {
+		return
+	}
+	a.mu.Lock()
+	already := a.credVer == 0
+	a.credVer = 0
+	a.mu.Unlock()
+	if already {
+		return // reported once; the server's answer will repair them
+	}
+	_ = writeFileAtomic(a.path("credentials.version"), []byte("0"), 0o600)
+	now := a.now().UTC()
+	a.spool(proto.Event{Kind: proto.KindNotice, Status: proto.StatusWarning, Started: now, Finished: now, Revision: a.revision(),
+		Error: "the credential files in " + a.cfg.CredentialsDir + " were changed or removed on the host; the agent is fetching them again from the server"})
 }
 
 func (a *Agent) applyConfig(hc proto.HostConfig) error {
@@ -779,6 +814,7 @@ func (a *Agent) mark(m runMarker) {
 
 // runBackup runs one backup and spools its event. It returns false if the agent is shutting down.
 func (a *Agent) runBackup(ctx context.Context, j proto.JobConfig, commandID string, slot *time.Time, delay int) bool {
+	a.verifyCredentials()
 	started := a.now().UTC()
 	a.mu.Lock()
 	rev := a.revision()
@@ -885,6 +921,7 @@ func (a *Agent) checkTimeout() time.Duration {
 // runCheck runs restic check --read-data-subset n/cycle, with n turning daily, and reports it. A check
 // that fails is reported as failed: the repository may be damaged. It returns false on shutdown.
 func (a *Agent) runCheck(ctx context.Context, commandID string) bool {
+	a.verifyCredentials()
 	started := a.now().UTC()
 	a.mu.Lock()
 	cycle := 30 // a check on request reads a subset too, even with daily checks off

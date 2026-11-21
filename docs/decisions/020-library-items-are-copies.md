@@ -1,6 +1,7 @@
 # 020: Library items are copies, not links
 
-Status: accepted, 2026-11-21
+Status: superseded by [decision 030](030-simplify-after-the-architecture-review.md), 2026-11-21: the library
+is cut.
 
 ## Decision
 

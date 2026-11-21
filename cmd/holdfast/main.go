@@ -211,6 +211,7 @@ type hostView struct {
 	DesiredRevision int64          `json:"desired_revision"`
 	FirstBackupAt   *time.Time     `json:"first_backup_at"`
 	Storage         *storageReport `json:"storage"`
+	ResticWarning   string         `json:"restic_warning"`
 	Agent           *struct {
 		LastSeenAt      *time.Time `json:"last_seen_at"`
 		AgentVersion    string     `json:"agent_version"`
@@ -280,6 +281,9 @@ func hostCmd() *cobra.Command {
 		if h.Agent != nil {
 			fmt.Printf("agent %s · restic %s · %s %s · last seen %s · runs revision %d (current for this host: %d)\n",
 				h.Agent.AgentVersion, h.Agent.ResticVersion, h.Agent.OSID, h.Agent.OSVersion, ago(h.Agent.LastSeenAt), h.Agent.AppliedRevision, h.DesiredRevision)
+		}
+		if h.ResticWarning != "" {
+			fmt.Println("warning:", h.ResticWarning)
 		}
 		if h.Storage != nil {
 			if len(h.Storage.Findings) == 0 {

@@ -23,6 +23,11 @@ import (
 	"time"
 )
 
+// PinnedVersion is the restic that Holdfast is tested with (plan-m1 Q10). The agent's package ships it
+// (decision 032), and the server warns about a host that reports another version. Keep it equal to
+// RESTIC_VERSION in the Makefile.
+const PinnedVersion = "0.19.1"
+
 // Exit codes documented by restic.
 const (
 	ExitOK         = 0

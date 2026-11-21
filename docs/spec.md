@@ -186,6 +186,22 @@ those 7 days a one-click **Keep \<longer\> retention** action is available.
 - Deleting data is a separate **decommission** action. It requires typing the FQDN, it has a grace period,
   and it is audited.
 
+### 3.6 Changes made outside Holdfast
+
+See decision 032.
+- **Holdfast's own files on a host are repaired, and the repair is recorded:**
+  - the cached host config, which the server sends again;
+  - the credential files, which the agent checks before each run and fetches again if they changed.
+- **Changes to a repository are shown in red and alerted, never undone.** From M2:
+  - a snapshot Holdfast did not make;
+  - a snapshot that disappeared without Holdfast deleting it, with the date until which it can be
+    recovered and an offer to roll back from S3's versions;
+  - a restic password added outside Holdfast.
+- **restic:**
+  - the agent's package ships the restic Holdfast is tested with, and the agent never downloads
+    anything;
+  - a host that reports another version gets a warning and, after an hour, an alert.
+
 ---
 
 ## 4. Schedule, retention and protection
