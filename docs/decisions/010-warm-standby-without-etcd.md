@@ -1,6 +1,7 @@
 # 010: A warm standby, without etcd
 
-Status: accepted, 2026-11-21
+Status: superseded by [decision 030](030-simplify-after-the-architecture-review.md), 2026-11-21: no warm
+standby. A nightly dump, the sealing key in escrow, and a tested rebuild runbook take its place.
 
 ## Decision
 

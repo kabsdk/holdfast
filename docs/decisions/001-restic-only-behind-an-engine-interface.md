@@ -1,6 +1,7 @@
 # 001: restic is the only engine, behind an engine interface
 
-Status: accepted, 2026-11-21
+Status: accepted, 2026-11-21. The engine interface is deferred until a second engine exists
+([decision 030](030-simplify-after-the-architecture-review.md)). restic only stands.
 
 ## Decision
 

@@ -16,6 +16,9 @@ Status: development started on 2026-11-21, at your instruction ("we can start de
     API endpoints first.
   - A key that fails the contract is refused, and a host whose storage fails cannot enroll.
   - The optional provisioner command stays, for generated keys.
+- **The architecture review (decision 030).** You accepted its recommendations, except the guard against
+  snapshots dated in the future. The scope rule: Holdfast manages restic, and does not fix restic. Seven
+  fixes to what is built belong to M1. They are listed under "Remaining for M1" below.
 - **Q16: repository housekeeping.**
   - Git is initialised. There is no remote yet, so nothing is pushed.
   - The mockups are in `mockup/`.
@@ -89,6 +92,16 @@ proposal. Each sits behind an interface where that matters, so it can change. **
 - Holdfast's own contract test, run against the lab's RGW (`TestS3ProberLive`, see `lab/README.md`):
   - plain users: exactly B003, AccessDenied;
   - plain users plus the bucket-policy grant: every check passes, including B005, B006 and B007.
+
+**Remaining for M1: decision 030's fixes**
+1. Agent TLS: verify against the pinned CA as the only root, with the hostname.
+2. Job status in the order the server receives reports.
+3. Storage-witness alerts that do not need the server.
+4. A narrower maintenance key. New checks: no version deletes, no changes to bucket settings, and a
+   lifecycle rule exists.
+5. Enrollment checks the code before storage.
+6. A timeout on each restic run in the agent.
+7. The repository check runs on the agent, after a backup, and the server's daily check goes.
 
 **What the contract test taught on MinIO.** On MinIO, `s3:DeleteObject` also deletes object versions for
 good. A delete grant broader than `locks/*` therefore fails B006 as well as B005.

@@ -18,6 +18,10 @@ around it. M6 waits until the off-site and rebuild questions are decided.
 >
 > The remaining points are in [research/off-site.md](research/off-site.md) §7. The text below is kept as the
 > history of how the question was framed.
+>
+> **Reopened in part on 2026-11-21 ([decision 030](decisions/030-simplify-after-the-architecture-review.md)):**
+> how copies are made is open again. The choice is the vault's `restic copy`, or a mirror that copies the
+> repository's files from A to B as they are, and never overwrites or deletes.
 
 **Original leaning**
 - A second repository per host in site B, filled with `restic copy`.
@@ -50,6 +54,13 @@ A list of prunes, both manual (Prune now) and scheduled, under Config history.
 **Touches:** M3, the Prune now records.
 
 ## OQ3. Rebuilding Holdfast from S3 if PostgreSQL is lost
+
+**Decided around it (decision 030):**
+- There is no warm standby.
+- A nightly PostgreSQL dump and a config export go to site B, and the sealing key is in escrow.
+- A tested rebuild runbook covers the rest.
+
+The points below are still open.
 
 **Leaning**
 - The snapshot catalogue is a cache that is rebuilt from the repositories.

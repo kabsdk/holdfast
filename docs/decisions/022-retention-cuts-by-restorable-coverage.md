@@ -1,6 +1,8 @@
 # 022: Retention cuts are detected by what can still be restored
 
-Status: accepted, 2026-11-21
+Status: superseded in part by [decision 030](030-simplify-after-the-architecture-review.md), 2026-11-21.
+restic decides what each policy keeps (`forget --dry-run`); Holdfast keeps the union over 7 days, and a cut
+is a smaller keep set. The rest of this record stands.
 
 ## Decision
 

@@ -2,6 +2,10 @@
 
 Holdfast is a free, open-source control plane over restic for Linux hosts.
 
+**Scope: a restic manager with sane defaults and good features, not a fix for everything that can go
+wrong with restic** (decision 030). Do not add protections that restic itself does not offer. Where restic
+can decide something, such as what retention keeps, let it decide; do not re-implement it.
+
 | What | Where |
 | --- | --- |
 | Behaviour | [docs/spec.md](docs/spec.md) |
@@ -30,9 +34,8 @@ Read the spec and the current plan before changing anything.
   checks and the same check codes. Any exception must be listed in spec §3.3.
 - **API first.** The UI and the CLI are thin clients of the HTTP API. Build every feature as an API endpoint
   first, and keep logic, validation and checks behind the API, never in a client. See decision 028.
-- **No file contents leave a host unless `content_view` is enabled** in `/etc/holdfast/server.yaml`. Even
-  then, its limits apply, and the built-in deny always applies: `/etc/holdfast/**` and the repository
-  password files. Otherwise only names and metadata leave the host, and Changes never shows contents.
+- **No file contents leave a host through Holdfast.** Only names and metadata do, and Changes never shows
+  contents. `content_view` was cut (decision 030). Restores run on an agent.
 - **Every action is audited.** Each one is written to the host's history and to the audit log, with the
   actor, the time, and any accepted check codes.
 - **Nothing destructive bypasses the 7-day protection, except an admin's Prune now.** That covers forget,
@@ -57,8 +60,8 @@ These also follow from the spec:
 | M2 | Snapshot catalogue (as a cache), snapshot list, Files, Changes, restore via the agent, and a CLI command for each. | The restore and metadata/ACL tests pass on Ubuntu, RHEL and Oracle Linux test VMs. |
 | M3 | Checks engine, protection items, retention, the 7-day protection, Prune now. | |
 | M4 | API with OIDC and roles, then the UI built from `mockup/App.dc.html`. Every UI action has a matching API call and CLI command. | |
-| M5 | Library, profiles, "Jobs with the old values". | |
-| M6 | Off-site copies, rebuilding Holdfast, standby failover (the "kill site A" test). Starts only after the open questions are decided. | |
+| M5 | The library, profiles and "Jobs with the old values" were cut (decision 030). To be re-planned with what 030 adds: dumps, restore to another host, rollback from S3 versions, run controls. | |
+| M6 | Off-site copies and rebuilding Holdfast. No standby failover (decision 030). Starts only after the open questions are decided. | |
 
 ## Repository
 

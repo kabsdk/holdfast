@@ -1,6 +1,7 @@
 # 026: No file contents by default
 
-Status: accepted, 2026-11-21
+Status: superseded by [decision 030](030-simplify-after-the-architecture-review.md), 2026-11-21:
+`content_view` is cut, and no file contents ever leave a host through Holdfast.
 
 ## Decision
 
