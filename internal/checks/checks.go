@@ -169,8 +169,13 @@ func Job(j config.Job, h History) []Finding {
 	if r.Yearly == nil {
 		add("I001", Info, "retention.yearly", "there is no yearly tier")
 	}
-	sort.SliceStable(out, func(i, k int) bool { return rank(out[i].Severity) < rank(out[k].Severity) })
+	Sort(out)
 	return out
+}
+
+// Sort orders findings errors first, then warnings, then info, keeping the order within each.
+func Sort(fs []Finding) {
+	sort.SliceStable(fs, func(i, k int) bool { return rank(fs[i].Severity) < rank(fs[k].Severity) })
 }
 
 func rank(sev string) int {

@@ -61,7 +61,7 @@ func TestKilledBackupIsReportedAndRecovered(t *testing.T) {
 	locks := countLocks()
 
 	// While the agent is down, someone changes the job: a new revision it must pick up on start.
-	e.cli("job", "set", fqdn, "big", "--path", src, "--daily", "02:00", "--exclude", "*.tmp", "-m", "exclude temporary files")
+	e.cli("job", "set", fqdn, "big", "--path", src, "--daily", "02:00", "--exclude", "*.tmp", "-m", "exclude temporary files", testAccept)
 	proxy.rate.Store(0)
 	e.runAgent(a)
 	waitFor(t, "interrupted reported, then a success on the new revision", 3*time.Minute, func() bool {
@@ -148,8 +148,8 @@ func TestConfigHistoryDriftCheckAndNoLeaks(t *testing.T) {
 	e.waitProgress(fqdn, "first_backup_done", 2*time.Minute)
 	waitFor(t, "in sync", 30*time.Second, func() bool { return e.host(fqdn).InSync })
 
-	e.cli("job", "set", fqdn, "system", "--path", src, "--path", other, "--daily", "02:00", "--base", "1", "-m", "two paths")
-	if out, err := e.cliErr("job", "set", fqdn, "system", "--path", src, "--daily", "03:00", "--base", "1", "-m", "stale"); err == nil || !strings.Contains(string(out), "conflict") {
+	e.cli("job", "set", fqdn, "system", "--path", src, "--path", other, "--daily", "02:00", "--base", "1", "-m", "two paths", testAccept)
+	if out, err := e.cliErr("job", "set", fqdn, "system", "--path", src, "--daily", "03:00", "--base", "1", "-m", "stale", testAccept); err == nil || !strings.Contains(string(out), "conflict") {
 		t.Fatalf("a save from a stale base must be refused with a conflict: %v %s", err, out)
 	}
 	var diff struct {
@@ -171,7 +171,7 @@ func TestConfigHistoryDriftCheckAndNoLeaks(t *testing.T) {
 
 	// Drift: the agent is down while a change is saved.
 	a.kill(syscall.SIGTERM)
-	e.cli("job", "set", fqdn, "system", "--path", src, "--path", other, "--daily", "02:00", "--exclude", "*.log", "-m", "exclude logs")
+	e.cli("job", "set", fqdn, "system", "--path", src, "--path", other, "--daily", "02:00", "--exclude", "*.log", "-m", "exclude logs", testAccept)
 	if h := e.host(fqdn); h.InSync || h.DesiredRevision != 3 {
 		t.Fatalf("the host should show drift: in_sync=%v desired=%d", h.InSync, h.DesiredRevision)
 	}
@@ -314,7 +314,7 @@ func TestTLSPinning(t *testing.T) {
 		} `json:"enrollment"`
 	}
 	kf, _ := e.makeKey(fqdn, "")
-	must(t, json.Unmarshal(e.cli("host", "add", fqdn, "--s3-key-file", kf, "--job", "system", "--path", src, "--daily", "02:00"), &res))
+	must(t, json.Unmarshal(e.cli("host", "add", fqdn, "--s3-key-file", kf, "--job", "system", "--path", src, "--daily", "02:00", testAccept), &res))
 	if !strings.Contains(res.Enrollment.InstallCommand, "--ca-sha256 "+cert.pin) {
 		t.Fatalf("the install command does not pin the server: %s", res.Enrollment.InstallCommand)
 	}

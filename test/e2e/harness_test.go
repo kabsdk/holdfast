@@ -28,6 +28,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -227,8 +228,9 @@ func newEnvWith(t *testing.T, o envOpts) *env {
 		"database_dsn": dsn, "credentials_key_file": filepath.Join(dir, "credentials.key"), "state_dir": filepath.Join(dir, "server"),
 		"restic_bin": resticBin, "default_zone": "UTC", "node_name": "e2e",
 		"storage": stor,
-		// Tests run `holdfast check` themselves; a background check would race their lock counts.
-		"maintenance": map[string]any{"check": "off", "check_cycle_days": 30},
+		// Tests run `holdfast check` and `holdfast retention run` themselves; a background check would race
+		// their lock counts, and a daily retention run their snapshot counts.
+		"maintenance": map[string]any{"check": "off", "check_cycle_days": 30, "retention": "off"},
 	}
 	if o.TLS != nil {
 		set["tls"] = map[string]any{"cert_file": o.TLS.cert, "key_file": o.TLS.key}
@@ -345,8 +347,13 @@ func (e *env) makeKey(fqdn, policy string) (file, accessKey string) {
 	return file, ak
 }
 
+// testAccept accepts the check warnings that test jobs trip: they keep a few snapshots on short schedules,
+// which the checks rightly warn about for real jobs (spec §4.5). TestChecks tests the checks themselves.
+const testAccept = "--accept=R006,R101,R102,R103,S002"
+
 // addHost adds a host with one job through the CLI and returns the enrollment code. Unless the
-// environment has a provisioner, it first makes the host's key, as an admin would.
+// environment has a provisioner, it first makes the host's key, as an admin would. Unless jobArgs say
+// otherwise, it accepts testAccept.
 func (e *env) addHost(fqdn, jobID string, jobArgs ...string) string {
 	e.t.Helper()
 	var res struct {
@@ -354,6 +361,9 @@ func (e *env) addHost(fqdn, jobID string, jobArgs ...string) string {
 		Warning    string                `json:"warning"`
 	}
 	args := []string{"host", "add", fqdn, "--job", jobID}
+	if !slices.ContainsFunc(jobArgs, func(a string) bool { return strings.HasPrefix(a, "--accept") }) {
+		args = append(args, testAccept)
+	}
 	if !e.provisioner {
 		kf, _ := e.makeKey(fqdn, "")
 		args = append(args, "--s3-key-file", kf)
@@ -626,6 +636,7 @@ type hostView struct {
 	Online          bool   `json:"online"`
 	InSync          bool   `json:"in_sync"`
 	DesiredRevision int64  `json:"desired_revision"`
+	Snapshots       int    `json:"snapshots"` // in the catalogue
 	Agent           *struct {
 		AppliedRevision    int64  `json:"applied_revision"`
 		ResticVersion      string `json:"restic_version"`

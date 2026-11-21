@@ -63,7 +63,7 @@ func newTestServerWith(t *testing.T, opt func(*Deps)) *Server {
 
 func job(paths ...string) *config.Job {
 	return &config.Job{Paths: paths, Schedule: schedule.Schedule{Daily: &schedule.Daily{Times: []schedule.ClockTime{"02:00"}}},
-		Retention: config.Retention{Daily: &config.Duration{N: 14, Unit: config.Days}, KeepLast: 3}}
+		Retention: config.Retention{Daily: &config.Duration{N: 14, Unit: config.Days}, Monthly: &config.Duration{N: 12, Unit: config.Months}, KeepLast: 3}}
 }
 
 var root = Actor{Name: "local:root", Source: "cli"}
@@ -140,8 +140,8 @@ func TestHostLifecycle(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 	base := int64(1)
 	rev, err := s.SetJob(ctx, root, fqdn, "www", SetJobInput{Base: &base, Message: "add www", Job: *job("/var/www")})
-	if err != nil || rev != 2 {
-		t.Fatalf("set job: %d %v", rev, err)
+	if err != nil || rev.Revision != 2 {
+		t.Fatalf("set job: %+v %v", rev, err)
 	}
 	select {
 	case r := <-done:

@@ -52,15 +52,19 @@ type StorageSettings struct {
 	ProvisionerCommand         []string `yaml:"provisioner_command"`
 }
 
-// MaintenanceSettings control the server's own restic runs. M1 runs check only (plan-m1 Q1).
+// MaintenanceSettings control the repository checks and retention.
 type MaintenanceSettings struct {
 	// Check is "daily" (the default): each agent checks its own repository once a day, right after a
 	// backup, reading 1/check_cycle_days of the data (decision 030). "off" leaves only `holdfast check`.
 	Check          string `yaml:"check"`
 	CheckCycleDays int    `yaml:"check_cycle_days"` // read-data-subset cycle, default 30
+	// Retention is "daily" (the default): the server forgets and prunes each host once a day, in its quiet
+	// stretch, behind the 7-day protection (plan-m3). "off" forgets nothing by itself; `holdfast retention
+	// run`, Prune now and Delete now still work.
+	Retention string `yaml:"retention"`
 }
 
-// Values of MaintenanceSettings.Check.
+// Values of MaintenanceSettings.Check and MaintenanceSettings.Retention.
 const (
 	CheckDaily = "daily"
 	CheckOff   = "off"
@@ -109,6 +113,9 @@ func (s *Settings) defaults() {
 	if s.Maintenance.CheckCycleDays <= 0 {
 		s.Maintenance.CheckCycleDays = 30
 	}
+	if s.Maintenance.Retention == "" {
+		s.Maintenance.Retention = CheckDaily
+	}
 	if s.NodeName == "" {
 		s.NodeName, _ = os.Hostname()
 	}
@@ -132,6 +139,9 @@ func (s Settings) validate() error {
 	}
 	if c := s.Maintenance.Check; c != CheckDaily && c != CheckOff {
 		errs = append(errs, fmt.Errorf("maintenance.check is %q; it must be %q or %q", c, CheckDaily, CheckOff))
+	}
+	if c := s.Maintenance.Retention; c != CheckDaily && c != CheckOff {
+		errs = append(errs, fmt.Errorf("maintenance.retention is %q; it must be %q or %q", c, CheckDaily, CheckOff))
 	}
 	return errors.Join(errs...)
 }

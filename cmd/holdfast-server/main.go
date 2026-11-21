@@ -35,14 +35,38 @@ func main() {
 		return
 	}
 	cfgPath := flag.String("config", "/etc/holdfast/server.yaml", "settings file")
+	test := flag.Bool("test", false, "for the end-to-end tests only: allow HOLDFAST_TEST_NOW_OFFSET")
 	flag.Parse()
-	if err := run(*cfgPath, log); err != nil {
+	now, err := clock(*test, log)
+	if err == nil {
+		err = run(*cfgPath, now, log)
+	}
+	if err != nil {
 		log.Error("holdfast-server stopped", "err", err)
 		os.Exit(1)
 	}
 }
 
-func run(cfgPath string, log *slog.Logger) error {
+// clock is the server's clock. The end-to-end tests move it forward with HOLDFAST_TEST_NOW_OFFSET, such as
+// 192h, to see the 7-day protection end (plan-m3 Q6). A server started without -test refuses the variable,
+// so a production server's clock can never be moved this way.
+func clock(test bool, log *slog.Logger) (func() time.Time, error) {
+	v := os.Getenv("HOLDFAST_TEST_NOW_OFFSET")
+	if v == "" {
+		return time.Now, nil
+	}
+	if !test {
+		return nil, errors.New("HOLDFAST_TEST_NOW_OFFSET is set, but holdfast-server was not started with -test; it is for the end-to-end tests only")
+	}
+	off, err := time.ParseDuration(v)
+	if err != nil {
+		return nil, fmt.Errorf("HOLDFAST_TEST_NOW_OFFSET: %w", err)
+	}
+	log.Warn("TEST CLOCK: the server's clock is moved", "offset", off)
+	return func() time.Time { return time.Now().Add(off) }, nil
+}
+
+func run(cfgPath string, now func() time.Time, log *slog.Logger) error {
 	set, err := server.LoadSettings(cfgPath)
 	if err != nil {
 		return err
@@ -71,7 +95,7 @@ func run(cfgPath string, log *slog.Logger) error {
 	if len(set.Storage.ProvisionerCommand) > 0 {
 		prov = storage.ExecProvisioner{Command: set.Storage.ProvisionerCommand, Bucket: set.Storage.Bucket}
 	}
-	srv, err := server.New(set, server.Deps{Store: st, Sealer: sealer, Provisioner: prov, Maintenance: maint, Logger: log})
+	srv, err := server.New(set, server.Deps{Store: st, Sealer: sealer, Provisioner: prov, Maintenance: maint, Logger: log, Now: now})
 	if err != nil {
 		return err
 	}

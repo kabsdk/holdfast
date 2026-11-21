@@ -29,6 +29,10 @@ type Snapshot struct {
 	DeletedByUs    bool       `json:"deleted_by_holdfast,omitempty"`
 	MadeByHoldfast bool       `json:"made_by_holdfast"` // an agent reported this snapshot ID (decision 032)
 	Acknowledged   *time.Time `json:"acknowledged_at,omitempty"`
+	// Filled in by the server's snapshot list (decision 031): when an admin asked to delete it, and, once
+	// Holdfast deleted it and pruned, when S3's old versions of its data expire.
+	DeletionRequestedAt *time.Time `json:"deletion_requested_at,omitempty"`
+	ReallyGoneBy        *time.Time `json:"really_gone_by,omitempty"`
 }
 
 // SyncSnapshots makes the catalogue of a host match a fresh listing of its repository. A listed snapshot
@@ -49,11 +53,12 @@ func (q *Q) SyncSnapshots(ctx context.Context, fqdn string, listed []Snapshot, n
 		}
 		added += int(tag.RowsAffected())
 	}
-	tag, err := q.db.Exec(ctx, `UPDATE snapshots SET gone_at = $2 WHERE fqdn = $1 AND gone_at IS NULL AND NOT (id = ANY($3))`, fqdn, now, ids)
+	// A snapshot Holdfast is deleting is marked before restic forgets it, so it never counts as gone here.
+	err = q.db.QueryRow(ctx, `WITH g AS (UPDATE snapshots SET gone_at = $2 WHERE fqdn = $1 AND gone_at IS NULL AND NOT (id = ANY($3))
+		RETURNING deleted_by_holdfast) SELECT count(*) FILTER (WHERE NOT deleted_by_holdfast) FROM g`, fqdn, now, ids).Scan(&gone)
 	if err != nil {
 		return 0, 0, err
 	}
-	gone = int(tag.RowsAffected())
 	_, err = q.db.Exec(ctx, `UPDATE hosts SET catalogue_refreshed_at = $2, catalogue_error = '' WHERE fqdn = $1`, fqdn, now)
 	return added, gone, err
 }

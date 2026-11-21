@@ -69,6 +69,17 @@ func (s *Server) APIHandler(local bool) http.Handler {
 	mux.HandleFunc("GET /api/v1/restores", s.apiRestores)
 	mux.HandleFunc("GET /api/v1/search", s.apiSearch)
 	mux.HandleFunc("PUT /api/v1/hosts/{fqdn}/jobs/{job}", s.apiSetJob)
+	mux.HandleFunc("POST /api/v1/hosts/{fqdn}/jobs/{job}/check", s.apiCheckJob)
+	mux.HandleFunc("POST /api/v1/hosts/{fqdn}/jobs/{job}/keep-longer", s.apiKeepLonger)
+	// Retention (plan-m3): what waits, the daily run, Prune now, Delete snapshot, and the past prunes.
+	mux.HandleFunc("GET /api/v1/hosts/{fqdn}/pending", s.apiPending)
+	mux.HandleFunc("POST /api/v1/hosts/{fqdn}/retention/run", s.apiRunRetention)
+	mux.HandleFunc("GET /api/v1/hosts/{fqdn}/prune-now", s.apiPruneNowPlan)
+	mux.HandleFunc("POST /api/v1/hosts/{fqdn}/prune-now", s.apiPruneNow)
+	mux.HandleFunc("POST /api/v1/hosts/{fqdn}/snapshots/{id}/delete", s.apiDeleteSnapshot)
+	mux.HandleFunc("DELETE /api/v1/hosts/{fqdn}/snapshots/{id}/delete", s.apiCancelDeletion)
+	mux.HandleFunc("GET /api/v1/hosts/{fqdn}/prunes", s.apiPrunes)
+	mux.HandleFunc("GET /api/v1/prunes", s.apiPrunes)
 	mux.HandleFunc("POST /api/v1/hosts/{fqdn}/jobs/{job}/run", s.apiRunNow)
 	mux.HandleFunc("GET /api/v1/revisions", s.apiRevisions)
 	mux.HandleFunc("GET /api/v1/revisions/{n}", s.apiRevision)
@@ -87,9 +98,12 @@ func (s *Server) APIHandler(local bool) http.Handler {
 func apiError(w http.ResponseWriter, err error) {
 	var ve *ValidationError
 	var se *StorageError
+	var ce *ChecksError
 	switch {
 	case errors.As(err, &ve):
 		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": ve.Error(), "problems": ve.Problems})
+	case errors.As(err, &ce):
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": ce.Error(), "findings": ce.Findings, "blocking": ce.Blocking})
 	case errors.As(err, &se):
 		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": se.Error(), "storage": se.Report})
 	case errors.Is(err, store.ErrConflict):
@@ -277,12 +291,116 @@ func (s *Server) apiSetJob(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &in) {
 		return
 	}
-	rev, err := s.SetJob(r.Context(), actorOf(r), r.PathValue("fqdn"), r.PathValue("job"), in)
+	res, err := s.SetJob(r.Context(), actorOf(r), r.PathValue("fqdn"), r.PathValue("job"), in)
 	if err != nil {
 		apiError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"revision": rev})
+	writeJSON(w, http.StatusOK, res)
+}
+
+func (s *Server) apiCheckJob(w http.ResponseWriter, r *http.Request) {
+	var in JobCheckInput
+	if !decode(w, r, &in) {
+		return
+	}
+	res, err := s.CheckJob(r.Context(), r.PathValue("fqdn"), r.PathValue("job"), in)
+	if err != nil {
+		apiError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+func (s *Server) apiKeepLonger(w http.ResponseWriter, r *http.Request) {
+	var in KeepLongerInput
+	if !decode(w, r, &in) {
+		return
+	}
+	res, err := s.KeepLonger(r.Context(), actorOf(r), r.PathValue("fqdn"), r.PathValue("job"), in)
+	if err != nil {
+		apiError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+func (s *Server) apiPending(w http.ResponseWriter, r *http.Request) {
+	p, err := s.Pending(r.Context(), r.PathValue("fqdn"))
+	if err != nil {
+		apiError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, p)
+}
+
+func (s *Server) apiRunRetention(w http.ResponseWriter, r *http.Request) {
+	res, err := s.RunRetention(r.Context(), actorOf(r), r.PathValue("fqdn"))
+	if err != nil {
+		apiError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, res)
+}
+
+func (s *Server) apiPruneNowPlan(w http.ResponseWriter, r *http.Request) {
+	p, err := s.PruneNowPlan(r.Context(), r.PathValue("fqdn"))
+	if err != nil {
+		apiError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, p)
+}
+
+func (s *Server) apiPruneNow(w http.ResponseWriter, r *http.Request) {
+	var in PruneNowInput
+	if !decode(w, r, &in) {
+		return
+	}
+	res, err := s.PruneNow(r.Context(), actorOf(r), r.PathValue("fqdn"), in)
+	if err != nil {
+		apiError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, res)
+}
+
+func (s *Server) apiDeleteSnapshot(w http.ResponseWriter, r *http.Request) {
+	var in DeleteSnapshotInput
+	if !decode(w, r, &in) {
+		return
+	}
+	res, err := s.DeleteSnapshot(r.Context(), actorOf(r), r.PathValue("fqdn"), r.PathValue("id"), in)
+	if err != nil {
+		apiError(w, err)
+		return
+	}
+	status := http.StatusOK
+	if res.Run != 0 {
+		status = http.StatusAccepted
+	}
+	writeJSON(w, status, res)
+}
+
+func (s *Server) apiCancelDeletion(w http.ResponseWriter, r *http.Request) {
+	if err := s.CancelDeletion(r.Context(), actorOf(r), r.PathValue("fqdn"), r.PathValue("id")); err != nil {
+		apiError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"cancelled": r.PathValue("id")})
+}
+
+func (s *Server) apiPrunes(w http.ResponseWriter, r *http.Request) {
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	if limit <= 0 || limit > 1000 {
+		limit = 100
+	}
+	list, err := s.Prunes(r.Context(), r.PathValue("fqdn"), r.URL.Query().Get("all") == "1", limit)
+	if err != nil {
+		apiError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, list)
 }
 
 func (s *Server) apiRunNow(w http.ResponseWriter, r *http.Request) {

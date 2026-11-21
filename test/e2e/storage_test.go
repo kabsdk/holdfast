@@ -25,7 +25,7 @@ func TestStorageContract(t *testing.T) {
 	const fqdn = "app05.example.com"
 	fill := strings.NewReplacer("BUCKET", e.bucket, "FQDN", fqdn).Replace
 	add := func(kf string) ([]byte, error) {
-		return e.cliErr("host", "add", fqdn, "--s3-key-file", kf, "--job", "data", "--path", src, "--every", "1m")
+		return e.cliErr("host", "add", fqdn, "--s3-key-file", kf, "--job", "data", "--path", src, "--every", "1m", testAccept)
 	}
 	refusedWith := func(what string, out []byte, err error, codes ...string) {
 		t.Helper()

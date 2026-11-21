@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -30,7 +31,8 @@ func main() {
 	root := &cobra.Command{Use: "holdfast", Short: "Holdfast command line (a client of the Holdfast API)", SilenceUsage: true}
 	root.PersistentFlags().StringVar(&socketPath, "socket", envOr("HOLDFAST_SOCKET", "/run/holdfast/api.sock"), "API socket of holdfast-server")
 	root.PersistentFlags().BoolVar(&asJSON, "json", false, "print the API's JSON answer")
-	root.AddCommand(statusCmd(), hostCmd(), jobCmd(), snapshotCmd(), restoreCmd(), restoresCmd(), searchCmd(), revisionCmd(), auditCmd(), checkCmd(), escrowCmd())
+	root.AddCommand(statusCmd(), hostCmd(), jobCmd(), snapshotCmd(), restoreCmd(), restoresCmd(), searchCmd(), revisionCmd(), auditCmd(), checkCmd(), escrowCmd(),
+		pendingCmd(), prunesCmd(), retentionCmd(), pruneNowCmd())
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
 	}
@@ -344,11 +346,13 @@ func hostCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			in["job_id"], in["job"] = add.id, job
+			in["job_id"], in["job"], in["accept"] = add.id, job, add.accept
 		}
 		var res struct {
-			Revision   int64  `json:"revision"`
-			Warning    string `json:"warning"`
+			Revision   int64     `json:"revision"`
+			Warning    string    `json:"warning"`
+			Findings   []finding `json:"findings"`
+			Accepted   []string  `json:"accepted_codes"`
 			Enrollment struct {
 				Code           string    `json:"code"`
 				ExpiresAt      time.Time `json:"expires_at"`
@@ -365,6 +369,10 @@ func hostCmd() *cobra.Command {
 		}
 		fmt.Printf("added %s in revision %d; its S3 key passed every storage check\nenrollment code %s, valid until %s\n\nrun on the host, as root:\n  %s\n",
 			a[0], res.Revision, res.Enrollment.Code, res.Enrollment.ExpiresAt.Local().Format("15:04"), res.Enrollment.InstallCommand)
+		if len(res.Findings) > 0 {
+			fmt.Println("\nchecks on job " + add.id + ":")
+			printFindings(res.Findings, res.Accepted)
+		}
 		if res.Warning != "" {
 			fmt.Println("\nwarning:", res.Warning)
 		}
@@ -467,6 +475,25 @@ type jobFlags struct {
 	noSpread                                   bool
 	within, hourly, dly, wkly, monthly, yearly string
 	keepLast                                   int
+	accept                                     []string
+}
+
+// finding is one check that fired (spec §4.5).
+type finding struct {
+	Code     string `json:"code"`
+	Severity string `json:"severity"`
+	Message  string `json:"message"`
+}
+
+// printFindings shows the checks that fired on a saved or checked job, marking the accepted warnings.
+func printFindings(fs []finding, accepted []string) {
+	for _, f := range fs {
+		sev := f.Severity
+		if sev == "warning" && slices.Contains(accepted, f.Code) {
+			sev = "accepted warning"
+		}
+		fmt.Printf("  %s  %s: %s\n", f.Code, sev, f.Message)
+	}
 }
 
 func (f *jobFlags) register(c *cobra.Command) {
@@ -487,6 +514,7 @@ func (f *jobFlags) register(c *cobra.Command) {
 	c.Flags().StringVar(&f.monthly, "keep-monthly", "", "keep one per month for this long, such as 12mo")
 	c.Flags().StringVar(&f.yearly, "keep-yearly", "", "keep one per year for this long, such as 3y")
 	c.Flags().IntVar(&f.keepLast, "keep-last", 3, "always keep the newest N")
+	c.Flags().StringSliceVar(&f.accept, "accept", nil, "accept these warning codes, such as R102,R104 (errors cannot be accepted)")
 }
 
 func window(s string) (map[string]any, error) {
@@ -551,12 +579,14 @@ func jobCmd() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		in := map[string]any{"message": msg, "job": job}
+		in := map[string]any{"message": msg, "job": job, "accept": f.accept}
 		if cmd.Flags().Changed("base") {
 			in["base_revision"] = base
 		}
 		var res struct {
-			Revision int64 `json:"revision"`
+			Revision int64     `json:"revision"`
+			Findings []finding `json:"findings"`
+			Accepted []string  `json:"accepted_codes"`
 		}
 		raw, err := call("PUT", "/api/v1/hosts/"+url.PathEscape(a[0])+"/jobs/"+url.PathEscape(a[1]), in, &res)
 		if err != nil {
@@ -567,12 +597,57 @@ func jobCmd() *cobra.Command {
 			return nil
 		}
 		fmt.Printf("saved as revision %d\n", res.Revision)
+		printFindings(res.Findings, res.Accepted)
 		return nil
 	}}
 	set.Flags().StringVarP(&msg, "message", "m", "", "revision message")
 	set.Flags().Int64Var(&base, "base", 0, "refuse the save if the newest revision is not this one")
 	f.register(set)
 	c.AddCommand(set)
+	var cf jobFlags
+	check := &cobra.Command{Use: "check <fqdn> <job>", Short: "Run the checks on a job without saving it; the flags are those of job set", Args: cobra.ExactArgs(2), RunE: func(_ *cobra.Command, a []string) error {
+		job, err := cf.job()
+		if err != nil {
+			return err
+		}
+		var res struct {
+			Findings []finding `json:"findings"`
+			Blocking []finding `json:"blocking"`
+		}
+		raw, err := call("POST", "/api/v1/hosts/"+url.PathEscape(a[0])+"/jobs/"+url.PathEscape(a[1])+"/check", map[string]any{"job": job, "accept": cf.accept}, &res)
+		if err != nil {
+			return err
+		}
+		if asJSON {
+			printJSON(raw)
+			if len(res.Blocking) > 0 {
+				return errors.New("job set would refuse this change")
+			}
+			return nil
+		}
+		if len(res.Findings) == 0 {
+			fmt.Println("every check passed")
+			return nil
+		}
+		blocked := map[string]bool{}
+		for _, b := range res.Blocking {
+			blocked[b.Code] = true
+		}
+		var accepted []string
+		for _, f := range res.Findings {
+			if f.Severity == "warning" && !blocked[f.Code] {
+				accepted = append(accepted, f.Code)
+			}
+		}
+		printFindings(res.Findings, accepted)
+		if len(res.Blocking) > 0 {
+			return errors.New("job set would refuse this change")
+		}
+		fmt.Println("job set would save this change")
+		return nil
+	}}
+	cf.register(check)
+	c.AddCommand(check, keepLongerCmd())
 	c.AddCommand(&cobra.Command{Use: "run <fqdn> <job>", Short: "Back up now", Args: cobra.ExactArgs(2), RunE: func(_ *cobra.Command, a []string) error {
 		var res struct {
 			Command string `json:"command"`
@@ -609,9 +684,13 @@ func revisionCmd() *cobra.Command {
 			return nil
 		}
 		w := table()
-		fmt.Fprintln(w, "REVISION\tWHEN\tWHO\tMESSAGE")
+		fmt.Fprintln(w, "REVISION\tWHEN\tWHO\tACCEPTED\tMESSAGE")
 		for _, r := range revs {
-			fmt.Fprintf(w, "%d\t%s\t%s\t%s\n", r.Number, r.CreatedAt.Local().Format("2006-01-02 15:04"), r.Actor, r.Message)
+			acc := strings.Join(r.AcceptedCodes, ",")
+			if acc == "" {
+				acc = "—"
+			}
+			fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\n", r.Number, r.CreatedAt.Local().Format("2006-01-02 15:04"), r.Actor, acc, r.Message)
 		}
 		return w.Flush()
 	}})

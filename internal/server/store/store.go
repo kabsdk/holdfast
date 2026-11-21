@@ -299,6 +299,8 @@ type Host struct {
 	// CatalogueRefreshedAt is when the snapshot catalogue last read the repository (M2).
 	CatalogueRefreshedAt *time.Time `json:"catalogue_refreshed_at,omitempty"`
 	CatalogueError       string     `json:"catalogue_error,omitempty"`
+	// PruneNeeded is set when snapshots were forgotten and not pruned yet (M3).
+	PruneNeeded bool `json:"prune_needed"`
 }
 
 // CreateHost records a new host. A host that exists already (even retired) is refused.
@@ -311,16 +313,17 @@ func (q *Q) CreateHost(ctx context.Context, fqdn string, rev int64, now time.Tim
 }
 
 const hostCols = `fqdn, state, added_revision, added_at, connected_at, first_backup_at, storage_checked_at, storage_findings,
-	catalogue_refreshed_at, catalogue_error`
+	storage_noncurrent_days, catalogue_refreshed_at, catalogue_error, prune_needed`
 
 func scanHost(row pgx.Row) (Host, error) {
 	var h Host
 	var checked *time.Time
 	var findings []byte
+	var days int
 	err := row.Scan(&h.FQDN, &h.State, &h.AddedRevision, &h.AddedAt, &h.ConnectedAt, &h.FirstBackupAt, &checked, &findings,
-		&h.CatalogueRefreshedAt, &h.CatalogueError)
+		&days, &h.CatalogueRefreshedAt, &h.CatalogueError, &h.PruneNeeded)
 	if err == nil && checked != nil {
-		h.Storage = &storage.Report{CheckedAt: *checked, Findings: []storage.Finding{}}
+		h.Storage = &storage.Report{CheckedAt: *checked, Findings: []storage.Finding{}, NoncurrentDays: days}
 		if len(findings) > 0 {
 			err = json.Unmarshal(findings, &h.Storage.Findings)
 		}
@@ -338,7 +341,8 @@ func (q *Q) RecordStorageCheck(ctx context.Context, fqdn string, r storage.Repor
 	if err != nil {
 		return err
 	}
-	_, err = q.db.Exec(ctx, `UPDATE hosts SET storage_checked_at = $2, storage_findings = $3 WHERE fqdn = $1`, fqdn, r.CheckedAt, b)
+	_, err = q.db.Exec(ctx, `UPDATE hosts SET storage_checked_at = $2, storage_findings = $3, storage_noncurrent_days = $4 WHERE fqdn = $1`,
+		fqdn, r.CheckedAt, b, r.NoncurrentDays)
 	return err
 }
 
@@ -685,6 +689,27 @@ func (q *Q) InsertEvent(ctx context.Context, e Event) (bool, error) {
 	return true, nil
 }
 
+// RunTimes returns how long a job's last backups took, newest first, at most limit of them. Runs that did
+// not finish (failed, interrupted or skipped) do not count (S002, spec §4.5).
+func (q *Q) RunTimes(ctx context.Context, fqdn, jobID string, limit int) ([]time.Duration, error) {
+	rows, err := q.db.Query(ctx, `SELECT extract(epoch FROM finished_at - started_at)::float8 FROM events
+		WHERE fqdn = $1 AND job_id = $2 AND kind = 'backup' AND status IN ('success','warning')
+		ORDER BY finished_at DESC LIMIT $3`, fqdn, jobID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []time.Duration
+	for rows.Next() {
+		var secs float64
+		if err := rows.Scan(&secs); err != nil {
+			return nil, err
+		}
+		out = append(out, time.Duration(secs*float64(time.Second)))
+	}
+	return out, rows.Err()
+}
+
 // ListEvents returns a host's events, newest first.
 func (q *Q) ListEvents(ctx context.Context, fqdn string, limit int) ([]Event, error) {
 	return q.queryEvents(ctx, `WHERE fqdn = $1 ORDER BY finished_at DESC, received_at DESC LIMIT $2`, fqdn, limit)
@@ -856,20 +881,6 @@ func (q *Q) AckCommands(ctx context.Context, fqdn string, ids []string, now time
 }
 
 /* ---------------- maintenance ---------------- */
-
-// StartMaintenance records the start of a maintenance run and returns its ID.
-func (q *Q) StartMaintenance(ctx context.Context, fqdn, kind, subset, node string, now time.Time) (int64, error) {
-	var id int64
-	err := q.db.QueryRow(ctx, `INSERT INTO maintenance_runs (fqdn, kind, subset, started_at, node) VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-		fqdn, kind, subset, now, node).Scan(&id)
-	return id, err
-}
-
-// FinishMaintenance records how a maintenance run ended.
-func (q *Q) FinishMaintenance(ctx context.Context, id int64, status, errText string, now time.Time) error {
-	_, err := q.db.Exec(ctx, `UPDATE maintenance_runs SET finished_at = $2, status = $3, error = $4 WHERE id = $1`, id, now, status, errText)
-	return err
-}
 
 // LastCheckSuccess returns, per host, when the agent's repository check last succeeded (decision 030).
 func (q *Q) LastCheckSuccess(ctx context.Context) (map[string]time.Time, error) {

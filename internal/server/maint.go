@@ -9,16 +9,15 @@ import (
 	"github.com/kabsdk/holdfast/internal/server/store"
 )
 
-// Maintenance in M1 (decisions 029 and 030):
+// Maintenance (decisions 029 and 030, plan-m3):
 //   - Each agent checks its own repository once a day, right after a backup, in its one-restic-at-a-time
 //     loop. restic check takes an exclusive lock, and there it can never meet the host's own backups.
 //   - The server tests each host's storage contract once a day, with plain S3 calls. That takes no
 //     restic lock.
-//   - The server runs restic against a repository only to initialise it, and, from M3, to prune it. It
-//     then checks it first.
+//   - The server runs restic against a repository to initialise it, and once a day for retention: forget
+//     behind the 7-day protection, then a check, then prune (retention.go).
 //
-// There is no forget and no prune yet: nothing destructive exists before the 7-day protection (M3). The
-// leader gate is a stub until failover is decided.
+// The leader gate is a stub: there is one server (decision 030).
 
 func (s *Server) isLeader() bool { return true }
 
@@ -127,6 +126,7 @@ func (s *Server) maintenanceLoop(ctx context.Context) {
 			s.checkStorageDue(ctx)
 			s.refreshCatalogueDue(ctx)
 			s.expireCommands(ctx)
+			s.retentionDue(ctx)
 		}
 	}
 }

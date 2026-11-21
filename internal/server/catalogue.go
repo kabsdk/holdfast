@@ -198,7 +198,51 @@ func (s *Server) Snapshots(ctx context.Context, fqdn string, in SnapshotQuery) (
 			return nil, err
 		}
 	}
-	return s.st.Q().ListSnapshots(ctx, fqdn, f)
+	list, err := s.st.Q().ListSnapshots(ctx, fqdn, f)
+	if err != nil {
+		return nil, err
+	}
+	return list, s.deletionDates(ctx, fqdn, list)
+}
+
+// deletionDates fills in when deletions were asked for, and when deleted data is really gone: S3 keeps the
+// old versions for the lifecycle rule's days after the prune that followed the forget (decision 031).
+func (s *Server) deletionDates(ctx context.Context, fqdn string, list []store.Snapshot) error {
+	dels, err := s.st.Q().ListPendingDeletions(ctx, fqdn)
+	if err != nil {
+		return err
+	}
+	asked := map[string]time.Time{}
+	for _, d := range dels {
+		asked[d.SnapshotID] = d.RequestedAt
+	}
+	var runs []store.MaintenanceRun
+	h, err := s.st.Q().GetHost(ctx, fqdn)
+	if err != nil {
+		return err
+	}
+	days := noncurrentDays(h)
+	for i := range list {
+		sn := &list[i]
+		if t, ok := asked[sn.ID]; ok {
+			sn.DeletionRequestedAt = &t
+		}
+		if !sn.DeletedByUs || sn.GoneAt == nil || days == 0 {
+			continue
+		}
+		if runs == nil {
+			if runs, err = s.st.Q().ListMaintenanceRuns(ctx, fqdn, 1000); err != nil {
+				return err
+			}
+		}
+		// runs are newest first: the oldest prune that finished after the forget
+		for _, r := range runs {
+			if r.Pruned && r.FinishedAt != nil && !r.FinishedAt.Before(*sn.GoneAt) {
+				sn.ReallyGoneBy = s.goneBy(*r.FinishedAt, days)
+			}
+		}
+	}
+	return nil
 }
 
 // snapshot resolves a snapshot ID or prefix of a host, reading the repository once if the catalogue does

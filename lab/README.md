@@ -160,7 +160,7 @@ metadata properties on the three agent VMs, against site A's Ceph RGW (docs/plan
 3. on each agent VM, or each one named (`lab/lab test m1 el9`):
    - makes the fixture anew: `hf-fidelity build /srv/hf-fixture` (`lab/fidelity`, the e2e suite's
      `internal/fidelity`);
-   - on hfsrv, `holdfast host add <fqdn> --s3-key-file - --job fidelity --path /srv/hf-fixture --daily 03:00`, with
+   - on hfsrv, `holdfast host add <fqdn> --s3-key-file - --job fidelity --path /srv/hf-fixture --daily 03:00 --keep-daily 14d --keep-monthly 12mo`, with
      the key on stdin; on the VM, `holdfast-agent enroll --server https://hfsrv.m1.holdfast.test:8443 --fqdn <fqdn>
      --code <code> --ca-sha256 <pin> --restic /usr/libexec/holdfast/restic`, with the code on stdin, then
      `restore.root: /var/restore` in `agent.yaml` and `holdfast-agent.service` enabled and started; the agent backs up

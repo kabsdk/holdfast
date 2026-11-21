@@ -443,9 +443,9 @@ func (r Runner) Restore(ctx context.Context, snapshot, target string, include []
 }
 
 // ForgetPlan asks restic what a retention policy keeps among the snapshots with the tag, grouped by host
-// only (plan-m3 Q1), without changing anything (--dry-run). It returns the IDs it would keep and the ones it
-// would remove. It runs with --no-lock: without it, restic takes an exclusive lock even for a dry run.
-func (r Runner) ForgetPlan(ctx context.Context, tag string, policy []string) (keep, remove []string, err error) {
+// only (plan-m3 Q1), without changing anything (--dry-run). It returns the snapshots it would keep and the
+// ones it would remove. It runs with --no-lock: without it, restic takes an exclusive lock even for a dry run.
+func (r Runner) ForgetPlan(ctx context.Context, tag string, policy []string) (keep, remove []Snapshot, err error) {
 	r.NoLock = true
 	args := append([]string{"forget", "--dry-run", "--json", "--tag", tag, "--group-by", "host"}, policy...)
 	out, err := r.run(ctx, args...)
@@ -461,16 +461,21 @@ func (r Runner) ForgetPlan(ctx context.Context, tag string, policy []string) (ke
 			return nil, nil, fmt.Errorf("restic forget --dry-run: %w", err)
 		}
 	}
-	keep, remove = []string{}, []string{}
+	keep, remove = []Snapshot{}, []Snapshot{}
 	for _, g := range groups {
-		for _, s := range g.Keep {
-			keep = append(keep, s.ID)
-		}
-		for _, s := range g.Remove {
-			remove = append(remove, s.ID)
-		}
+		keep = append(keep, g.Keep...)
+		remove = append(remove, g.Remove...)
 	}
 	return keep, remove, nil
+}
+
+// IDs returns the snapshots' IDs.
+func IDs(snaps []Snapshot) []string {
+	out := make([]string, 0, len(snaps))
+	for _, s := range snaps {
+		out = append(out, s.ID)
+	}
+	return out
 }
 
 // Forget removes exactly these snapshots. Their data is freed by the next Prune.

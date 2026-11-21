@@ -13,10 +13,12 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/kabsdk/holdfast/internal/checks"
 	"github.com/kabsdk/holdfast/internal/config"
 	"github.com/kabsdk/holdfast/internal/proto"
 	"github.com/kabsdk/holdfast/internal/restic"
@@ -44,6 +46,7 @@ type Server struct {
 
 	runCtx    context.Context // set by Run; background work stops with it
 	refresher catalogueRefresher
+	maintBusy busyHosts // one forget-or-prune at a time per host
 }
 
 // background is the context for work that outlives a request, such as a catalogue refresh.
@@ -306,6 +309,8 @@ type AddHostInput struct {
 	Base    *int64      `json:"base_revision,omitempty"` // omitted: the current head
 	// S3Key is the host's key (decision 029). It may be omitted only when a provisioner is configured.
 	S3Key *S3KeyInput `json:"s3_key,omitempty"`
+	// Accept lists the warning codes the person accepts for the job (spec §4.5).
+	Accept []string `json:"accept,omitempty"`
 }
 
 // Enrollment is what a person needs to enroll a host.
@@ -322,6 +327,9 @@ type AddHostResult struct {
 	Enrollment Enrollment     `json:"enrollment"`
 	Storage    storage.Report `json:"storage"`
 	Warning    string         `json:"warning,omitempty"`
+	// Findings are the checks that fired on the job, if one was added: accepted warnings, and info.
+	Findings []checks.Finding `json:"findings"`
+	Accepted []string         `json:"accepted_codes"`
 }
 
 func (s *Server) installCommand(fqdn, code string) string {
@@ -362,6 +370,22 @@ func (s *Server) AddHost(ctx context.Context, a Actor, in AddHostInput) (AddHost
 	if _, err := s.st.Q().GetHost(ctx, in.FQDN); err == nil {
 		return AddHostResult{}, fmt.Errorf("host %s exists already: %w", in.FQDN, ErrConflict)
 	}
+	// The job's checks come before the storage test, so a job that would be refused costs no S3 calls. A new
+	// host has no runs and no snapshots, so S002 and R104 cannot fire.
+	fs := []checks.Finding{}
+	if in.Job != nil {
+		if in.Job.Engine == "" {
+			in.Job.Engine = config.EngineRestic
+		}
+		if p := withJob(config.New(), in.FQDN, in.JobID, *in.Job).Validate(); len(p) > 0 {
+			return AddHostResult{}, &ValidationError{p}
+		}
+		fs = checks.Job(*in.Job, checks.History{})
+		if blocking := checks.Blocking(fs, in.Accept); len(blocking) > 0 {
+			return AddHostResult{}, &ChecksError{Findings: fs, Blocking: blocking}
+		}
+	}
+	accepted := checks.Accepted(fs, in.Accept)
 	rep, err := s.prepareKey(ctx, in.FQDN, key, source)
 	if err != nil {
 		return AddHostResult{}, err
@@ -386,16 +410,14 @@ func (s *Server) AddHost(ctx context.Context, a Actor, in AddHostInput) (AddHost
 		doc := head.Config.Clone()
 		h := config.Host{Jobs: map[string]config.Job{}}
 		if in.Job != nil {
-			if in.Job.Engine == "" {
-				in.Job.Engine = config.EngineRestic
-			}
 			h.Jobs[in.JobID] = *in.Job
 		}
 		doc.Hosts[in.FQDN] = h
 		if p := doc.Validate(); len(p) > 0 {
 			return &ValidationError{p}
 		}
-		rev, err := q.SaveRevision(ctx, store.SaveRevision{Base: head.Number, Actor: a.Name, Source: a.Source, Message: in.Message, Config: doc, HostSHAs: s.hostSHAs(doc)})
+		rev, err := q.SaveRevision(ctx, store.SaveRevision{Base: head.Number, Actor: a.Name, Source: a.Source, Message: in.Message,
+			Accepted: accepted, Config: doc, HostSHAs: s.hostSHAs(doc)})
 		if err != nil {
 			return err
 		}
@@ -417,6 +439,7 @@ func (s *Server) AddHost(ctx context.Context, a Actor, in AddHostInput) (AddHost
 		detail := map[string]any{"message": in.Message, "s3_key_by": source}
 		if in.Job != nil {
 			detail["job"] = in.JobID
+			detail["accepted_codes"] = accepted
 		}
 		if err := q.Audit(ctx, store.AuditEntry{Actor: a.Name, Source: a.Source, Action: "host.add", FQDN: in.FQDN, Revision: rev.Number, Detail: detail}); err != nil {
 			return err
@@ -426,7 +449,7 @@ func (s *Server) AddHost(ctx context.Context, a Actor, in AddHostInput) (AddHost
 			return err
 		}
 		res = AddHostResult{Revision: rev.Number, Enrollment: Enrollment{FQDN: in.FQDN, Code: code, ExpiresAt: expires, InstallCommand: s.installCommand(in.FQDN, code)},
-			Storage: rep}
+			Storage: rep, Findings: fs, Accepted: accepted}
 		return nil
 	})
 	if err != nil {
@@ -561,23 +584,56 @@ func (s *Server) IssueEnrollmentCode(ctx context.Context, a Actor, fqdn string) 
 	return Enrollment{FQDN: fqdn, Code: code, ExpiresAt: expires, InstallCommand: s.installCommand(fqdn, code)}, nil
 }
 
-// SetJobInput creates or replaces one job.
+// SetJobInput creates or replaces one job. Accept lists the warning codes the person accepts (spec §4.5).
 type SetJobInput struct {
 	Base    *int64     `json:"base_revision,omitempty"`
 	Message string     `json:"message"`
 	Job     config.Job `json:"job"`
+	Accept  []string   `json:"accept,omitempty"`
 }
 
-// SetJob saves a revision with the job created or replaced. A save from a stale base is refused.
-func (s *Server) SetJob(ctx context.Context, a Actor, fqdn, jobID string, in SetJobInput) (int64, error) {
+// SetJobResult is the saved revision, and every check that fired: the accepted warnings, and info.
+type SetJobResult struct {
+	Revision int64            `json:"revision"`
+	Findings []checks.Finding `json:"findings"`
+	Accepted []string         `json:"accepted_codes"`
+}
+
+// SetJob saves a revision with the job created or replaced, after the checks (spec §4.5). A save from a
+// stale base is refused, and so is a save that a check blocks.
+func (s *Server) SetJob(ctx context.Context, a Actor, fqdn, jobID string, in SetJobInput) (SetJobResult, error) {
 	if in.Job.Engine == "" {
 		in.Job.Engine = config.EngineRestic
 	}
 	if strings.TrimSpace(in.Message) == "" {
 		in.Message = fmt.Sprintf("Set job %s on %s", jobID, fqdn)
 	}
-	var revNum int64
-	err := s.st.InTx(ctx, func(q *store.Q) error {
+	// The checks run before the transaction, since R104 asks restic. The transaction then makes sure the
+	// job they compared against is still the one in force.
+	before, err := s.head(ctx, s.st.Q())
+	if err != nil {
+		return SetJobResult{}, err
+	}
+	if in.Base != nil && *in.Base != before.Number {
+		return SetJobResult{}, ErrConflict
+	}
+	h, ok := before.Config.Hosts[fqdn]
+	if !ok {
+		return SetJobResult{}, fmt.Errorf("host %s: %w", fqdn, ErrNotFound)
+	}
+	var old *config.Job
+	if j, ok := h.Jobs[jobID]; ok {
+		old = &j
+	}
+	if p := withJob(before.Config, fqdn, jobID, in.Job).Validate(); len(p) > 0 {
+		return SetJobResult{}, &ValidationError{p}
+	}
+	fs := s.jobFindings(ctx, fqdn, jobID, old, in.Job)
+	if blocking := checks.Blocking(fs, in.Accept); len(blocking) > 0 {
+		return SetJobResult{}, &ChecksError{Findings: fs, Blocking: blocking}
+	}
+	res := SetJobResult{Findings: fs, Accepted: checks.Accepted(fs, in.Accept)}
+	err = s.st.InTx(ctx, func(q *store.Q) error {
 		head, err := s.head(ctx, q)
 		if err != nil {
 			return err
@@ -589,30 +645,46 @@ func (s *Server) SetJob(ctx context.Context, a Actor, fqdn, jobID string, in Set
 		if !ok {
 			return fmt.Errorf("host %s: %w", fqdn, ErrNotFound)
 		}
-		doc := head.Config.Clone()
-		h = doc.Hosts[fqdn]
-		_, existed := h.Jobs[jobID]
-		h.Jobs[jobID] = in.Job
-		doc.Hosts[fqdn] = h
+		cur, existed := h.Jobs[jobID]
+		if existed != (old != nil) || (existed && !reflect.DeepEqual(cur, *old)) {
+			return fmt.Errorf("job %s on %s changed while it was being checked: %w", jobID, fqdn, ErrConflict)
+		}
+		doc := withJob(head.Config, fqdn, jobID, in.Job)
 		if p := doc.Validate(); len(p) > 0 {
 			return &ValidationError{p}
 		}
-		rev, err := q.SaveRevision(ctx, store.SaveRevision{Base: head.Number, Actor: a.Name, Source: a.Source, Message: in.Message, Config: doc, HostSHAs: s.hostSHAs(doc)})
+		rev, err := q.SaveRevision(ctx, store.SaveRevision{Base: head.Number, Actor: a.Name, Source: a.Source, Message: in.Message,
+			Accepted: res.Accepted, Config: doc, HostSHAs: s.hostSHAs(doc)})
 		if err != nil {
 			return err
 		}
-		revNum = rev.Number
+		res.Revision = rev.Number
 		action := "job.add"
 		if existed {
 			action = "job.change"
 		}
 		if err := q.Audit(ctx, store.AuditEntry{Actor: a.Name, Source: a.Source, Action: action, FQDN: fqdn, JobID: jobID, Revision: rev.Number,
-			Detail: map[string]any{"message": in.Message}}); err != nil {
+			Detail: map[string]any{"message": in.Message, "accepted_codes": res.Accepted}}); err != nil {
 			return err
 		}
 		return q.NotifyHost(ctx, fqdn)
 	})
-	return revNum, err
+	if err != nil {
+		return SetJobResult{}, err
+	}
+	return res, nil
+}
+
+// withJob returns a copy of doc with the host's job created or replaced.
+func withJob(doc config.Document, fqdn, jobID string, j config.Job) config.Document {
+	doc = doc.Clone()
+	h := doc.Hosts[fqdn]
+	if h.Jobs == nil {
+		h.Jobs = map[string]config.Job{}
+	}
+	h.Jobs[jobID] = j
+	doc.Hosts[fqdn] = h
+	return doc
 }
 
 // RunNow queues "back up now" for one job.

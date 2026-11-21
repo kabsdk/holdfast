@@ -22,6 +22,9 @@ type snapshotRow struct {
 	TotalBytes     *int64     `json:"total_bytes"`
 	MadeByHoldfast bool       `json:"made_by_holdfast"`
 	GoneAt         *time.Time `json:"gone_at"`
+	DeletedByUs    bool       `json:"deleted_by_holdfast"`
+	DeletionAsked  *time.Time `json:"deletion_requested_at"`
+	ReallyGoneBy   *time.Time `json:"really_gone_by"`
 }
 
 type node struct {
@@ -125,8 +128,17 @@ func snapshotCmd() *cobra.Command {
 			}
 			note := ""
 			switch {
+			case s.GoneAt != nil && s.DeletedByUs:
+				note = "deleted by Holdfast " + s.GoneAt.Local().Format("2006-01-02 15:04")
+				if s.ReallyGoneBy != nil {
+					note += ", S3's old versions expire by " + s.ReallyGoneBy.Local().Format("2006-01-02")
+				} else {
+					note += ", data freed at the next prune"
+				}
 			case s.GoneAt != nil:
 				note = "GONE " + s.GoneAt.Local().Format("2006-01-02 15:04")
+			case s.DeletionAsked != nil:
+				note = "deletion pending since " + s.DeletionAsked.Local().Format("2006-01-02 15:04")
 			case !s.MadeByHoldfast:
 				note = "not made by Holdfast"
 			}
@@ -138,7 +150,7 @@ func snapshotCmd() *cobra.Command {
 	list.Flags().StringVar(&month, "month", "", "only this month, such as 2026-11")
 	list.Flags().BoolVar(&all, "all", false, "also snapshots that are no longer in the repository")
 	list.Flags().BoolVar(&refresh, "refresh", false, "read the repository first")
-	c.AddCommand(list)
+	c.AddCommand(list, snapshotDeleteCmd())
 
 	var filesPage int
 	files := &cobra.Command{Use: "files <fqdn> <snapshot> [path]", Short: "One directory of a snapshot: names and metadata", Args: cobra.RangeArgs(2, 3), RunE: func(_ *cobra.Command, a []string) error {

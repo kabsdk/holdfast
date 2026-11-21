@@ -100,7 +100,7 @@ func TestForgetPlanForgetAndPrune(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(keep, ",") != "aaa111,bbb222" || strings.Join(remove, ",") != "ccc333" {
+	if strings.Join(IDs(keep), ",") != "aaa111,bbb222" || strings.Join(IDs(remove), ",") != "ccc333" || remove[0].Time.Day() != 11 {
 		t.Fatalf("keep %v, remove %v", keep, remove)
 	}
 	if err := r.Forget(context.Background(), "ccc333"); err != nil {

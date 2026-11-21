@@ -7,7 +7,7 @@
 #      0600) and put on the storage VM, then lab/rgw-documented-layout.sh --keep-data, which makes the users and gives each
 #      docs/storage.md's host statements for repos/<vm>.<domain>/ in the bucket policy, keeping the bucket's data
 #   1. the fixture, made anew: hf-fidelity build /srv/hf-fixture
-#   2. Holdfast, on the server: holdfast host add <fqdn> --s3-key-file - --job fidelity --path /srv/hf-fixture --daily 03:00
+#   2. Holdfast, on the server: holdfast host add <fqdn> --s3-key-file - --job fidelity --path /srv/hf-fixture --daily 03:00 --keep-daily 14d --keep-monthly 12mo
 #      (the key on stdin); on the VM: holdfast-agent enroll against https://<server>:8443 with the lab CA's pin,
 #      restore.root /var/restore in agent.yaml, and holdfast-agent.service enabled and started. The first backup runs at
 #      once. A host Holdfast knows whose agent is enrolled to this server: holdfast job run <fqdn> fidelity instead. A host
@@ -139,8 +139,8 @@ print(h[0]["state"] if h else "absent")' "$fqdn" <<<"$hosts")
 		ids0=$(js 'print(" ".join(e["id"] for e in j or []))' <<<"$out")
 		out=$(hf host show "$fqdn" --json) || { fail "holdfast host show failed"; return 1; }
 		if [[ $(js 'print(" ".join(next((x["paths"] for x in j.get("jobs") or [] if x["id"] == sys.argv[1]), ["-"])))' "$job" <<<"$out") != "$fixture" ]]; then
-			say "  $vm: holdfast job set $fqdn $job --path $fixture --daily 03:00"
-			hf job set "$fqdn" "$job" --path "$fixture" --daily 03:00 -m "lab/lab test: the fidelity fixture" || { fail "holdfast job set failed"; return 1; }
+			say "  $vm: holdfast job set $fqdn $job --path $fixture --daily 03:00 --keep-daily 14d --keep-monthly 12mo"
+			hf job set "$fqdn" "$job" --path "$fixture" --daily 03:00 --keep-daily 14d --keep-monthly 12mo -m "lab/lab test: the fidelity fixture" || { fail "holdfast job set failed"; return 1; }
 		fi
 	fi
 	mode=enroll
@@ -160,8 +160,8 @@ print(h[0]["state"] if h else "absent")' "$fqdn" <<<"$hosts")
 		vm_ssh "$vm" 'systemctl disable -q --now holdfast-agent 2>/dev/null; rm -rf /etc/holdfast/agent.yaml /etc/holdfast/credentials /var/lib/holdfast-agent' </dev/null
 		local code
 		if [[ $hstate == absent ]]; then
-			say "  $vm: holdfast host add $fqdn --s3-key-file - --job $job --path $fixture --daily 03:00 (its key credentials/host-$vm.env on stdin)"
-			out=$(vm_ssh "$HF_SERVER_VM" "holdfast host add $fqdn --s3-key-file - --job $job --path $fixture --daily 03:00 -m 'lab/lab test: the fidelity fixture' --json" \
+			say "  $vm: holdfast host add $fqdn --s3-key-file - --job $job --path $fixture --daily 03:00 --keep-daily 14d --keep-monthly 12mo (its key credentials/host-$vm.env on stdin)"
+			out=$(vm_ssh "$HF_SERVER_VM" "holdfast host add $fqdn --s3-key-file - --job $job --path $fixture --daily 03:00 --keep-daily 14d --keep-monthly 12mo -m 'lab/lab test: the fidelity fixture' --json" \
 				<"$creds/host-$vm.env") || { fail "holdfast host add failed (the log has its answer)"; return 1; }
 			code=$(js 'print(j["enrollment"]["code"])' <<<"$out")
 			js 'print("added in revision %s; storage checks: %s%s" % (j["revision"], ", ".join(f["code"] for f in (j.get("storage") or {}).get("findings") or []) or "all passed", "; warning: " + j["warning"] if j.get("warning") else ""))' <<<"$out"

@@ -42,6 +42,9 @@ type Finding struct {
 type Report struct {
 	CheckedAt time.Time `json:"checked_at"`
 	Findings  []Finding `json:"findings"` // empty when every check passed
+	// NoncurrentDays is how long the bucket's lifecycle rule keeps a deleted file's old version, 0 if no
+	// rule was found. It dates when deleted data is really gone (decision 031).
+	NoncurrentDays int `json:"noncurrent_days,omitempty"`
 }
 
 // OK is true when every check passed.
@@ -130,8 +133,10 @@ func (p S3Prober) Probe(ctx context.Context, fqdn string, host Key) Report {
 				"the setting was left as it was), so a compromised server could switch off the floor", b)
 		}
 	}
-	if err := lifecycleExpires(ctx, mc, b); err != nil {
+	if days, err := lifecycleExpires(ctx, mc, b); err != nil {
 		add(CodeLifecycle, "%v", err)
+	} else {
+		rep.NoncurrentDays = days
 	}
 
 	// The host's own prefix.
@@ -208,27 +213,32 @@ func (p S3Prober) client(k Key, region string) (*minio.Client, error) {
 		Secure: u.Scheme == "https", Region: region})
 }
 
-// lifecycleExpires checks that an enabled lifecycle rule covering repos/ expires noncurrent versions.
-// Without one, the bucket only grows: nothing a prune deletes is ever freed. How long the versions are
-// kept is the admin's choice; it is also how long deleted data can be recovered.
-func lifecycleExpires(ctx context.Context, c *minio.Client, bucket string) error {
+// lifecycleExpires checks that an enabled lifecycle rule covering repos/ expires noncurrent versions, and
+// returns after how many days; with several such rules, the longest. Without one, the bucket only grows:
+// nothing a prune deletes is ever freed. How long the versions are kept is the admin's choice; it is also
+// how long deleted data can be recovered.
+func lifecycleExpires(ctx context.Context, c *minio.Client, bucket string) (int, error) {
 	lc, err := c.GetBucketLifecycle(ctx, bucket)
 	if err != nil {
 		if minio.ToErrorResponse(err).Code == "NoSuchLifecycleConfiguration" {
-			return fmt.Errorf("bucket %s has no lifecycle rule, so old versions are never removed and the bucket only grows", bucket)
+			return 0, fmt.Errorf("bucket %s has no lifecycle rule, so old versions are never removed and the bucket only grows", bucket)
 		}
-		return fmt.Errorf("the maintenance key cannot read bucket %s's lifecycle rule: %s", bucket, s3err(err))
+		return 0, fmt.Errorf("the maintenance key cannot read bucket %s's lifecycle rule: %s", bucket, s3err(err))
 	}
+	days := 0
 	for _, r := range lc.Rules {
 		prefix := r.RuleFilter.Prefix
 		if prefix == "" {
 			prefix = r.Prefix
 		}
-		if r.Status == "Enabled" && r.NoncurrentVersionExpiration.NoncurrentDays > 0 && strings.HasPrefix("repos/", prefix) {
-			return nil
+		if n := int(r.NoncurrentVersionExpiration.NoncurrentDays); r.Status == "Enabled" && n > 0 && strings.HasPrefix("repos/", prefix) {
+			days = max(days, n)
 		}
 	}
-	return fmt.Errorf("no enabled lifecycle rule on bucket %s expires noncurrent versions under repos/, so the bucket only grows", bucket)
+	if days == 0 {
+		return 0, fmt.Errorf("no enabled lifecycle rule on bucket %s expires noncurrent versions under repos/, so the bucket only grows", bucket)
+	}
+	return days, nil
 }
 
 func put(ctx context.Context, c *minio.Client, bucket, key string) (minio.UploadInfo, error) {

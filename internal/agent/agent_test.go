@@ -63,7 +63,8 @@ func TestAgentAgainstServer(t *testing.T) {
 	defer ts.Close()
 
 	root := server.Actor{Name: "local:root", Source: "cli"}
-	job := &config.Job{Paths: []string{dir}, Schedule: schedule.Schedule{Daily: &schedule.Daily{Times: []schedule.ClockTime{"02:00"}}}}
+	job := &config.Job{Paths: []string{dir}, Schedule: schedule.Schedule{Daily: &schedule.Daily{Times: []schedule.ClockTime{"02:00"}}},
+		Retention: config.Retention{Daily: &config.Duration{N: 14, Unit: config.Days}, Monthly: &config.Duration{N: 12, Unit: config.Months}, KeepLast: 3}}
 	res, err := srv.AddHost(ctx, root, server.AddHostInput{FQDN: "web01.example.com", JobID: "system", Job: job})
 	if err != nil {
 		t.Fatal(err)
@@ -115,7 +116,7 @@ func TestAgentAgainstServer(t *testing.T) {
 
 	// A config change reaches the agent, and the host is in sync again once it is applied.
 	if _, err := srv.SetJob(ctx, root, "web01.example.com", "system", server.SetJobInput{Message: "two paths", Job: config.Job{
-		Paths: []string{dir, "/tmp"}, Schedule: job.Schedule}}); err != nil {
+		Paths: []string{dir, "/tmp"}, Schedule: job.Schedule, Retention: job.Retention}}); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, "new revision applied", 15*time.Second, func() bool {
