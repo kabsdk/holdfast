@@ -359,9 +359,12 @@ host.
 - Only snapshots this agent made.
 
 **Running it**
-- A **dry run** is available.
-- The restic command uses whichever of `--include` or `--exclude` gives the shorter list, and always adds
-  `--sparse --verify`.
+- A **dry run** is available. It reports what would be restored, and writes nothing.
+- The request gives either what was left out (`--exclude`) or only what to restore (`--include`, for
+  **Restore only this**), not both. restic always runs with `--sparse --verify`.
+- The restore runs on the host, through its agent, in the agent's one-restic-at-a-time loop. Its result,
+  with counts and the target directory, is in the host's history and in the Restores tab (§5.5).
+- A restore that the host has not picked up within 24 hours is cancelled, and the cancellation is reported.
 
 **Per-file actions**
 - **Restore only this**.

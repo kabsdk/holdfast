@@ -12,10 +12,15 @@ should change.
 | The banners for a snapshot not made by Holdfast, a snapshot that disappeared, and a restic password added outside Holdfast. Each has a metric, an alert and `holdfast host acknowledge` | the same e2e test, promtool |
 | Restore through the agent: into a new root-only directory, keeping all 13 metadata properties; dry run; the host's own bounds in `agent.yaml`; no snapshot of another host; in place with a safety backup; the restore history; expiry after 24 hours | e2e `TestRestoreThroughTheAgent`, integration `TestRestoreRequests` |
 
+| Search: hosts, jobs, and snapshot IDs including tombstones (spec §5.6) | e2e, in `TestSnapshotCatalogueAndReads` |
+
 **Remaining for M2**
-- Search (spec §5.6).
 - The lab VM run (Q9), which is M2's "done when": the lab server, enrolling the three VMs, and the
-  fidelity test on each.
+  fidelity test on each (`lab/fidelity`).
+
+**Left for M4.** Spec §5.4's "Restore both versions to diff on the host" is two restores of one path,
+each with `--include`, into new directories. The UI makes them with two API calls and shows the `diff -u`
+command. It needs no endpoint of its own.
 
 ## 1. Goal and done when
 
