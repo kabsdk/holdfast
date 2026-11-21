@@ -377,12 +377,27 @@ var (
 	ErrCodeRevoked = errors.New("enrollment code was replaced by a newer one")
 )
 
+// CheckEnrollmentCode reports whether the code is valid for the host at now, without using it.
+// Enrollment checks it before it touches storage, so a stranger who knows only an FQDN causes no S3
+// traffic (decision 030).
+func (q *Q) CheckEnrollmentCode(ctx context.Context, fqdn, codeHash string, now time.Time) error {
+	return q.enrollmentCode(ctx, fqdn, codeHash, now, "")
+}
+
 // RedeemEnrollmentCode marks the code used if it is valid for the host at now.
 func (q *Q) RedeemEnrollmentCode(ctx context.Context, fqdn, codeHash string, now time.Time) error {
+	if err := q.enrollmentCode(ctx, fqdn, codeHash, now, " FOR UPDATE"); err != nil {
+		return err
+	}
+	_, err := q.db.Exec(ctx, `UPDATE enrollment_codes SET used_at = $2 WHERE code_sha256 = $1`, codeHash, now)
+	return err
+}
+
+func (q *Q) enrollmentCode(ctx context.Context, fqdn, codeHash string, now time.Time, lock string) error {
 	var expires time.Time
 	var used, revoked *time.Time
 	var codeHost string
-	err := q.db.QueryRow(ctx, `SELECT fqdn, expires_at, used_at, revoked_at FROM enrollment_codes WHERE code_sha256 = $1 FOR UPDATE`, codeHash).
+	err := q.db.QueryRow(ctx, `SELECT fqdn, expires_at, used_at, revoked_at FROM enrollment_codes WHERE code_sha256 = $1`+lock, codeHash).
 		Scan(&codeHost, &expires, &used, &revoked)
 	switch {
 	case errors.Is(err, pgx.ErrNoRows), err == nil && codeHost != fqdn:
@@ -396,8 +411,7 @@ func (q *Q) RedeemEnrollmentCode(ctx context.Context, fqdn, codeHash string, now
 	case !now.Before(expires):
 		return ErrCodeExpired
 	}
-	_, err = q.db.Exec(ctx, `UPDATE enrollment_codes SET used_at = $2 WHERE code_sha256 = $1`, codeHash, now)
-	return err
+	return nil
 }
 
 /* ---------------- agents ---------------- */
@@ -618,15 +632,17 @@ func (q *Q) InsertEvent(ctx context.Context, e Event) (bool, error) {
 		return true, err
 	}
 	if e.Kind == "backup" && e.JobID != "" && e.Status != "skipped" {
+		// The latest report wins. The agent sends its reports in the order its runs end, so the order they
+		// arrive in is the order of the runs. The agent's clock does not decide it (decision 030).
 		ok := e.Status == "success" || e.Status == "warning"
 		if _, err := q.db.Exec(ctx, `INSERT INTO job_status (fqdn, job_id, last_run_at, last_status, last_error, last_success_at, last_snapshot_id)
 			VALUES ($1, $2, $3, $4, $5, CASE WHEN $6 THEN $3::timestamptz END, CASE WHEN $6 THEN $7 ELSE '' END)
 			ON CONFLICT (fqdn, job_id) DO UPDATE SET
-			  last_run_at = GREATEST(job_status.last_run_at, EXCLUDED.last_run_at),
-			  last_status = CASE WHEN job_status.last_run_at IS NULL OR EXCLUDED.last_run_at >= job_status.last_run_at THEN EXCLUDED.last_status ELSE job_status.last_status END,
-			  last_error = CASE WHEN job_status.last_run_at IS NULL OR EXCLUDED.last_run_at >= job_status.last_run_at THEN EXCLUDED.last_error ELSE job_status.last_error END,
-			  last_success_at = CASE WHEN $6 AND (job_status.last_success_at IS NULL OR EXCLUDED.last_run_at > job_status.last_success_at) THEN EXCLUDED.last_run_at ELSE job_status.last_success_at END,
-			  last_snapshot_id = CASE WHEN $6 AND (job_status.last_success_at IS NULL OR EXCLUDED.last_run_at > job_status.last_success_at) THEN $7 ELSE job_status.last_snapshot_id END`,
+			  last_run_at = EXCLUDED.last_run_at,
+			  last_status = EXCLUDED.last_status,
+			  last_error = EXCLUDED.last_error,
+			  last_success_at = CASE WHEN $6 THEN EXCLUDED.last_run_at ELSE job_status.last_success_at END,
+			  last_snapshot_id = CASE WHEN $6 THEN $7 ELSE job_status.last_snapshot_id END`,
 			e.FQDN, e.JobID, e.Finished, e.Status, e.Error, ok, e.SnapshotID); err != nil {
 			return true, err
 		}
@@ -775,44 +791,9 @@ func (q *Q) FinishMaintenance(ctx context.Context, id int64, status, errText str
 	return err
 }
 
-// MaintenanceRun is one maintenance run that has not finished.
-type MaintenanceRun struct {
-	ID        int64
-	FQDN      string
-	Kind      string
-	Subset    string
-	StartedAt time.Time
-}
-
-// UnfinishedMaintenance returns the runs this node started before the given time that never recorded
-// an end: the server stopped while they ran.
-func (q *Q) UnfinishedMaintenance(ctx context.Context, node string, before time.Time) ([]MaintenanceRun, error) {
-	rows, err := q.db.Query(ctx, `SELECT id, fqdn, kind, subset, started_at FROM maintenance_runs
-		WHERE finished_at IS NULL AND node = $1 AND started_at < $2 ORDER BY id`, node, before)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []MaintenanceRun
-	for rows.Next() {
-		var m MaintenanceRun
-		if err := rows.Scan(&m.ID, &m.FQDN, &m.Kind, &m.Subset, &m.StartedAt); err != nil {
-			return nil, err
-		}
-		out = append(out, m)
-	}
-	return out, rows.Err()
-}
-
-// LastMaintenanceSuccess returns, per host, when the given kind of maintenance last succeeded.
-func (q *Q) LastMaintenanceSuccess(ctx context.Context, kind string) (map[string]time.Time, error) {
-	return q.timesByHost(ctx, `SELECT fqdn, max(finished_at) FROM maintenance_runs WHERE kind = $1 AND status = 'success' GROUP BY fqdn`, kind)
-}
-
-// LastMaintenanceStart returns, per host, when the given kind of maintenance last started, whatever
-// its outcome.
-func (q *Q) LastMaintenanceStart(ctx context.Context, kind string) (map[string]time.Time, error) {
-	return q.timesByHost(ctx, `SELECT fqdn, max(started_at) FROM maintenance_runs WHERE kind = $1 GROUP BY fqdn`, kind)
+// LastCheckSuccess returns, per host, when the agent's repository check last succeeded (decision 030).
+func (q *Q) LastCheckSuccess(ctx context.Context) (map[string]time.Time, error) {
+	return q.timesByHost(ctx, `SELECT fqdn, max(finished_at) FROM events WHERE kind = 'check' AND status = 'success' GROUP BY fqdn`)
 }
 
 func (q *Q) timesByHost(ctx context.Context, sql string, args ...any) (map[string]time.Time, error) {

@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -16,6 +17,7 @@ import (
 	"log/slog"
 	"math/big"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -53,10 +55,11 @@ type runMarker struct {
 
 // Agent is one running agent.
 type Agent struct {
-	cfg    Config
-	client *http.Client
-	log    *slog.Logger
-	now    func() time.Time
+	cfg        Config
+	client     *http.Client
+	log        *slog.Logger
+	now        func() time.Time
+	runTimeout func(schedule.Schedule) time.Duration // RunTimeout; tests shorten it
 
 	mu        sync.Mutex
 	token     string
@@ -66,6 +69,7 @@ type Agent struct {
 	toAck     []string
 	done      map[string]time.Time // command IDs already run, so a re-sent command runs once
 	running   *proto.Running
+	lastCheck time.Time // when the last repository check started
 	factsOnce sync.Once
 	base      proto.Facts // facts that do not change while the agent runs
 
@@ -84,36 +88,64 @@ func New(cfg Config, log *slog.Logger) (*Agent, error) {
 			return nil, err
 		}
 	}
-	client, err := httpClient(cfg.CASHA256)
+	client, err := httpClient(cfg.Server, cfg.CASHA256)
 	if err != nil {
 		return nil, err
 	}
-	a := &Agent{cfg: cfg, client: client, log: log, now: time.Now, sched: map[string]*jobState{}, done: map[string]time.Time{},
+	a := &Agent{cfg: cfg, client: client, log: log, now: time.Now, runTimeout: RunTimeout, sched: map[string]*jobState{}, done: map[string]time.Time{},
 		wake: make(chan struct{}, 1), flushNow: make(chan struct{}, 1)}
 	a.load()
 	return a, nil
 }
 
-// httpClient pins the server when a fingerprint is given: some certificate in the chain the server
-// presents must have that sha256.
-func httpClient(pin string) (*http.Client, error) {
+// httpClient pins the server when a fingerprint is given. Without one, the system's roots apply.
+func httpClient(server, pin string) (*http.Client, error) {
 	tr := http.DefaultTransport.(*http.Transport).Clone()
 	if pin != "" {
+		u, err := url.Parse(server)
+		if err != nil || u.Hostname() == "" {
+			return nil, fmt.Errorf("server %q is not a URL", server)
+		}
+		host := u.Hostname()
 		pin = strings.ToLower(strings.ReplaceAll(pin, ":", ""))
 		tr.TLSClientConfig = &tls.Config{
-			InsecureSkipVerify: true, // replaced by the pin check below
+			InsecureSkipVerify: true, // the standard verification is replaced by verifyPinned
 			VerifyConnection: func(cs tls.ConnectionState) error {
-				for _, c := range cs.PeerCertificates {
-					sum := sha256.Sum256(c.Raw)
-					if hex.EncodeToString(sum[:]) == pin {
-						return nil
-					}
-				}
-				return errors.New("the server's certificate chain does not match the pinned fingerprint")
+				return verifyPinned(cs.PeerCertificates, pin, host)
 			},
 		}
 	}
 	return &http.Client{Transport: tr}, nil
+}
+
+// verifyPinned accepts a server whose own certificate chains to the pinned certificate and names host.
+//
+// The pin is the sha256 of one certificate in the chain the server sends: normally its CA's, or its own
+// if it is self-signed. That certificate becomes the only trusted root. Finding the pin somewhere in the
+// chain is not enough on its own. A CA's certificate is public, so a man in the middle could send it
+// along with a certificate of his own (decision 030).
+func verifyPinned(chain []*x509.Certificate, pin, host string) error {
+	if len(chain) == 0 {
+		return errors.New("the server sent no certificate")
+	}
+	roots, intermediates := x509.NewCertPool(), x509.NewCertPool()
+	found := false
+	for _, c := range chain {
+		sum := sha256.Sum256(c.Raw)
+		if hex.EncodeToString(sum[:]) == pin {
+			roots.AddCert(c)
+			found = true
+		} else {
+			intermediates.AddCert(c)
+		}
+	}
+	if !found {
+		return errors.New("the server's certificate chain does not match the pinned fingerprint")
+	}
+	if _, err := chain[0].Verify(x509.VerifyOptions{Roots: roots, Intermediates: intermediates, DNSName: host}); err != nil {
+		return fmt.Errorf("the server's certificate does not chain to the pinned certificate for %s: %w", host, err)
+	}
+	return nil
 }
 
 func (a *Agent) path(name string) string { return filepath.Join(a.cfg.StateDir, name) }
@@ -140,6 +172,14 @@ func (a *Agent) load() {
 	}
 	if b, err := os.ReadFile(a.path("commands-done.json")); err == nil {
 		_ = json.Unmarshal(b, &a.done)
+	}
+	if b, err := os.ReadFile(a.path("check.json")); err == nil {
+		var c struct {
+			Last time.Time `json:"last"`
+		}
+		if json.Unmarshal(b, &c) == nil {
+			a.lastCheck = c.Last
+		}
 	}
 }
 
@@ -589,6 +629,7 @@ func (a *Agent) workLoop(ctx context.Context) {
 				break
 			}
 			a.runScheduled(ctx, j, st)
+			a.checkIfDue(ctx, st)
 		}
 	}
 }
@@ -648,6 +689,8 @@ func (a *Agent) execCommand(ctx context.Context, c proto.Command) {
 			return
 		}
 		a.runBackup(ctx, *job, c.ID, nil, 0)
+	case proto.CommandCheckNow:
+		a.runCheck(ctx, c.ID)
 	default:
 		now := a.now().UTC()
 		a.spool(proto.Event{Kind: c.Kind, CommandID: c.ID, Status: proto.StatusFailed, Started: now, Finished: now, Error: "unknown command kind"})
@@ -751,13 +794,21 @@ func (a *Agent) runBackup(ctx context.Context, j proto.JobConfig, commandID stri
 
 	// The agent's own state (restic cache, spool, token) is never backed up (plan-m1 Q13).
 	excludes := append(append([]string(nil), j.Excludes...), a.cfg.StateDir)
-	res, err := r.Backup(ctx, restic.BackupOptions{Paths: j.Paths, Excludes: excludes, Host: a.cfg.FQDN, Tags: []string{"job=" + j.ID}})
+	timeout := a.runTimeout(j.Schedule)
+	rctx, cancel := context.WithTimeout(ctx, timeout)
+	res, err := r.Backup(rctx, restic.BackupOptions{Paths: j.Paths, Excludes: excludes, Host: a.cfg.FQDN, Tags: []string{"job=" + j.ID}})
+	timedOut := errors.Is(rctx.Err(), context.DeadlineExceeded)
+	cancel()
 	if ctx.Err() != nil {
 		return false
 	}
 	ev := proto.Event{Kind: proto.KindBackup, JobID: j.ID, CommandID: commandID, ScheduledFor: slot, SpreadDelayS: delay,
 		Started: started, Finished: a.now().UTC(), Revision: rev}
 	switch {
+	case timedOut:
+		ev.Status, ev.ResticExit = proto.StatusFailed, restic.ExitCode(err)
+		ev.Error = fmt.Sprintf("the backup ran for %s, its schedule's longest gap, and was stopped so the host's other jobs can run", timeout)
+		a.unlockStale(ctx)
 	case err != nil:
 		ev.Status, ev.Error, ev.ResticExit = proto.StatusFailed, err.Error(), restic.ExitCode(err)
 	case res.Incomplete:
@@ -800,16 +851,100 @@ func (a *Agent) recoverInterrupted(ctx context.Context) {
 		a.mu.Unlock()
 	}
 	_ = os.Remove(a.path("running.json"))
+	a.unlockStale(ctx)
+}
+
+/* ---------------- the repository check (decision 030) ---------------- */
+
+// checkIfDue runs the daily repository check after a backup that succeeded, at most once in 23 hours.
+// It runs in the agent's one-restic-at-a-time loop. restic check takes an exclusive lock, but here it can
+// never meet this host's own backups.
+func (a *Agent) checkIfDue(ctx context.Context, st *jobState) {
+	a.mu.Lock()
+	on := a.hc != nil && a.hc.Check != nil && a.hc.Check.CycleDays > 0
+	ok := st != nil && (st.LastStatus == proto.StatusSuccess || st.LastStatus == proto.StatusWarning)
+	last := a.lastCheck
+	a.mu.Unlock()
+	if on && ok && a.now().Sub(last) >= 23*time.Hour {
+		a.runCheck(ctx, "")
+	}
+}
+
+// checkTimeout bounds a check: the shortest run timeout of the host's jobs, so a slow check delays the
+// most frequent job by at most one of its gaps.
+func (a *Agent) checkTimeout() time.Duration {
+	t := 24 * time.Hour
+	if a.hc != nil {
+		for _, j := range a.hc.Jobs {
+			t = min(t, a.runTimeout(j.Schedule))
+		}
+	}
+	return t
+}
+
+// runCheck runs restic check --read-data-subset n/cycle, with n turning daily, and reports it. A check
+// that fails is reported as failed: the repository may be damaged. It returns false on shutdown.
+func (a *Agent) runCheck(ctx context.Context, commandID string) bool {
+	started := a.now().UTC()
+	a.mu.Lock()
+	cycle := 30 // a check on request reads a subset too, even with daily checks off
+	if a.hc != nil && a.hc.Check != nil && a.hc.Check.CycleDays > 0 {
+		cycle = a.hc.Check.CycleDays
+	}
+	r, rev, timeout := a.runner(), a.revision(), a.checkTimeout()
+	a.lastCheck = started
+	a.running = &proto.Running{Kind: proto.KindCheck, Since: started}
+	b, _ := json.Marshal(map[string]time.Time{"last": started})
+	a.mu.Unlock()
+	_ = writeFileAtomic(a.path("check.json"), b, 0o600)
+	a.mark(runMarker{Kind: proto.KindCheck, CommandID: commandID, Started: started, Revision: rev})
+
+	subset := fmt.Sprintf("%d/%d", started.YearDay()%cycle+1, cycle)
+	rctx, cancel := context.WithTimeout(ctx, timeout)
+	err := r.Check(rctx, subset)
+	timedOut := errors.Is(rctx.Err(), context.DeadlineExceeded)
+	cancel()
+	if ctx.Err() != nil {
+		return false
+	}
+	ev := proto.Event{Kind: proto.KindCheck, CommandID: commandID, Status: proto.StatusSuccess, Started: started, Finished: a.now().UTC(), Revision: rev}
+	switch {
+	case timedOut:
+		ev.Status, ev.ResticExit = proto.StatusFailed, restic.ExitCode(err)
+		ev.Error = fmt.Sprintf("the check of subset %s ran for %s and was stopped", subset, timeout)
+		a.unlockStale(ctx)
+	case err != nil:
+		ev.Status, ev.ResticExit, ev.Error = proto.StatusFailed, restic.ExitCode(err), "check of subset "+subset+": "+err.Error()
+	}
+	a.mu.Lock()
+	a.running = nil
+	a.mu.Unlock()
+	a.spool(ev)
+	_ = os.Remove(a.path("running.json"))
+	return true
+}
+
+// unlockStale removes stale restic locks only (never --remove-all), after a run that did not end
+// normally.
+func (a *Agent) unlockStale(ctx context.Context) {
 	a.mu.Lock()
 	r := a.runner()
 	a.mu.Unlock()
-	if r.Repo != "" {
-		if out, err := r.Unlock(ctx); err != nil {
-			a.log.Warn("removing stale locks failed", "err", err)
-		} else {
-			a.log.Info("removed stale locks after an interrupted run", "restic", out)
-		}
+	if r.Repo == "" {
+		return
 	}
+	if out, err := r.Unlock(ctx); err != nil {
+		a.log.Warn("removing stale locks failed", "err", err)
+	} else {
+		a.log.Info("removed stale locks after a run that did not finish", "restic", out)
+	}
+}
+
+// RunTimeout is how long one backup may run: its schedule's longest gap, and at least an hour. A
+// longer run would only skip its own next slots, and it would hold up the host's other jobs, since the
+// agent runs one restic at a time (decision 030).
+func RunTimeout(s schedule.Schedule) time.Duration {
+	return max(s.LongestGap(), time.Hour)
 }
 
 func sleep(ctx context.Context, d time.Duration) {

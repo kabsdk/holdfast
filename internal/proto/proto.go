@@ -75,11 +75,19 @@ type JobConfig struct {
 
 // HostConfig is the desired state of one host.
 type HostConfig struct {
-	FQDN       string      `json:"fqdn"`
-	Revision   int64       `json:"revision"` // the revision in which this host's config last changed
-	SHA256     string      `json:"sha256"`
-	Repository string      `json:"repository"`
-	Jobs       []JobConfig `json:"jobs"`
+	FQDN       string       `json:"fqdn"`
+	Revision   int64        `json:"revision"` // the revision in which this host's config last changed
+	SHA256     string       `json:"sha256"`
+	Repository string       `json:"repository"`
+	Jobs       []JobConfig  `json:"jobs"`
+	Check      *CheckConfig `json:"check,omitempty"` // nil: no daily check, only checks on request
+}
+
+// CheckConfig is the agent's daily repository check (decision 030). After a backup, once a day, the
+// agent runs restic check --read-data-subset n/CycleDays, so all data is read once per cycle. It runs in
+// the agent's one-restic-at-a-time loop, so it can never meet the host's own backups.
+type CheckConfig struct {
+	CycleDays int `json:"cycle_days"`
 }
 
 // ComputeSHA256 returns the sha256 of the host config without its Revision and SHA256 fields, so
@@ -109,6 +117,7 @@ type Credentials struct {
 // Command kinds.
 const (
 	CommandBackupNow = "backup_now"
+	CommandCheckNow  = "check_now" // `holdfast check`: run the repository check now
 )
 
 // Command is work queued for the agent. Commands are re-sent until acknowledged; the agent
@@ -139,6 +148,7 @@ const (
 // Event kinds.
 const (
 	KindBackup = "backup"
+	KindCheck  = "check" // restic check of the host's repository, run by the agent
 )
 
 // Event is the final result of one run. The agent spools it on disk until the server acknowledges it.

@@ -166,18 +166,23 @@ func TestEventsAreStoredOnce(t *testing.T) {
 			t.Fatalf("delivery %d: inserted=%v err=%v", i, inserted, err)
 		}
 	}
-	// An older failure arriving late must not overwrite the newer success.
-	_, _ = q.InsertEvent(ctx, Event{FQDN: "web01.example.com", ID: "e0", Kind: "backup", JobID: "system", Status: "failed", Started: now.Add(-time.Hour), Finished: now.Add(-time.Hour), Error: "boom"})
+	// The latest report wins, whatever the agent's clock says (decision 030). The agent sends reports in
+	// the order its runs end. Here its clock had jumped back, and the failure must still show.
+	_, _ = q.InsertEvent(ctx, Event{FQDN: "web01.example.com", ID: "e2", Kind: "backup", JobID: "system", Status: "failed", Started: now.Add(-time.Hour), Finished: now.Add(-time.Hour), Error: "boom"})
 	st, _ := q.ListJobStatus(ctx)
-	if len(st) != 1 || st[0].LastStatus != "success" || st[0].LastSnapshotID != "snap1" {
-		t.Fatalf("job status: %+v", st)
+	if len(st) != 1 || st[0].LastStatus != "failed" || st[0].LastError != "boom" || st[0].LastSnapshotID != "snap1" || !st[0].LastSuccessAt.Equal(now.Add(time.Minute)) {
+		t.Fatalf("job status after a report dated earlier: %+v", st)
+	}
+	_, _ = q.InsertEvent(ctx, Event{FQDN: "web01.example.com", ID: "e3", Kind: "backup", JobID: "system", Status: "success", Started: now.Add(-50 * time.Minute), Finished: now.Add(-50 * time.Minute), SnapshotID: "snap3"})
+	if st, _ = q.ListJobStatus(ctx); st[0].LastStatus != "success" || st[0].LastSnapshotID != "snap3" {
+		t.Fatalf("the next success, also dated earlier, must show: %+v", st)
 	}
 	counters, _ := q.ListRunCounters(ctx)
 	got := map[string]int64{}
 	for _, c := range counters {
 		got[c.Status] = c.Count
 	}
-	if got["success"] != 1 || got["failed"] != 1 {
+	if got["success"] != 2 || got["failed"] != 1 {
 		t.Fatalf("counters: %+v", counters)
 	}
 	h, _ := q.GetHost(ctx, "web01.example.com")

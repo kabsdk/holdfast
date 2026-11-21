@@ -24,9 +24,8 @@ storage:
   # provisioner_command: [/usr/local/libexec/holdfast-provision-host]
 
 maintenance:
-  # restic check with a rotating read-data subset (M1 runs check only). It takes an exclusive lock,
-  # so each host is checked once a day in the middle of the day's longest quiet stretch, away from its
-  # backups. "off" leaves only `holdfast check`.
+  # Each agent runs restic check on its own repository once a day, right after a backup, reading a
+  # rotating 1/check_cycle_days of the data. "off" leaves only `holdfast check`.
   check: daily
   check_cycle_days: 30
 

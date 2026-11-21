@@ -202,17 +202,21 @@ func newEnvWith(t *testing.T, o envOpts) *env {
 	}
 	mc(t, "mb", "--quiet", "hf/"+e.bucket)
 	mc(t, "version", "enable", "hf/"+e.bucket)
+	mc(t, "ilm", "rule", "add", "--noncurrent-expire-days", "30", "hf/"+e.bucket) // docs/storage.md, B011
 	dsn := testpg.DSN(t)
 	e.dsn = dsn
 	keygen := exec.Command(filepath.Join(binDir, "holdfast-server"), "keygen", filepath.Join(dir, "credentials.key"))
 	if out, err := keygen.CombinedOutput(); err != nil {
 		t.Fatalf("keygen: %v %s", err, out)
 	}
+	// The server's maintenance key is a user with docs/storage.md's policy, not MinIO's root, which could
+	// change the bucket's settings (B010).
 	maint := filepath.Join(dir, "maintenance.env")
-	mak, msk := s3User, s3Pass
-	if o.MaintPolicy != "" {
-		mak, msk = e.makeUser(o.MaintPolicy)
+	policy := o.MaintPolicy
+	if policy == "" {
+		policy = e.maintPolicy()
 	}
+	mak, msk := e.makeUser(policy)
 	must(t, os.WriteFile(maint, []byte("AWS_ACCESS_KEY_ID="+mak+"\nAWS_SECRET_ACCESS_KEY="+msk+"\n"), 0o600))
 	stor := map[string]any{"endpoint": endpoint, "bucket": e.bucket, "region": "us-east-1", "maintenance_credentials_file": maint}
 	if o.Provisioner {
@@ -303,6 +307,15 @@ func (e *env) hostPolicy(fqdn string) string {
  {"Effect":"Allow","Action":["s3:ListBucket"],"Resource":["arn:aws:s3:::` + b + `"],"Condition":{"StringLike":{"s3:prefix":["` + p + `","` + p + `/*"]}}},
  {"Effect":"Allow","Action":["s3:GetObject","s3:PutObject"],"Resource":["arn:aws:s3:::` + b + `/` + p + `/*"]},
  {"Effect":"Allow","Action":["s3:DeleteObject"],"Resource":["arn:aws:s3:::` + b + `/` + p + `/locks/*"]}]}`
+}
+
+// maintPolicy is the example maintenance policy of docs/storage.md, for this environment's bucket.
+func (e *env) maintPolicy() string {
+	b := e.bucket
+	return `{"Version":"2012-10-17","Statement":[
+ {"Effect":"Allow","Action":["s3:ListBucket","s3:GetBucketLocation","s3:GetBucketVersioning","s3:GetLifecycleConfiguration"],"Resource":["arn:aws:s3:::` + b + `"]},
+ {"Effect":"Allow","Action":["s3:GetObject","s3:PutObject","s3:DeleteObject"],"Resource":["arn:aws:s3:::` + b + `/repos/*"]},
+ {"Effect":"Deny","Action":["s3:DeleteObjectVersion"],"Resource":["arn:aws:s3:::` + b + `/*"]}]}`
 }
 
 // makeUser makes a MinIO user with its own policy, as an admin would with the S3 server's own tools.
@@ -440,27 +453,67 @@ func (e *env) audit(fqdn string) []auditEntry {
 
 /* ---------------- TLS ---------------- */
 
-type tlsFiles struct{ cert, key, pin string }
+type tlsFiles struct {
+	cert, key, pin string
+	caDER          []byte // the CA's certificate, which is public
+}
 
-// selfSigned makes a certificate for 127.0.0.1 and returns its files and its sha256 pin.
-func selfSigned(t *testing.T) *tlsFiles {
+// newCert makes a certificate. A CA when isCA; otherwise a server certificate for 127.0.0.1, signed by
+// parent's key (self-signed when parent is nil).
+func newCert(t *testing.T, isCA bool, parent *x509.Certificate, parentKey *ecdsa.PrivateKey) ([]byte, *x509.Certificate, *ecdsa.PrivateKey) {
 	t.Helper()
 	k, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	must(t, err)
-	tmpl := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "holdfast-e2e"},
-		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(24 * time.Hour), IPAddresses: []net.IP{net.ParseIP("127.0.0.1")},
-		KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &k.PublicKey, k)
+	serial, _ := rand.Int(rand.Reader, big.NewInt(1<<62))
+	tmpl := &x509.Certificate{SerialNumber: serial, Subject: pkix.Name{CommonName: "holdfast-e2e"},
+		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(24 * time.Hour)}
+	if isCA {
+		tmpl.IsCA, tmpl.BasicConstraintsValid, tmpl.KeyUsage = true, true, x509.KeyUsageCertSign|x509.KeyUsageDigitalSignature
+	} else {
+		tmpl.IPAddresses = []net.IP{net.ParseIP("127.0.0.1")}
+		tmpl.KeyUsage, tmpl.ExtKeyUsage = x509.KeyUsageDigitalSignature, []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}
+	}
+	if parent == nil {
+		parent, parentKey = tmpl, k
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, parent, &k.PublicKey, parentKey)
 	must(t, err)
+	c, err := x509.ParseCertificate(der)
+	must(t, err)
+	return der, c, k
+}
+
+// serverCert makes a CA and a server certificate for 127.0.0.1 signed by it, as in production. The
+// certificate file holds the chain (server, then CA); pin is the CA's sha256.
+func serverCert(t *testing.T) *tlsFiles {
+	t.Helper()
+	caDER, ca, caKey := newCert(t, true, nil, nil)
+	der, _, k := newCert(t, false, ca, caKey)
 	kb, err := x509.MarshalECPrivateKey(k)
 	must(t, err)
 	dir := t.TempDir()
-	f := &tlsFiles{cert: filepath.Join(dir, "server.crt"), key: filepath.Join(dir, "server.key")}
-	must(t, os.WriteFile(f.cert, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o644))
+	f := &tlsFiles{cert: filepath.Join(dir, "server.crt"), key: filepath.Join(dir, "server.key"), caDER: caDER}
+	chain := append(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER})...)
+	must(t, os.WriteFile(f.cert, chain, 0o644))
 	must(t, os.WriteFile(f.key, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: kb}), 0o600))
-	sum := sha256.Sum256(der)
+	sum := sha256.Sum256(caDER)
 	f.pin = hex.EncodeToString(sum[:])
 	return f
+}
+
+// impostor serves HTTPS on 127.0.0.1 with a certificate of its own, sent with the real CA's certificate
+// after it, so the pinned fingerprint is in the chain. It is a man in the middle who knows the public CA.
+func impostor(t *testing.T, real *tlsFiles) string {
+	t.Helper()
+	der, _, k := newCert(t, false, nil, nil)
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("the impostor was trusted: the agent sent %s %s", r.Method, r.URL.Path)
+		http.Error(w, "impostor", http.StatusTeapot)
+	}))
+	srv.TLS = &tls.Config{Certificates: []tls.Certificate{{Certificate: [][]byte{der, real.caDER}, PrivateKey: k}}}
+	srv.StartTLS()
+	t.Cleanup(srv.Close)
+	return srv.URL
 }
 
 /* ---------------- proxies ---------------- */
@@ -574,8 +627,9 @@ type hostView struct {
 	InSync          bool   `json:"in_sync"`
 	DesiredRevision int64  `json:"desired_revision"`
 	Agent           *struct {
-		AppliedRevision int64  `json:"applied_revision"`
-		ResticVersion   string `json:"restic_version"`
+		AppliedRevision    int64  `json:"applied_revision"`
+		ResticVersion      string `json:"restic_version"`
+		CredentialsVersion int    `json:"credentials_version"`
 	} `json:"agent"`
 	Storage *struct {
 		Findings []struct {

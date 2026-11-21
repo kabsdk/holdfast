@@ -25,6 +25,7 @@ func main() {
 	credFile := flag.String("credentials-file", "/etc/holdfast/witness.env", "file with AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY (list-only)")
 	listen := flag.String("listen", ":9817", "metrics listen address")
 	once := flag.Bool("once", false, "print the metrics once and exit")
+	staleAfter := flag.Duration("stale-after", 48*time.Hour, "a host is stale after this long without a new snapshot, when the server's schedules are not available")
 	flag.Parse()
 	if *endpoint == "" || *bucket == "" {
 		log.Fatal("-endpoint and -bucket are required")
@@ -44,7 +45,7 @@ func main() {
 		if err != nil {
 			log.Printf("listing storage failed: %v", err)
 		}
-		return freshness.Metrics(st, err)
+		return freshness.Metrics(st, err, *staleAfter)
 	}
 	if *once {
 		fmt.Print(scrape(context.Background()))

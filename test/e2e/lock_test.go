@@ -25,8 +25,9 @@ func resticCmd(r restic.Runner, args ...string) *exec.Cmd {
 	return cmd
 }
 
-// TestCheckLockIsExclusive asserts the restic behaviour that the placement of the daily check rests on
-// (plan-m1 §10), with Holdfast's own identities: the maintenance key checks, the host key backs up.
+// TestCheckLockIsExclusive asserts the restic behaviour behind two choices (decision 030), with Holdfast's
+// own identities. The agent runs its check inside its one-restic-at-a-time loop, and the server (M3)
+// places its prunes away from backups. Here the maintenance key checks and the host key backs up.
 //
 // While check holds its lock: the lock is exclusive; a backup without --retry-lock fails at once with
 // exit 11; a locking read fails the same way and a --no-lock read works; unlock leaves the live lock

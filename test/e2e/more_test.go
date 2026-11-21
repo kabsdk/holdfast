@@ -181,12 +181,24 @@ func TestConfigHistoryDriftCheckAndNoLeaks(t *testing.T) {
 	e.runAgent(a)
 	waitFor(t, "back in sync on revision 3", 30*time.Second, func() bool { h := e.host(fqdn); return h.InSync && h.Agent != nil && h.Agent.AppliedRevision == 3 })
 
-	// A repository check, run by the server.
-	var checks []struct{ FQDN, Status, Error string }
+	// A repository check: the server tests the storage at once, and the agent runs restic check in its own
+	// loop and reports it (decision 030).
+	var checks []struct{ FQDN, Status, Command, Error string }
 	must(t, json.Unmarshal(e.cli("check"), &checks))
-	if len(checks) != 1 || checks[0].Status != "success" {
+	if len(checks) != 1 || checks[0].Status != "requested" || checks[0].Command == "" {
 		t.Fatalf("check: %+v", checks)
 	}
+	waitFor(t, "the agent's check", time.Minute, func() bool {
+		for _, ev := range e.events(fqdn) {
+			if ev.Kind == "check" && ev.CommandID == checks[0].Command {
+				if ev.Status != "success" {
+					t.Fatalf("the agent's check: %+v", ev)
+				}
+				return true
+			}
+		}
+		return false
+	})
 	if m := metrics(t, e.url+"/metrics"); m[`holdfast_maintenance_last_success_timestamp_seconds{host="mon01.example.com",kind="check"}`] == 0 {
 		t.Fatal("check success not exported")
 	}
@@ -196,7 +208,7 @@ func TestConfigHistoryDriftCheckAndNoLeaks(t *testing.T) {
 	for _, en := range e.audit(fqdn) {
 		actions[en.Action] = en.Actor
 	}
-	for _, want := range []string{"host.add", "enrollment.code_issued", "agent.enrolled", "job.change", "maintenance.check"} {
+	for _, want := range []string{"host.add", "enrollment.code_issued", "agent.enrolled", "job.change", "maintenance.check_requested"} {
 		if _, ok := actions[want]; !ok {
 			t.Errorf("audit lacks %s (has %v)", want, actions)
 		}
@@ -286,11 +298,13 @@ func TestEnrollment(t *testing.T) {
 	e.waitProgress(fqdn, "first_backup_done", 2*time.Minute)
 }
 
-// TLS: the install command carries the server's fingerprint; an agent with a wrong pin refuses to
-// talk to the server (and the code stays valid); with the right pin it enrolls and backs up.
+// TLS: the install command carries the server CA's fingerprint. An agent with a wrong pin refuses to
+// talk to the server, and the code stays valid. So does an agent talking to a man in the middle who
+// presents the real CA's certificate next to his own (decision 030). With the right pin and the real
+// server, it enrolls and backs up.
 func TestTLSPinning(t *testing.T) {
 	src := smallSource(t)
-	cert := selfSigned(t)
+	cert := serverCert(t)
 	e := newEnvWith(t, envOpts{TLS: cert})
 	const fqdn = "sec01.example.com"
 	var res struct {
@@ -306,6 +320,9 @@ func TestTLSPinning(t *testing.T) {
 	}
 	if _, out, err := e.enrollAgentWith(fqdn, res.Enrollment.Code, e.url, "--ca-sha256", strings.Repeat("ab", 32)); err == nil || !strings.Contains(string(out), "pinned fingerprint") {
 		t.Fatalf("an agent with the wrong pin must refuse the server: %v %s", err, out)
+	}
+	if _, out, err := e.enrollAgentWith(fqdn, res.Enrollment.Code, impostor(t, cert), "--ca-sha256", cert.pin); err == nil || !strings.Contains(string(out), "does not chain to the pinned certificate") {
+		t.Fatalf("an agent must refuse a man in the middle who shows the real CA's certificate: %v %s", err, out)
 	}
 	a, out, err := e.enrollAgentWith(fqdn, res.Enrollment.Code, e.url, "--ca-sha256", cert.pin)
 	if err != nil {

@@ -64,11 +64,16 @@ groups:
           summary: "The clock on {{ $labels.host }} is {{ $value }}s off the server's: schedules and snapshot times are skewed"
 
       - alert: HoldfastStorageStale
-        # Independent of the server: read straight from the bucket.
+        # Read straight from the bucket. The threshold is twice the gap of the host's most frequent job,
+        # from the server. When the server's series are missing (the server or PostgreSQL is down), it
+        # falls back to the witness's own -stale-after, so this still fires (decision 030).
         expr: |
-          (time() - max by (host) (holdfast_storage_newest_snapshot_timestamp_seconds)
-            > 2 * max by (host) (holdfast_job_longest_gap_seconds))
-          and max by (host) (holdfast_storage_newest_snapshot_timestamp_seconds) > 0
+          (time() - max by (host) (holdfast_storage_newest_snapshot_timestamp_seconds))
+            > on(host) (
+                2 * min by (host) (holdfast_job_longest_gap_seconds)
+                or max by (host) (holdfast_storage_stale_after_seconds)
+              )
+          and on(host) max by (host) (holdfast_storage_newest_snapshot_timestamp_seconds) > 0
         for: 15m
         labels: {severity: page}
         annotations:

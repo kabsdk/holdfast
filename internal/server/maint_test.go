@@ -2,15 +2,13 @@ package server
 
 import (
 	"context"
-	"os"
-	"path/filepath"
-	"strings"
+	"slices"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/kabsdk/holdfast/internal/proto"
-	"github.com/kabsdk/holdfast/internal/schedule"
+	"github.com/kabsdk/holdfast/internal/server/storage"
 )
 
 type testClock struct {
@@ -20,184 +18,82 @@ type testClock struct {
 
 func (c *testClock) Now() time.Time  { c.mu.Lock(); defer c.mu.Unlock(); return c.t }
 func (c *testClock) Set(t time.Time) { c.mu.Lock(); defer c.mu.Unlock(); c.t = t }
-func (c *testClock) At(s string) time.Time {
-	cph, _ := time.LoadLocation("Europe/Copenhagen")
-	t, err := time.ParseInLocation("2006-01-02 15:04:05.000", s, cph)
-	if err != nil {
-		panic(err)
-	}
-	c.Set(t)
-	return t
+func (c *testClock) Add(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.t = c.t.Add(d)
 }
 
-type checkRun struct {
-	fqdn, status, err string
-	started           time.Time
-}
-
-func checkRuns(t *testing.T, s *Server) []checkRun {
-	t.Helper()
-	rows, err := s.st.Pool().Query(context.Background(), `SELECT fqdn, status, error, started_at FROM maintenance_runs WHERE kind = 'check' ORDER BY id`)
+// TestChecksAndTheDailyStorageTest (decision 030):
+//   - `holdfast check` tests the storage contract at once, and queues a repository check on the agent;
+//   - the daily check config reaches the agent, and a settings change is not reported as drift;
+//   - the server tests each host's storage once a day, not more often.
+func TestChecksAndTheDailyStorageTest(t *testing.T) {
+	clock := &testClock{t: time.Date(2026, 11, 23, 8, 0, 0, 0, time.UTC)}
+	p := &testProber{}
+	s := newTestServerWith(t, func(d *Deps) { d.Provisioner, d.Prober, d.Now = nil, p, clock.Now })
+	ctx := context.Background()
+	const fqdn = "web01.example.com"
+	res, err := s.AddHost(ctx, root, AddHostInput{FQDN: fqdn, JobID: "system", Job: job("/etc"), S3Key: &S3KeyInput{AccessKeyID: "HOSTKEY01", SecretAccessKey: "host-secret-01"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rows.Close()
-	var out []checkRun
-	for rows.Next() {
-		var r checkRun
-		if err := rows.Scan(&r.fqdn, &r.status, &r.err, &r.started); err != nil {
-			t.Fatal(err)
-		}
-		out = append(out, r)
-	}
-	return out
-}
-
-// TestDailyCheck: each host is checked once a day, in the middle of the day's longest quiet stretch, and
-// never once that stretch has ended (plan-m1 §10).
-func TestDailyCheck(t *testing.T) {
-	clock := &testClock{}
-	clock.At("2026-11-23 08:00:00.000") // a Monday
-	s, ctx := newTestServer(t, clock.Now), context.Background()
-
-	// Runs at 02:00 and 20:00: the longest quiet stretch is 02:00 to 20:00, so the check is at 11:00.
-	j := job("/etc")
-	j.Schedule = schedule.Schedule{Daily: &schedule.Daily{Times: []schedule.ClockTime{"02:00", "20:00"}}}
-	res, err := s.AddHost(ctx, root, AddHostInput{FQDN: "web01.example.com", JobID: "system", Job: j})
-	if err != nil {
+	if _, err := s.Enroll(ctx, proto.EnrollRequest{FQDN: fqdn, Code: res.Enrollment.Code}); err != nil {
 		t.Fatal(err)
 	}
-	if h, _ := s.Host(ctx, "web01.example.com"); h.NextCheck != nil {
-		t.Fatalf("a host that is not enrolled has no check planned: %v", h.NextCheck)
+	poll, err := s.Poll(ctx, fqdn, proto.PollRequest{}, 0)
+	if err != nil || poll.Config == nil || poll.Config.Check == nil || poll.Config.Check.CycleDays != 30 {
+		t.Fatalf("the agent must get its daily check: %+v %v", poll.Config, err)
 	}
-	if _, err := s.Enroll(ctx, proto.EnrollRequest{FQDN: "web01.example.com", Code: res.Enrollment.Code}); err != nil {
+	applied := proto.Applied{Revision: poll.Config.Revision, SHA256: poll.Config.SHA256}
+	if _, err := s.Poll(ctx, fqdn, proto.PollRequest{Applied: applied, CredentialsVersion: 1}, 0); err != nil {
 		t.Fatal(err)
 	}
-	wantNext := func(when string) {
-		t.Helper()
-		h, err := s.Host(ctx, "web01.example.com")
-		if err != nil || h.NextCheck == nil || h.NextCheck.In(clock.Now().Location()).Format("2006-01-02 15:04") != when {
-			t.Fatalf("next check: got %v (%v), want %s", h.NextCheck, err, when)
-		}
+	if h, _ := s.Host(ctx, fqdn); !h.InSync {
+		t.Fatal("not in sync after applying the config")
 	}
-	tick := func(at string) {
-		t.Helper()
-		clock.At(at)
-		s.startDueChecks(ctx)
-		s.checks.Wait()
+	// Switching the daily check off changes what the agent should run, without a revision: the host is
+	// out of sync until the agent applies it, and the poll sends it.
+	s.set.Maintenance.Check = CheckOff
+	if h, _ := s.Host(ctx, fqdn); h.InSync {
+		t.Fatal("still in sync after the check settings changed")
 	}
-	wantNext("2026-11-23 11:00")
+	poll, _ = s.Poll(ctx, fqdn, proto.PollRequest{Applied: applied, CredentialsVersion: 1}, 0)
+	if poll.Config == nil || poll.Config.Check != nil {
+		t.Fatalf("the agent must get the config without the daily check: %+v", poll.Config)
+	}
+	s.set.Maintenance.Check = CheckDaily
 
-	tick("2026-11-23 10:59:00.000")
-	if n := len(checkRuns(t, s)); n != 0 {
-		t.Fatalf("a check started before its time: %d runs", n)
+	// holdfast check: the storage at once, and a check_now command for the agent.
+	before := p.called()
+	out := s.RunChecks(ctx, root)
+	if len(out) != 1 || out[0].Status != "requested" || out[0].Command == "" || p.called() != before+1 {
+		t.Fatalf("holdfast check: %+v (storage tested %d times)", out, p.called()-before)
 	}
-	tick("2026-11-23 11:00:00.000")
-	runs := checkRuns(t, s)
-	if len(runs) != 1 || runs[0].status != "success" || !runs[0].started.Equal(clock.Now()) {
-		t.Fatalf("the 11:00 check: %+v", runs)
+	poll, _ = s.Poll(ctx, fqdn, proto.PollRequest{Applied: applied, CredentialsVersion: 1}, 0)
+	if len(poll.Commands) != 1 || poll.Commands[0].Kind != proto.CommandCheckNow || poll.Commands[0].ID != out[0].Command {
+		t.Fatalf("the agent must get the check command: %+v", poll.Commands)
 	}
-	tick("2026-11-23 11:05:00.000")
-	if n := len(checkRuns(t, s)); n != 1 {
-		t.Fatalf("a host was checked twice in a day: %d runs", n)
+	p.fail(storage.CodeHostDelete)
+	if out := s.RunChecks(ctx, root); out[0].Status != "failed" || !slices.Equal(out[0].Storage, []string{"B005"}) || out[0].Command == "" {
+		t.Fatalf("holdfast check while B005 fails: %+v", out)
 	}
-	wantNext("2026-11-24 11:00")
+	p.fail()
 
-	// The server was down all Tuesday's quiet stretch: no check runs into the 20:00 backup.
-	tick("2026-11-24 20:30:00.000")
-	if n := len(checkRuns(t, s)); n != 1 {
-		t.Fatalf("a check started after the quiet stretch ended: %d runs", n)
+	// The daily storage test: not again within the day, then once.
+	before = p.called()
+	clock.Add(12 * time.Hour)
+	s.checkStorageDue(ctx)
+	if p.called() != before {
+		t.Fatal("the storage was tested again within a day")
 	}
-	wantNext("2026-11-25 11:00")
-
-	// A check by hand counts as the day's check.
-	clock.At("2026-11-25 09:00:00.000")
-	if out := s.RunChecks(ctx, root); len(out) != 1 || out[0].Status != "success" {
-		t.Fatalf("holdfast check: %+v", out)
+	clock.Add(12 * time.Hour)
+	s.checkStorageDue(ctx)
+	s.checkStorageDue(ctx)
+	if p.called() != before+1 {
+		t.Fatalf("after a day the storage must be tested once, got %d", p.called()-before)
 	}
-	tick("2026-11-25 11:00:00.000")
-	if n := len(checkRuns(t, s)); n != 2 {
-		t.Fatalf("after a check by hand: %d runs, want 2", n)
-	}
-
-	// One check per host at a time, whoever starts it.
-	if !s.claimCheck("web01.example.com") {
-		t.Fatal("claim")
-	}
-	if out := s.RunChecks(ctx, root); len(out) != 1 || out[0].Status != "skipped" {
-		t.Fatalf("a second check of the same host: %+v", out)
-	}
-	s.releaseCheck("web01.example.com")
-
-	// No free slot before the quiet stretch ends: skipped for the day, and recorded.
-	for range parallelChecks {
-		s.checkSlots <- struct{}{}
-	}
-	tick("2026-11-26 19:59:59.900")
-	for range parallelChecks {
-		<-s.checkSlots
-	}
-	runs = checkRuns(t, s)
-	if last := runs[len(runs)-1]; last.status != "skipped" || !strings.Contains(last.err, "quiet stretch ended") {
-		t.Fatalf("a check that found no slot: %+v", last)
-	}
-	tick("2026-11-26 19:59:59.950")
-	if n := len(checkRuns(t, s)); n != len(runs) {
-		t.Fatal("a skipped check was retried the same day")
-	}
-
-	audit, err := s.st.Q().ListAudit(ctx, "web01.example.com", 100)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var system, byHand int
-	for _, a := range audit {
-		if a.Action == "maintenance.check" {
-			switch a.Actor {
-			case systemActor.Name:
-				system++
-			case root.Name:
-				byHand++
-			}
-		}
-	}
-	if system != 2 || byHand != 1 {
-		t.Fatalf("audited checks: %d by the server, %d by hand; want 2 and 1", system, byHand)
-	}
-}
-
-// TestInterruptedCheckIsRecovered: a check the server never finished is marked interrupted at start-up,
-// and restic unlock removes the stale lock it left (unlock only ever removes stale locks).
-func TestInterruptedCheckIsRecovered(t *testing.T) {
-	clock := &testClock{}
-	start := clock.At("2026-11-23 08:00:00.000")
-	s, ctx := newTestServer(t, clock.Now), context.Background()
-	res, err := s.AddHost(ctx, root, AddHostInput{FQDN: "web01.example.com", JobID: "system", Job: job("/etc")})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.Enroll(ctx, proto.EnrollRequest{FQDN: "web01.example.com", Code: res.Enrollment.Code}); err != nil {
-		t.Fatal(err)
-	}
-	q := s.st.Q()
-	if _, err := q.StartMaintenance(ctx, "web01.example.com", "check", "1/30", "test", start.Add(-time.Hour)); err != nil {
-		t.Fatal(err)
-	}
-	// A check this process started itself is running, not interrupted.
-	if _, err := q.StartMaintenance(ctx, "web01.example.com", "check", "1/30", "test", start.Add(time.Minute)); err != nil {
-		t.Fatal(err)
-	}
-	argv := filepath.Join(t.TempDir(), "argv")
-	s.set.ResticBin = filepath.Join(t.TempDir(), "restic")
-	if err := os.WriteFile(s.set.ResticBin, []byte("#!/bin/sh\necho \"$*\" >> "+argv+"\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	s.recoverInterruptedChecks(ctx)
-	runs := checkRuns(t, s)
-	if len(runs) != 2 || runs[0].status != "interrupted" || runs[1].status != "" {
-		t.Fatalf("after recovery: %+v", runs)
-	}
-	if b, _ := os.ReadFile(argv); strings.TrimSpace(string(b)) != "unlock" {
-		t.Fatalf("restic was run as %q; want exactly one plain unlock", b)
+	if h, _ := s.Host(ctx, fqdn); h.Storage == nil || !h.Storage.CheckedAt.Equal(clock.Now()) {
+		t.Fatalf("the host view must show the latest storage test: %+v", h.Storage)
 	}
 }

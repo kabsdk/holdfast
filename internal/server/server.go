@@ -15,7 +15,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/kabsdk/holdfast/internal/config"
@@ -42,12 +41,6 @@ type Server struct {
 	log      *slog.Logger
 	hub      *hub
 	now      func() time.Time
-	started  time.Time // when this process started; older unfinished checks were interrupted
-
-	mu         sync.Mutex
-	checking   map[string]bool // hosts with a check running, whoever started it
-	checkSlots chan struct{}   // daily checks running at once, at most parallelChecks
-	checks     sync.WaitGroup  // daily checks started by the loop; tests wait for them
 }
 
 // Deps are what New needs besides the settings. Tests replace parts of them.
@@ -81,8 +74,7 @@ func New(set Settings, d Deps) (*Server, error) {
 		d.Prober = storage.S3Prober{Location: loc, Maint: d.Maintenance}
 	}
 	return &Server{set: set, st: d.Store, seal: d.Sealer, prov: d.Provisioner, prober: d.Prober, maintKey: d.Maintenance,
-		loc: loc, zone: zone, log: d.Logger, hub: newHub(), now: d.Now, started: d.Now(),
-		checking: map[string]bool{}, checkSlots: make(chan struct{}, parallelChecks)}, nil
+		loc: loc, zone: zone, log: d.Logger, hub: newHub(), now: d.Now}, nil
 }
 
 // Run starts the background work: the notification listener and the maintenance loop.
@@ -139,6 +131,9 @@ func (s *Server) renderHost(doc config.Document, fqdn string) proto.HostConfig {
 			sch.Zone = s.set.DefaultZone
 		}
 		hc.Jobs = append(hc.Jobs, proto.JobConfig{ID: id, Engine: j.Engine, Paths: j.Paths, Excludes: j.Excludes, Schedule: sch})
+	}
+	if s.set.Maintenance.Check == CheckDaily {
+		hc.Check = &proto.CheckConfig{CycleDays: s.set.Maintenance.CheckCycleDays}
 	}
 	hc.SHA256 = hc.ComputeSHA256()
 	return hc
@@ -626,12 +621,9 @@ type HostView struct {
 	Agent           *store.Agent `json:"agent,omitempty"`
 	Online          bool         `json:"online"`
 	DesiredRevision int64        `json:"desired_revision"`
-	DesiredSHA256   string       `json:"desired_sha256"`
+	DesiredSHA256   string       `json:"desired_sha256"` // what the host's agent should run now
 	InSync          bool         `json:"in_sync"`
-	// NextCheck is when the server's daily restic check of this host starts: the middle of the day's
-	// longest quiet stretch. It is absent for a host that is not enrolled, or when checks are off.
-	NextCheck *time.Time `json:"next_check,omitempty"`
-	Jobs      []JobView  `json:"jobs"`
+	Jobs            []JobView    `json:"jobs"`
 }
 
 // OnlineWithin is how recently an agent must have polled to count as online.
@@ -660,10 +652,6 @@ func (s *Server) Hosts(ctx context.Context) ([]HostView, error) {
 	if err != nil {
 		return nil, err
 	}
-	lastCheck, err := q.LastMaintenanceStart(ctx, "check")
-	if err != nil {
-		return nil, err
-	}
 	now := s.now()
 	out := make([]HostView, 0, len(hosts))
 	for _, h := range hosts {
@@ -681,15 +669,15 @@ func (s *Server) Hosts(ctx context.Context) ([]HostView, error) {
 			v.Agent = &a
 			v.Online = a.LastSeenAt != nil && now.Sub(*a.LastSeenAt) < OnlineWithin
 		}
-		if rev, sha, err := q.HostDesired(ctx, h.FQDN); err == nil {
-			v.DesiredRevision, v.DesiredSHA256 = rev, sha
-			v.InSync = v.Agent != nil && v.Agent.AppliedSHA256 == sha
+		if rev, _, err := q.HostDesired(ctx, h.FQDN); err == nil {
+			v.DesiredRevision = rev
 		}
+		// In sync means the agent runs what the server would send it now. That includes server settings
+		// such as the daily check, so it is compared with the config as rendered now, not with the hash
+		// stored when the revision was saved.
+		v.DesiredSHA256 = s.renderHost(head.Config, h.FQDN).SHA256
+		v.InSync = v.Agent != nil && v.Agent.AppliedSHA256 == v.DesiredSHA256
 		hc := head.Config.Hosts[h.FQDN]
-		if h.State == "enrolled" && s.set.Maintenance.Check == CheckDaily {
-			next := s.nextCheck(hc, lastCheck[h.FQDN], now)
-			v.NextCheck = &next
-		}
 		ids := make([]string, 0, len(hc.Jobs))
 		for id := range hc.Jobs {
 			ids = append(ids, id)

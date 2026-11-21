@@ -83,8 +83,8 @@ func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, proto.EnrollResponse{Token: tok})
 }
 
-// Enroll redeems a code and returns the agent's token. Storage is set up (again, idempotently)
-// before the code is used, so a storage failure leaves the code valid for a retry.
+// Enroll redeems a code and returns the agent's token. The code is checked first. Storage is then set up
+// again, idempotently, before the code is used, so a storage failure leaves the code valid for a retry.
 func (s *Server) Enroll(ctx context.Context, req proto.EnrollRequest) (string, error) {
 	now := s.now()
 	fqdn := strings.TrimSpace(req.FQDN)
@@ -100,6 +100,10 @@ func (s *Server) Enroll(ctx context.Context, req proto.EnrollRequest) (string, e
 	}
 	if h.State == "retired" {
 		return refuse(errors.New("host is retired"))
+	}
+	// The code first: storage is touched only for someone who holds a valid code (decision 030).
+	if err := s.st.Q().CheckEnrollmentCode(ctx, fqdn, codeHash, now); err != nil {
+		return refuse(err)
 	}
 	rep, err := s.ensureStorage(ctx, fqdn)
 	if err != nil {
@@ -174,7 +178,7 @@ func (s *Server) Poll(ctx context.Context, fqdn string, req proto.PollRequest, w
 	for _, id := range req.AckedCommands {
 		acked[id] = true
 	}
-	deadline := now.Add(wait)
+	deadline := time.Now().Add(wait) // a long-poll waits real time, whatever the server's clock is set to
 	for {
 		resp, changed, err := s.pollAnswer(ctx, fqdn, req, acked)
 		if err != nil {

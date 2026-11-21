@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/minio/minio-go/v7"
@@ -26,6 +27,9 @@ const (
 	CodeHostVersionDelete = "B006" // the host key can delete a version of a non-lock object for good
 	CodeHostOtherPrefix   = "B007" // the host key can use another prefix, or list repos/
 	CodeVersioning        = "B008" // bucket versioning is not enabled
+	CodeMaintVersionDel   = "B009" // the maintenance key can delete an object version for good
+	CodeMaintSettings     = "B010" // the maintenance key can change the bucket's settings
+	CodeLifecycle         = "B011" // no lifecycle rule expires noncurrent versions under repos/
 )
 
 // Finding is one storage check that failed.
@@ -120,6 +124,14 @@ func (p S3Prober) Probe(ctx context.Context, fqdn string, host Key) Report {
 		add(CodeVersioning, "versioning is not enabled on bucket %s", b)
 	} else {
 		versioned = true
+		// Setting it to what it already is changes nothing, and shows whether the key could change it.
+		if err := mc.SetBucketVersioning(ctx, b, minio.BucketVersioningConfiguration{Status: "Enabled"}); err == nil {
+			add(CodeMaintSettings, "the maintenance key may change bucket %s's settings (it was allowed to set versioning; "+
+				"the setting was left as it was), so a compromised server could switch off the floor", b)
+		}
+	}
+	if err := lifecycleExpires(ctx, mc, b); err != nil {
+		add(CodeLifecycle, "%v", err)
 	}
 
 	// The host's own prefix.
@@ -161,11 +173,17 @@ func (p S3Prober) Probe(ctx context.Context, fqdn string, host Key) Report {
 	}
 
 	// Everyone else's.
-	if _, err := put(ctx, mc, b, other); err != nil {
+	if info, err := put(ctx, mc, b, other); err != nil {
 		add(CodeMaintWrite, "the maintenance key cannot write %s: %s", other, s3err(err))
 	} else {
 		if err := get(ctx, hc, b, other); err == nil {
 			add(CodeHostOtherPrefix, "the host key read %s, outside its prefix", other)
+		}
+		if versioned && info.VersionID != "" {
+			if err := mc.RemoveObject(ctx, b, other, minio.RemoveObjectOptions{VersionID: info.VersionID}); err == nil {
+				add(CodeMaintVersionDel, "the maintenance key deleted a version of %s for good, so a compromised server could "+
+					"destroy backups for good; deny it s3:DeleteObjectVersion (docs/storage.md)", other)
+			}
 		}
 		if err := mc.RemoveObject(ctx, b, other, minio.RemoveObjectOptions{}); err != nil {
 			add(CodeMaintWrite, "the maintenance key cannot delete %s: %s", other, s3err(err))
@@ -188,6 +206,29 @@ func (p S3Prober) client(k Key, region string) (*minio.Client, error) {
 	}
 	return minio.New(u.Host, &minio.Options{Creds: credentials.NewStaticV4(k.AccessKeyID, k.SecretAccessKey, ""),
 		Secure: u.Scheme == "https", Region: region})
+}
+
+// lifecycleExpires checks that an enabled lifecycle rule covering repos/ expires noncurrent versions.
+// Without one, the bucket only grows: nothing a prune deletes is ever freed. How long the versions are
+// kept is the admin's choice; it is also how long deleted data can be recovered.
+func lifecycleExpires(ctx context.Context, c *minio.Client, bucket string) error {
+	lc, err := c.GetBucketLifecycle(ctx, bucket)
+	if err != nil {
+		if minio.ToErrorResponse(err).Code == "NoSuchLifecycleConfiguration" {
+			return fmt.Errorf("bucket %s has no lifecycle rule, so old versions are never removed and the bucket only grows", bucket)
+		}
+		return fmt.Errorf("the maintenance key cannot read bucket %s's lifecycle rule: %s", bucket, s3err(err))
+	}
+	for _, r := range lc.Rules {
+		prefix := r.RuleFilter.Prefix
+		if prefix == "" {
+			prefix = r.Prefix
+		}
+		if r.Status == "Enabled" && r.NoncurrentVersionExpiration.NoncurrentDays > 0 && strings.HasPrefix("repos/", prefix) {
+			return nil
+		}
+	}
+	return fmt.Errorf("no enabled lifecycle rule on bucket %s expires noncurrent versions under repos/, so the bucket only grows", bucket)
 }
 
 func put(ctx context.Context, c *minio.Client, bucket, key string) (minio.UploadInfo, error) {

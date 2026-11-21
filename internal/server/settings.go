@@ -53,8 +53,8 @@ type StorageSettings struct {
 
 // MaintenanceSettings control the server's own restic runs. M1 runs check only (plan-m1 Q1).
 type MaintenanceSettings struct {
-	// Check is "daily" (the default): each host is checked once a day, in the middle of the day's
-	// longest quiet stretch (plan-m1 §10). "off" leaves only `holdfast check`.
+	// Check is "daily" (the default): each agent checks its own repository once a day, right after a
+	// backup, reading 1/check_cycle_days of the data (decision 030). "off" leaves only `holdfast check`.
 	Check          string `yaml:"check"`
 	CheckCycleDays int    `yaml:"check_cycle_days"` // read-data-subset cycle, default 30
 }

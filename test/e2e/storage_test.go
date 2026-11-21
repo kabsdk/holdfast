@@ -100,6 +100,7 @@ func TestStorageContract(t *testing.T) {
 	mc(t, "admin", "policy", "attach", "hf", "loose-"+e.bucket, "--user", ak)
 	var checks []struct {
 		Status  string
+		Command string
 		Storage []string `json:"storage_codes"`
 	}
 	out, _ = e.cliErr("check")
@@ -111,8 +112,18 @@ func TestStorageContract(t *testing.T) {
 	if m := metrics(t, e.url+"/metrics"); m[`holdfast_storage_contract_failed{host="app05.example.com",code="B005"}`] != 1 {
 		t.Fatal("the failed storage check is not exported")
 	}
+	waitFor(t, "the agent's check that holdfast check asked for", time.Minute, func() bool {
+		for _, ev := range e.events(fqdn) {
+			if ev.Kind == "check" && ev.CommandID == checks[0].Command {
+				return true
+			}
+		}
+		return false
+	})
 
-	// A new key replaces it; the old user is removed, so backups must use the new key.
+	// A new key replaces it. Once the agent runs with the new key, the old user is removed, so backups
+	// must use the new key. (Removing a key while a run still uses it makes that run fail: restic retries,
+	// then gives up. docs/storage.md says to wait.)
 	kf2, _ := e.makeKey(fqdn, "")
 	var set struct {
 		CredentialsVersion int `json:"credentials_version"`
@@ -121,13 +132,26 @@ func TestStorageContract(t *testing.T) {
 	if set.CredentialsVersion != 2 {
 		t.Fatalf("credentials version after set-key: %d", set.CredentialsVersion)
 	}
+	waitFor(t, "the agent on the new key", time.Minute, func() bool {
+		h := e.host(fqdn)
+		return h.Agent != nil && h.Agent.CredentialsVersion == 2
+	})
+	switched := time.Now()
+	waitFor(t, "a backup that started on the new key", 2*time.Minute, func() bool {
+		for _, ev := range e.events(fqdn) {
+			if ev.Kind == "backup" && ev.Status == "success" && ev.Started.After(switched) {
+				return true
+			}
+		}
+		return false
+	})
 	mc(t, "admin", "user", "remove", "hf", ak)
-	time.Sleep(2 * time.Second) // let the agent's poll deliver the new key before counting
 	before = countStatus(e.events(fqdn), "data", "success")
 	waitFor(t, "a backup with the new key", 2*time.Minute, func() bool { return countStatus(e.events(fqdn), "data", "success") > before })
 	out = e.cli("check")
+	checks = nil // json.Unmarshal would keep fields of the old elements that the new answer leaves out
 	must(t, json.Unmarshal(out, &checks))
-	if checks[0].Status != "success" {
+	if checks[0].Status != "requested" || len(checks[0].Storage) != 0 {
 		t.Fatalf("check with the new key: %s", out)
 	}
 

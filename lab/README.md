@@ -104,7 +104,14 @@ HOLDFAST_PROBE_EXPECT=B003 go test ./internal/server/storage/ -run TestS3ProberL
 
 - After `lab/lab isolation m1 user-policy` (plain users, no grant), it reports exactly B003: AccessDenied when the
   maintenance key reads an object the host key wrote.
-- After `lab/lab isolation m1 user-policy --maint-policy`, every check passes (`HOLDFAST_PROBE_EXPECT=`).
+- After `lab/lab isolation m1 user-policy --maint-policy`, every check B001–B008 passes.
+- **Since decision 030** the contract also has B009–B011. The lab's layout fails them:
+  - `holdfast-maint` owns the bucket, so it can change the bucket's settings (B010);
+  - the `--maint-policy` grant is `s3:*`, so the maintenance key can delete versions for good (B009);
+  - the bucket has no lifecycle rule (B011).
+
+  Rebuilding the lab bucket to the documented layout is still to do. That layout is a bucket owned by
+  another identity, the narrowed grant with the deny, and a lifecycle rule (`docs/storage.md`).
 
 ## Troubleshooting
 

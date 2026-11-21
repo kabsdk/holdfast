@@ -105,8 +105,8 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 			fmt.Fprintf(&b, "holdfast_runs_total{host=%q,kind=%q,job_id=%q,status=%q} %d\n", c.FQDN, c.Kind, c.JobID, c.Status, c.Count)
 		}
 	}
-	if last, err := q.LastMaintenanceSuccess(ctx, "check"); err == nil {
-		gauge("holdfast_maintenance_last_success_timestamp_seconds", "When maintenance of this kind last succeeded.")
+	if last, err := q.LastCheckSuccess(ctx); err == nil {
+		gauge("holdfast_maintenance_last_success_timestamp_seconds", "When the agent's repository check last succeeded.")
 		names := make([]string, 0, len(last))
 		for f := range last {
 			names = append(names, f)

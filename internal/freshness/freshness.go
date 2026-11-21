@@ -77,14 +77,20 @@ func (l *S3Lister) List(ctx context.Context) ([]RepoState, error) {
 	return out, nil
 }
 
-// Metrics renders Prometheus text format.
-func Metrics(states []RepoState, scrapeErr error) string {
+// Metrics renders Prometheus text format. staleAfter is the witness's own threshold, exported for each
+// host. The stale alert uses it when the server's schedules are not available, so the witness can still
+// raise the alarm while the server is down (decision 030).
+func Metrics(states []RepoState, scrapeErr error, staleAfter time.Duration) string {
 	var b strings.Builder
 	ok := 1
 	if scrapeErr != nil {
 		ok = 0
 	}
 	fmt.Fprintf(&b, "# HELP holdfast_storage_scrape_success 1 if storage could be listed.\n# TYPE holdfast_storage_scrape_success gauge\nholdfast_storage_scrape_success %d\n", ok)
+	b.WriteString("# HELP holdfast_storage_stale_after_seconds The witness's own stale threshold, used when the server's schedules are missing.\n# TYPE holdfast_storage_stale_after_seconds gauge\n")
+	for _, s := range states {
+		fmt.Fprintf(&b, "holdfast_storage_stale_after_seconds{host=%q} %.0f\n", s.Host, staleAfter.Seconds())
+	}
 	b.WriteString("# HELP holdfast_storage_newest_snapshot_timestamp_seconds Write time of the newest snapshot object, read from storage.\n# TYPE holdfast_storage_newest_snapshot_timestamp_seconds gauge\n")
 	for _, s := range states {
 		v := int64(0)

@@ -92,6 +92,10 @@ func (r Runner) run(ctx context.Context, args ...string) ([]byte, error) {
 	}
 	cmd := exec.CommandContext(ctx, r.bin(), args...)
 	cmd.Env = r.env()
+	// When ctx ends, restic gets SIGINT first, so it removes its own lock. It is killed if it has not
+	// exited within a minute.
+	cmd.Cancel = func() error { return cmd.Process.Signal(os.Interrupt) }
+	cmd.WaitDelay = time.Minute
 	var stdout bytes.Buffer
 	stderr := &tailBuffer{max: 8192}
 	cmd.Stdout = &stdout

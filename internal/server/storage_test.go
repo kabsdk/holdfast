@@ -20,12 +20,15 @@ type testProber struct {
 	mu      sync.Mutex
 	codes   []string
 	lastKey storage.Key
+	calls   int
 }
+
+func (p *testProber) called() int { p.mu.Lock(); defer p.mu.Unlock(); return p.calls }
 
 func (p *testProber) Probe(_ context.Context, _ string, k storage.Key) storage.Report {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.lastKey = k
+	p.lastKey, p.calls = k, p.calls+1
 	r := storage.Report{Findings: []storage.Finding{}}
 	for _, c := range p.codes {
 		r.Findings = append(r.Findings, storage.Finding{Code: c, Message: "test finding " + c})
@@ -82,6 +85,15 @@ func TestStorageContractGatesHosts(t *testing.T) {
 	c, _ := s.st.Q().GetCredentials(ctx, fqdn)
 	if c.S3AccessKeyID != "HOSTKEY01" || c.S3KeySource != store.KeyByAdmin {
 		t.Fatalf("stored key: %s, made by %s", c.S3AccessKeyID, c.S3KeySource)
+	}
+
+	// A stranger with the FQDN but not the code causes no S3 traffic.
+	before := p.called()
+	if _, err := s.Enroll(ctx, proto.EnrollRequest{FQDN: fqdn, Code: "WRONG-CODE-0000"}); err == nil {
+		t.Fatal("enrolled with a wrong code")
+	}
+	if p.called() != before {
+		t.Fatal("a wrong code made the server test the storage")
 	}
 
 	// The storage changed before enrollment: refused, the reason audited, and the code stays valid.

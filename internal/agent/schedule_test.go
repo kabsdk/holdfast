@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -146,6 +147,111 @@ func TestSlotsDuringARunAreSkippedAndReported(t *testing.T) {
 	}
 	if got := a.sched["j"].LastSlot; !got.Equal(time.Unix(0, at("2026-11-20 10:03:00"))) {
 		t.Fatalf("last handled slot should be 10:03, got %v", got)
+	}
+}
+
+// TestHungBackupIsStopped: a backup that runs past its timeout is stopped and reported as failed, so the
+// host's other jobs can run (decision 030).
+func TestHungBackupIsStopped(t *testing.T) {
+	daily := schedule.Schedule{Daily: &schedule.Daily{Times: []schedule.ClockTime{"02:00"}}, Zone: "UTC"}
+	if got := RunTimeout(daily); got != 24*time.Hour {
+		t.Fatalf("a daily job's timeout: %s", got)
+	}
+	if got := RunTimeout(schedule.Schedule{Every: &schedule.Every{N: 15, Unit: "minutes", From: "00:00"}}); got != time.Hour {
+		t.Fatalf("an every-15-minutes job's timeout is at least an hour, got %s", got)
+	}
+	var now atomic.Int64
+	now.Store(at("2026-11-20 10:00:00"))
+	a := testAgent(t, daily, &now)
+	a.runTimeout = func(schedule.Schedule) time.Duration { return 300 * time.Millisecond }
+	hung := filepath.Join(t.TempDir(), "restic")
+	if err := os.WriteFile(hung, []byte("#!/bin/sh\ncase \"$*\" in *backup*) exec sleep 60 ;; esac\n"+fakeRestic[len("#!/bin/sh\n"):]), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	a.cfg.ResticBin = hung
+	j, st, ok := a.due(a.now())
+	if !ok {
+		t.Fatal("due")
+	}
+	start := time.Now()
+	a.runScheduled(context.Background(), j, st)
+	if took := time.Since(start); took > 10*time.Second {
+		t.Fatalf("the hung backup was not stopped in time: %s", took)
+	}
+	evs := spooled(t, a)
+	if len(evs) != 1 || evs[0].Status != proto.StatusFailed || !strings.Contains(evs[0].Error, "was stopped") {
+		t.Fatalf("a hung backup must be reported as failed and stopped, got %+v", evs)
+	}
+}
+
+// TestDailyCheckAfterBackup: the agent checks its own repository after a backup, at most once a day, in
+// its one-restic-at-a-time loop. A check on request runs at once, a failed check is reported, and with
+// daily checks off only requested checks run (decision 030).
+func TestDailyCheckAfterBackup(t *testing.T) {
+	hourly := schedule.Schedule{Every: &schedule.Every{N: 1, Unit: "hours", From: "00:00"}, Zone: "UTC"}
+	var now atomic.Int64
+	now.Store(at("2026-11-20 10:00:00"))
+	a := testAgent(t, hourly, &now)
+	a.hc.Check = &proto.CheckConfig{CycleDays: 30}
+	argv := filepath.Join(t.TempDir(), "argv")
+	restic := func(extra string) string {
+		p := filepath.Join(t.TempDir(), "restic")
+		script := "#!/bin/sh\necho \"$*\" >> " + argv + "\n" + extra + fakeRestic[len("#!/bin/sh\n"):]
+		if err := os.WriteFile(p, []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	a.cfg.ResticBin = restic("")
+	ctx := context.Background()
+	backup := func(when string) {
+		t.Helper()
+		now.Store(at(when))
+		j, st, ok := a.due(a.now())
+		if !ok {
+			t.Fatalf("no backup due at %s", when)
+		}
+		a.runScheduled(ctx, j, st)
+		a.checkIfDue(ctx, st)
+	}
+	checks := func() []proto.Event {
+		var out []proto.Event
+		for _, ev := range spooled(t, a) {
+			if ev.Kind == proto.KindCheck {
+				out = append(out, ev)
+			}
+		}
+		return out
+	}
+
+	backup("2026-11-20 10:00:00")
+	if c := checks(); len(c) != 1 || c[0].Status != proto.StatusSuccess {
+		t.Fatalf("the first backup must be followed by a check: %+v", c)
+	}
+	if b, _ := os.ReadFile(argv); !strings.Contains(string(b), "check --read-data-subset 25/30") { // day 324 of 2026
+		t.Fatalf("restic was not asked to check today's subset:\n%s", b)
+	}
+	backup("2026-11-20 11:00:00")
+	if n := len(checks()); n != 1 {
+		t.Fatalf("a second check within the day: %d", n)
+	}
+	backup("2026-11-21 10:00:00")
+	if n := len(checks()); n != 2 {
+		t.Fatalf("a day later the backup must be followed by a check: %d", n)
+	}
+
+	a.cfg.ResticBin = restic("case \"$*\" in *check*) echo 'Fatal: repository contains errors' >&2; exit 1 ;; esac\n")
+	now.Store(at("2026-11-21 12:00:00"))
+	a.execCommand(ctx, proto.Command{ID: "c1", Kind: proto.CommandCheckNow})
+	if c := checks(); len(c) != 3 || c[2].Status != proto.StatusFailed || c[2].CommandID != "c1" || !strings.Contains(c[2].Error, "repository contains errors") {
+		t.Fatalf("a check on request that fails must be reported as failed: %+v", c)
+	}
+
+	a.hc.Check = nil
+	a.cfg.ResticBin = restic("")
+	backup("2026-11-23 10:00:00")
+	if n := len(checks()); n != 3 {
+		t.Fatalf("with daily checks off, a backup must not be followed by a check: %d", n)
 	}
 }
 

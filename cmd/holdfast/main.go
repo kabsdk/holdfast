@@ -210,7 +210,6 @@ type hostView struct {
 	InSync          bool           `json:"in_sync"`
 	DesiredRevision int64          `json:"desired_revision"`
 	FirstBackupAt   *time.Time     `json:"first_backup_at"`
-	NextCheck       *time.Time     `json:"next_check"`
 	Storage         *storageReport `json:"storage"`
 	Agent           *struct {
 		LastSeenAt      *time.Time `json:"last_seen_at"`
@@ -288,9 +287,6 @@ func hostCmd() *cobra.Command {
 			} else {
 				fmt.Printf("storage: checks failed at %s (docs/storage.md):%s\n", h.Storage.CheckedAt.Local().Format("2006-01-02 15:04"), h.Storage.lines())
 			}
-		}
-		if h.NextCheck != nil {
-			fmt.Printf("next restic check %s, in the middle of the day's longest quiet stretch\n", h.NextCheck.Local().Format("2006-01-02 15:04"))
 		}
 		w := table()
 		fmt.Fprintln(w, "\nJOB\tLAST STATUS\tLAST SUCCESS\tNEXT RUN\tLONGEST GAP\tWORST-CASE LOSS")
@@ -652,8 +648,8 @@ func auditCmd() *cobra.Command {
 }
 
 func checkCmd() *cobra.Command {
-	return &cobra.Command{Use: "check", Short: "Check every repository now (restic check, a rotating data subset)", RunE: func(*cobra.Command, []string) error {
-		var res []struct{ FQDN, Subset, Status, Error string }
+	return &cobra.Command{Use: "check", Short: "Test every host's storage now, and ask each agent to check its repository", RunE: func(*cobra.Command, []string) error {
+		var res []struct{ FQDN, Status, Error string }
 		raw, err := call("POST", "/api/v1/maintenance/check", nil, &res)
 		if err != nil {
 			return err
@@ -663,11 +659,15 @@ func checkCmd() *cobra.Command {
 			return nil
 		}
 		w := table()
-		fmt.Fprintln(w, "HOST\tSUBSET\tSTATUS\tERROR")
+		fmt.Fprintln(w, "HOST\tSTATUS\tERROR")
 		for _, r := range res {
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", r.FQDN, r.Subset, r.Status, r.Error)
+			fmt.Fprintf(w, "%s\t%s\t%s\n", r.FQDN, r.Status, r.Error)
 		}
-		return w.Flush()
+		if err := w.Flush(); err != nil {
+			return err
+		}
+		fmt.Println("\neach agent runs the repository check next; its result appears in holdfast host events <fqdn>")
+		return nil
 	}}
 }
 

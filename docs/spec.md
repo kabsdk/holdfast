@@ -69,12 +69,13 @@ supports.
 **Server** (`holdfast-server`)
 - The configurator.
 - The maintenance leader: it runs forget, prune and check.
-  - `restic check` takes an exclusive lock, and a backup that meets it waits or fails. So the server
-    checks each host once a day, at the middle of that day's longest quiet stretch, between the end of one
-    run's spread and the start of the next.
-  - A host's view shows when its next check is.
-  - A check that was interrupted is marked so when the server starts again. Its stale lock is then
-    removed, and only that lock.
+  - `restic check` takes an exclusive lock, and a backup that meets it waits or fails. So each agent
+    checks its own repository: once a day, right after a backup, inside its one-restic-at-a-time loop,
+    reading a rotating 1/30 of the data (decision 030). `holdfast check` asks every agent to check now.
+  - The server tests each host's storage contract once a day. It checks a repository itself only before
+    it prunes it.
+  - A backup or a check that runs past its timeout is stopped and reported as failed, so the host's other
+    jobs can run. The timeout is the schedule's longest gap, and at least an hour.
 - Keeps its state in PostgreSQL.
 
 **Storage witness** (`holdfast-freshness`)
@@ -110,6 +111,10 @@ supports.
 
   A key that fails is refused, and a host whose storage fails cannot enroll. The storage checks are in
   §4.5.
+- **The floor is in storage, not in Holdfast** (decision 030). No Holdfast key can delete an object
+  version for good or change the bucket's settings. So whatever is deleted can be recovered until the
+  bucket's lifecycle rule expires its old versions. That holds against a compromised host, a compromised
+  server and Prune now. The 7-day protection (§3.4) is Holdfast's own rule on top of it.
 - Keys are escrowed in an offline escrow bundle.
 - Credentials are never shown in the UI.
 - There is no raw restic console.
@@ -287,6 +292,9 @@ cannot enroll.
 | B006 | The host key can delete, for good, a version of an object outside its `locks/`. |
 | B007 | The host key can read or write another host's prefix, or list `repos/`. |
 | B008 | Bucket versioning is not enabled. |
+| B009 | The maintenance key can delete an object version for good. |
+| B010 | The maintenance key can change the bucket's settings: versioning, the lifecycle rule or the bucket policy. |
+| B011 | No enabled lifecycle rule expires noncurrent versions under `repos/`. |
 
 - The accepted codes are stored in the revision and in the audit log.
 - The CLI takes them explicitly, for example `holdfast job set … --accept R102,R104`. Without them it

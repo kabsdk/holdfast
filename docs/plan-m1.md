@@ -56,7 +56,7 @@ proposal. Each sits behind an interface where that matters, so it can change. **
 | CLI (`holdfast`) as a thin API client; storage witness; alert rules | promtool |
 | e2e: fidelity with escrow, server outage, storage isolation, witness | real restic 0.19.1, MinIO, PostgreSQL |
 | e2e: backup killed mid-upload and recovered (the PoC's test 3, using an S3 throttling proxy); exactly-once delivery with dropped answers, and runs on their schedule slots; history, diff, stale base, drift, `holdfast check`, audit, no credential leaks; enrollment refusals and expiry; TLS with certificate pinning | same |
-| The daily check: once a day per host, in the middle of the day's longest quiet stretch, never after it; an interrupted check recovered at start-up (§10). e2e: restic's check lock is exclusive, as the placement assumes | unit, integration with a controlled clock, e2e |
+| The repository check on the agent: once a day after a backup, `holdfast check` on request, timeouts (§10, decision 030). e2e: restic's check lock is exclusive | unit, integration, e2e: **all 11 e2e tests pass** |
 | The storage contract (decision 029): admin-made keys, at `host add` and `host set-key`; the contract test (B001–B008) at host add, set-key, enrollment and in the daily check; a metric and an alert for a failed check. e2e: refused keys; enrollment refused while the policy is loose; restic ignores the probe objects; set-key reaches the agent; the B003 ownership case | unit, integration, e2e, promtool |
 
 **Found and fixed along the way**
@@ -92,16 +92,23 @@ proposal. Each sits behind an interface where that matters, so it can change. **
 - Holdfast's own contract test, run against the lab's RGW (`TestS3ProberLive`, see `lab/README.md`):
   - plain users: exactly B003, AccessDenied;
   - plain users plus the bucket-policy grant: every check passes, including B005, B006 and B007.
+  - That was B001–B008. The lab's layout fails the later checks B009–B011, as `lab/README.md` explains.
+    Rebuilding it to the documented layout is still to do.
 
-**Remaining for M1: decision 030's fixes**
-1. Agent TLS: verify against the pinned CA as the only root, with the hostname.
-2. Job status in the order the server receives reports.
-3. Storage-witness alerts that do not need the server.
-4. A narrower maintenance key. New checks: no version deletes, no changes to bucket settings, and a
-   lifecycle rule exists.
-5. Enrollment checks the code before storage.
-6. A timeout on each restic run in the agent.
-7. The repository check runs on the agent, after a backup, and the server's daily check goes.
+**Decision 030's fixes: done and tested**
+1. Agent TLS: the pinned certificate is the only root, the server's certificate must chain to it, and
+   the hostname is checked. Covered by unit tests and by an e2e impostor.
+2. Job status follows the order in which the server receives reports.
+3. Storage-witness alerts with their own threshold, so they fire with the server down. Covered by
+   promtool tests.
+4. A narrower maintenance key, with B009–B011, checked against MinIO.
+5. Enrollment checks the code before it touches storage.
+6. A timeout on each backup and check, and SIGINT before SIGKILL.
+7. The repository check runs on the agent, after a backup.
+
+**Remaining for M1**
+- Rebuild the lab bucket to the documented layout, and run the contract test against RGW again,
+  B009–B011 included.
 
 **What the contract test taught on MinIO.** On MinIO, `s3:DeleteObject` also deletes object versions for
 good. A delete grant broader than `locks/*` therefore fails B006 as well as B005.
@@ -710,8 +717,22 @@ maintenance:
 
 - **No forget and no prune code path exists in M1.** The 7-day protection lands in M3, and CLAUDE.md
   forbids any destructive path that bypasses it.
-- **`check` only, if Q1 keeps it.** Once a day per host, the server runs `restic check
-  --read-data-subset n/30`, with n rotating (as in the PoC).
+- **`check` only, if Q1 keeps it.** `restic check --read-data-subset n/30`, with n rotating (as in the PoC).
+- **The agent runs the check (decision 030).**
+  - Once a day, right after a backup, inside the agent's one-restic-at-a-time loop, with the host's own
+    key. It can never meet the host's own backups.
+  - `holdfast check` tests every host's storage contract at once, and queues a `check_now` command for
+    each agent. The result arrives as an event of kind `check`.
+  - `maintenance.check: daily` (the default) sends the daily check to the agents. `off` leaves only
+    `holdfast check`.
+  - The server tests each host's storage contract once a day, and runs restic against a repository only
+    to initialise it, and in M3 to prune it.
+  - A backup or a check that runs past its timeout is stopped and reported as failed. The timeout is the
+    schedule's longest gap, and at least an hour. A check's timeout is the shortest of the host's.
+- **This replaced an earlier version from the same day.** That version had the server check each host
+  in the middle of the day's longest quiet stretch, and recover an interrupted check at start-up. It still
+  collided with long backups, because it planned around when runs start, not how long they last. The
+  quiet-window function stays in `internal/schedule`, for placing prunes in M3.
 - **`check` takes an exclusive lock. This is now measured on 0.19.1, not "reported".**
   `TestCheckLockIsExclusive` asserts it against MinIO with Holdfast's own identities. While check holds
   its lock:
@@ -721,29 +742,9 @@ maintenance:
   - `restic unlock` leaves the live lock alone;
   - a backup with `--retry-lock` waits and then succeeds.
 
-  A check that meets a running backup also fails with exit 11. The agent waits 15 minutes for a lock, so
-  a check running longer than that makes a scheduled backup fail.
-- **Where the check goes.** Each host is checked once a day, at the middle of that day's longest quiet
-  stretch.
-  - A quiet stretch runs from the end of one run's spread to the next run's start, over all the host's
-    jobs. Days are counted in the fleet's zone.
-  - The middle is as far as possible from the runs on either side.
-  - Examples:
-    - runs at 01:00 only: the check is at 12:30;
-    - runs at 02:00 and 20:00: the check is at 11:00;
-    - every 4 hours with a 30-minute spread: the check is at 02:15.
-  - A host is checked at most once a day, and a check by hand counts.
-  - If the server is down for the whole stretch, the check waits for the next day rather than run into
-    a backup.
-  - Two checks of different hosts may run at once (a constant for now). A check still waiting for a slot
-    when its stretch ends is recorded as `skipped`.
-  - The host view in the API, and so `holdfast host show`, gives `next_check`.
-  - `maintenance.check` is `daily` (the default) or `off`. It replaces the earlier `check_every`.
-- **An interrupted check is recovered.** A check that was running when the server stopped leaves its
-  exclusive lock behind. The lock names the server's host, so an agent cannot tell that it is stale for 30
-  minutes, and the host's backups fail with exit 11 until then. At start-up the server therefore marks
-  such a check `interrupted` and runs a plain `restic unlock`. Unlock sees that the process is gone and
-  removes only that lock.
+  A check that meets a running backup also fails with exit 11. That is why the check runs on the agent.
+- **restic is stopped gently.** When a run is cancelled or times out, restic gets SIGINT first, so it
+  removes its own lock. It is killed only if it has not exited within a minute.
 - **The leader gate is a stub.** It always says "leader" in M1. The VIP logic comes in M6.
 - **For M2.** The snapshot catalogue must read with `--no-lock`. Otherwise every listing fails while a
   check runs, and every listing would also take a lock that delays backups.
