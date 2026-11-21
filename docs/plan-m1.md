@@ -92,8 +92,8 @@ proposal. Each sits behind an interface where that matters, so it can change. **
 - Holdfast's own contract test, run against the lab's RGW (`TestS3ProberLive`, see `lab/README.md`):
   - plain users: exactly B003, AccessDenied;
   - plain users plus the bucket-policy grant: every check passes, including B005, B006 and B007.
-  - That was B001–B008. The lab's layout fails the later checks B009–B011, as `lab/README.md` explains.
-    Rebuilding it to the documented layout is still to do.
+  - That was B001–B008. In the documented layout, which `lab/rgw-documented-layout.sh` builds, all of
+    B001–B011 pass.
 
 **Decision 030's fixes: done and tested**
 1. Agent TLS: the pinned certificate is the only root, the server's certificate must chain to it, and
@@ -106,9 +106,9 @@ proposal. Each sits behind an interface where that matters, so it can change. **
 6. A timeout on each backup and check, and SIGINT before SIGKILL.
 7. The repository check runs on the agent, after a backup.
 
-**Remaining for M1**
-- Rebuild the lab bucket to the documented layout, and run the contract test against RGW again,
-  B009–B011 included.
+**The documented storage layout, on real Ceph RGW.** `lab/rgw-documented-layout.sh` rebuilds the lab
+bucket as `docs/storage.md` describes it. Holdfast's contract test then passes all of B001–B011 on Ceph
+19.2.3, with plain users and the bucket-policy grant.
 
 **What the contract test taught on MinIO.** On MinIO, `s3:DeleteObject` also deletes object versions for
 good. A delete grant broader than `locks/*` therefore fails B006 as well as B005.

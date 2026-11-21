@@ -110,8 +110,19 @@ HOLDFAST_PROBE_EXPECT=B003 go test ./internal/server/storage/ -run TestS3ProberL
   - the `--maint-policy` grant is `s3:*`, so the maintenance key can delete versions for good (B009);
   - the bucket has no lifecycle rule (B011).
 
-  Rebuilding the lab bucket to the documented layout is still to do. That layout is a bucket owned by
-  another identity, the narrowed grant with the deny, and a lifecycle rule (`docs/storage.md`).
+- **The documented layout passes everything.** `lab/rgw-documented-layout.sh` rebuilds the bucket in the
+  layout `docs/storage.md` describes:
+  - an owner of its own, `holdfast-bucket-owner`;
+  - versioning, and a lifecycle rule that expires noncurrent versions after 30 days;
+  - a bucket policy with the narrowed maintenance grant and its deny on `s3:DeleteObjectVersion`, plus
+    `test-host`'s per-prefix statements.
+
+  Run it with `lab/lab ssh m1 s3a 'bash -s' < lab/rgw-documented-layout.sh`. It deletes the lab
+  bucket's data first. After it, `TestS3ProberLive` with `HOLDFAST_PROBE_EXPECT=` passes every check,
+  B001–B011, on Ceph 19.2.3 with plain users. The bucket-policy grant lets the maintenance user read the
+  host's objects, although a third identity owns the bucket.
+- The isolation experiments (`lab/lab isolation`) still assume their own layout: `holdfast-maint` owns the
+  bucket. Running one replaces this layout, so run `rgw-documented-layout.sh` again afterwards.
 
 ## Troubleshooting
 
