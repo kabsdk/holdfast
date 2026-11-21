@@ -259,6 +259,19 @@ func (s Schedule) LongestGap() time.Duration {
 	return longest
 }
 
+// ShortestGap returns the shortest time between two consecutive nominal runs, measured like LongestGap.
+func (s Schedule) ShortestGap() time.Duration {
+	ref := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC) // a Monday
+	slots := s.Slots(ref.Add(-time.Nanosecond), ref.AddDate(0, 0, 21), time.UTC)
+	var shortest time.Duration
+	for i := 1; i < len(slots); i++ {
+		if g := slots[i].Sub(slots[i-1]); slots[i-1].Before(ref.AddDate(0, 0, 14)) && (shortest == 0 || g < shortest) {
+			shortest = g
+		}
+	}
+	return shortest
+}
+
 // SpreadDuration is the spread when it is switched on, and zero otherwise.
 func (s Schedule) SpreadDuration() time.Duration {
 	if !s.Spread.Enabled {

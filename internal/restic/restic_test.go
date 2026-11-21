@@ -87,6 +87,52 @@ func TestBackupFailure(t *testing.T) {
 	}
 }
 
+// The JSON restic 0.19.1 printed for forget --dry-run --json --group-by host (trimmed).
+const forgetPlan = `[{"tags":null,"host":"web01","paths":null,
+ "keep":[{"time":"2026-11-21T12:00:00Z","id":"aaa111","short_id":"aaa1"},{"time":"2026-11-20T12:00:00Z","id":"bbb222","short_id":"bbb2"}],
+ "remove":[{"time":"2026-11-11T12:00:00Z","id":"ccc333","short_id":"ccc3"}],
+ "reasons":[]}]`
+
+func TestForgetPlanForgetAndPrune(t *testing.T) {
+	bin, log := fake(t, "case \"$*\" in *'forget --dry-run'*) echo '"+strings.ReplaceAll(forgetPlan, "\n", "")+"' ;; esac\n")
+	r := Runner{Bin: bin, RetryLock: time.Minute}
+	keep, remove, err := r.ForgetPlan(context.Background(), "job=sys", []string{"--keep-within-daily", "14d", "--keep-last", "3"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(keep, ",") != "aaa111,bbb222" || strings.Join(remove, ",") != "ccc333" {
+		t.Fatalf("keep %v, remove %v", keep, remove)
+	}
+	if err := r.Forget(context.Background(), "ccc333"); err != nil {
+		t.Fatal(err)
+	}
+	got := read(t, log)
+	for _, want := range []string{"ARGS --no-lock forget --dry-run --json --tag job=sys --group-by host --keep-within-daily 14d --keep-last 3", "ARGS --retry-lock 1m0s forget -- ccc333"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in:\n%s", want, got)
+		}
+	}
+
+	// restic prints nothing when no snapshot has the tag
+	bin, _ = fake(t, "")
+	if keep, remove, err := (Runner{Bin: bin}).ForgetPlan(context.Background(), "job=none", []string{"--keep-last", "1"}); err != nil || len(keep)+len(remove) != 0 {
+		t.Fatalf("an empty plan: %v %v %v", keep, remove, err)
+	}
+}
+
+func TestParsePrune(t *testing.T) {
+	out := `to repack:             0 blobs / 0 B
+this removes:          0 blobs / 0 B
+to delete:             8 blobs / 2.164 KiB
+total prune:           8 blobs / 2.164 KiB
+remaining:            10 blobs / 5.724 MiB
+unused size after prune: 0 B (0.00% of remaining size)
+done`
+	if p := parsePrune(out); p.Freed != "2.164 KiB" || p.Remaining != "5.724 MiB" {
+		t.Fatalf("%+v", p)
+	}
+}
+
 func TestVersionAndUnlock(t *testing.T) {
 	bin, log := fake(t, "echo 'restic 0.19.1 compiled with go1.24.4 on linux/amd64'\n")
 	v, err := Runner{Bin: bin}.Version(context.Background())

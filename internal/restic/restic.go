@@ -7,7 +7,10 @@
 //   - passwords are passed by file, never in argv;
 //   - restic never inherits RESTIC_* or AWS_* variables from the parent process;
 //   - unlock only ever removes stale locks (never --remove-all);
-//   - there is no forget or prune here: nothing destructive exists before the 7-day protection (M3).
+//   - forget takes exact snapshot IDs only, never a policy: what to forget is decided by the server's
+//     retention, behind the 7-day protection (M3, decision 015). ForgetPlan asks restic, with --dry-run,
+//     what a policy would keep, and changes nothing. Only the server's maintenance calls Forget and Prune;
+//     agents never do (decision 007).
 package restic
 
 import (
@@ -437,6 +440,79 @@ func (r Runner) Restore(ctx context.Context, snapshot, target string, include []
 	}
 	_, err := r.run(ctx, args...)
 	return err
+}
+
+// ForgetPlan asks restic what a retention policy keeps among the snapshots with the tag, grouped by host
+// only (plan-m3 Q1), without changing anything (--dry-run). It returns the IDs it would keep and the ones it
+// would remove. It runs with --no-lock: without it, restic takes an exclusive lock even for a dry run.
+func (r Runner) ForgetPlan(ctx context.Context, tag string, policy []string) (keep, remove []string, err error) {
+	r.NoLock = true
+	args := append([]string{"forget", "--dry-run", "--json", "--tag", tag, "--group-by", "host"}, policy...)
+	out, err := r.run(ctx, args...)
+	if err != nil {
+		return nil, nil, err
+	}
+	var groups []struct {
+		Keep   []Snapshot `json:"keep"`
+		Remove []Snapshot `json:"remove"`
+	}
+	if len(bytes.TrimSpace(out)) > 0 {
+		if err := json.Unmarshal(out, &groups); err != nil {
+			return nil, nil, fmt.Errorf("restic forget --dry-run: %w", err)
+		}
+	}
+	keep, remove = []string{}, []string{}
+	for _, g := range groups {
+		for _, s := range g.Keep {
+			keep = append(keep, s.ID)
+		}
+		for _, s := range g.Remove {
+			remove = append(remove, s.ID)
+		}
+	}
+	return keep, remove, nil
+}
+
+// Forget removes exactly these snapshots. Their data is freed by the next Prune.
+func (r Runner) Forget(ctx context.Context, ids ...string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	_, err := r.run(ctx, append([]string{"forget", "--"}, ids...)...)
+	return err
+}
+
+// PruneReport is what restic said a prune freed. restic 0.19.1 has no JSON output for prune, so Freed is
+// read from its "total prune:" line, as restic prints it (such as "2.164 KiB"). It is empty if restic did
+// not print that line.
+type PruneReport struct {
+	Freed     string `json:"freed"`
+	Remaining string `json:"remaining"`
+}
+
+// Prune frees the data no snapshot uses any more.
+func (r Runner) Prune(ctx context.Context) (PruneReport, error) {
+	out, err := r.run(ctx, "prune")
+	return parsePrune(string(out)), err
+}
+
+func parsePrune(out string) PruneReport {
+	var p PruneReport
+	size := func(line string) string {
+		if i := strings.LastIndex(line, "/"); i >= 0 {
+			return strings.TrimSpace(line[i+1:])
+		}
+		return ""
+	}
+	for _, line := range strings.Split(out, "\n") {
+		switch line = strings.TrimSpace(line); {
+		case strings.HasPrefix(line, "total prune:"):
+			p.Freed = size(line)
+		case strings.HasPrefix(line, "remaining:"):
+			p.Remaining = size(line)
+		}
+	}
+	return p
 }
 
 // RestoreOptions describe one restore through the agent (plan-m2 §3).
