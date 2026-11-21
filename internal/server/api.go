@@ -131,7 +131,7 @@ func (s *Server) apiHostEvents(w http.ResponseWriter, r *http.Request) {
 	if limit <= 0 || limit > 1000 {
 		limit = 50
 	}
-	evs, err := s.st.Q().ListEvents(r.Context(), r.PathValue("fqdn"), limit)
+	evs, err := s.HostEvents(r.Context(), r.PathValue("fqdn"), limit)
 	if err != nil {
 		apiError(w, err)
 		return

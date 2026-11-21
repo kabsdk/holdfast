@@ -529,6 +529,15 @@ func (s *Server) Hosts(ctx context.Context) ([]HostView, error) {
 	return out, nil
 }
 
+// HostEvents returns a host's most recent runs, newest first.
+func (s *Server) HostEvents(ctx context.Context, fqdn string, limit int) ([]store.Event, error) {
+	evs, err := s.st.Q().ListEvents(ctx, fqdn, limit)
+	if evs == nil {
+		evs = []store.Event{}
+	}
+	return evs, err
+}
+
 // Host returns one host.
 func (s *Server) Host(ctx context.Context, fqdn string) (HostView, error) {
 	all, err := s.Hosts(ctx)
