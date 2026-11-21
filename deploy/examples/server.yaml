@@ -35,8 +35,3 @@ auth:
     issuer: https://auth.example.internal
     groups_claim: groups
   bootstrap_admins: []
-content_view:
-  enabled: false
-  require_mode_bits: "0004"
-  roles: [admin]
-  max_file_size: 1MiB

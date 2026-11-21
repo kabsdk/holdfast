@@ -3,7 +3,8 @@
 Status: accepted, 2026-11-21. [Decision 030](030-simplify-after-the-architecture-review.md) reopened how
 copies are made, then confirmed `restic copy`: a mirror of the repository files breaks when B keeps other
 snapshots than A. 030 also drops the shared cross-site key (O10) and the "one snapshot, for a limited time"
-restore grant. This decides part of OQ1. The remaining points are listed in
+restore grant. This decides part of OQ1. A snapshot deleted in site A is marked **Deleted in primary** in
+the vault, and a vault admin can choose **Delete here too** ([decision 031](031-deleting-a-single-snapshot.md)). The remaining points are listed in
 [research/off-site.md](../research/off-site.md) §7.
 
 ## Decision

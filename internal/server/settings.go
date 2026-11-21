@@ -12,7 +12,7 @@ import (
 )
 
 // Settings is /etc/holdfast/server.yaml. Changing it needs root on the server; a reload is audited.
-// auth.* and content_view.* are defined by spec §6.4 and are acted on from M4; the rest is
+// auth.* is defined by spec §6.4 and is acted on from M4; the rest is
 // operational (plan-m1 §9).
 type Settings struct {
 	Listen             string `yaml:"listen"`     // agent protocol, /metrics and /healthz, such as ":8443"
@@ -31,8 +31,7 @@ type Settings struct {
 	Storage     StorageSettings     `yaml:"storage"`
 	Maintenance MaintenanceSettings `yaml:"maintenance"`
 
-	Auth        map[string]any `yaml:"auth"`         // spec §6.4; M4
-	ContentView map[string]any `yaml:"content_view"` // spec §6.4, §6.5; M2/M4
+	Auth map[string]any `yaml:"auth"` // spec §6.4; M4
 }
 
 // TLS is the certificate for the agent listener. Without it the listener is plain HTTP, which is

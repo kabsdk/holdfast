@@ -90,9 +90,10 @@ supports.
 
 ### 2.2 High availability
 
-- There is a warm standby in site B: a keepalived VIP plus a PostgreSQL streaming replica. There is no
-  etcd.
-- Only the VIP holder runs maintenance. restic's exclusive lock is a second guard against split brain.
+- There is no standby (decision 030). Agents back up without the server, so an outage costs only
+  reporting and maintenance.
+- Instead, there is a nightly PostgreSQL dump and config export to site B, the sealing key is in escrow,
+  and a tested runbook rebuilds the server.
 - Agents keep backing up while the control plane is down.
 
 ### 2.3 Credentials and storage protection
@@ -132,7 +133,7 @@ supports.
 
 - There is no Git and there are no approvers.
 - Every save creates a revision in PostgreSQL. A revision holds its number, who made it, when, a message,
-  and the full config (hosts, jobs and library).
+  and the full config (hosts and jobs).
 - Any two revisions can be diffed.
 - Each revision also stores the warning codes that were accepted for it (§4.5).
 
@@ -169,6 +170,16 @@ those 7 days a one-click **Keep \<longer\> retention** action is available.
 - It is recorded in the host's history and in the audit log.
 - The deleted snapshot IDs can still be found in search, marked **Deleted**.
 
+**Delete a snapshot** (decision 031)
+- An admin can delete one snapshot, with restic's `forget <id>`. It is a UI action, an API endpoint, and
+  `holdfast snapshot delete <fqdn> <id>`.
+- It becomes a pending deletion for 7 days, which can be cancelled. **Delete now** skips the wait, with the
+  same confirmation as Prune now.
+- It never touches site B. The vault marks its copy **Deleted in primary**, and a vault admin can choose
+  **Delete here too**. That deletion follows the same rules in B.
+- The snapshot page shows when the data is really gone in each site. Space is freed at the next prune, and
+  S3 versioning keeps the old files until the bucket's lifecycle rule expires them.
+
 ### 3.5 Removing and decommissioning
 
 - Removing a job or a host never deletes data. The repository is retired and keeps its last retention.
@@ -177,7 +188,7 @@ those 7 days a one-click **Keep \<longer\> retention** action is available.
 
 ---
 
-## 4. Schedule, retention, protection and library
+## 4. Schedule, retention and protection
 
 ### 4.1 Schedule
 
@@ -221,29 +232,10 @@ Retention is expressed only as time windows, which map to restic as follows.
 
 A protection item is a schedule and a retention bundled together, and they are validated as a unit.
 
-### 4.4 Library
+### 4.4 Library (cut)
 
-The library is part of every config revision. It holds three kinds of item.
-
-| Item | Contents | Use |
-| --- | --- | --- |
-| Paths item | Paths and excludes | In a job, each paths item adds to the job's path list. |
-| Protection item | A schedule and a retention (§4.3) | |
-| Profile | Paths items and one protection item | Used when adding a host |
-
-**Library items are copies.**
-- Picking an item copies its values into the job.
-- Editing any of those fields in the job switches the job to **Custom**. It stays Custom even if its values
-  later match an item again.
-- There is no "based on" link and no "reset to".
-- **Undo changes** returns the job to the saved revision.
-
-**After a library item is edited**
-- Holdfast shows **Jobs with the old values (N)**, with a checkbox for each job.
-- Each job is checked against its own config.
-- One click updates all the selected jobs in a single revision.
-- Warnings must still be accepted (for example R104).
-- Retention cuts still go through the 7-day protection (§3.4).
+The library, profiles and "Jobs with the old values" were cut (decision 030). The section number is kept
+so that references to §4.5 stay valid.
 
 ### 4.5 Checks
 
@@ -299,8 +291,9 @@ cannot enroll.
 - The accepted codes are stored in the revision and in the audit log.
 - The CLI takes them explicitly, for example `holdfast job set … --accept R102,R104`. Without them it
   refuses the change and prints the same explanation as the UI.
-- A retention cut is detected by what can still be restored, not by the names of the tiers. Removing a tier
-  is not a cut if a finer tier covers its window.
+- restic decides what each policy keeps (decision 030). Holdfast runs `restic forget --dry-run` for the
+  old and the new policy. A change is a retention cut (R104) when the new policy keeps a strict subset of
+  what the old one keeps. Removing a tier is therefore not a cut if a finer tier keeps the same snapshots.
 
 ---
 
@@ -342,6 +335,13 @@ Restore and inspection behave like restic does on the host.
   overwrite mode.
 - **Another directory.**
 
+**The host sets the bounds** (decision 030). The agent's own config, which only root on the host can
+change, decides what a restore may do. A compromised server or admin login is then not root on every
+host.
+- By default, restores go into `/var/restore` only.
+- In place, or into another directory, only on hosts that opt in.
+- Only snapshots this agent made.
+
 **Running it**
 - A **dry run** is available.
 - The restic command uses whichever of `--include` or `--exclude` gives the shorter list, and always adds
@@ -368,14 +368,14 @@ Search finds:
 ### 5.7 Add host
 
 1. Enter the FQDN. It is validated, and a duplicate FQDN is refused.
-2. Choose a profile (§4.4).
+2. Give the host's S3 key (decision 029, [storage.md](storage.md)), and optionally its first job.
 3. Saving creates a revision.
 4. Holdfast shows a single-use enrollment code, valid for 15 minutes, and the install command.
 5. Progress is shown: **waiting → agent connected → first backup done**.
 
 ---
 
-## 6. Access control and file contents
+## 6. Access control
 
 ### 6.1 Login
 
@@ -396,6 +396,7 @@ There are three roles. Each has a flat set of permissions, and roles do not inhe
 | `config.jobs` | | ✓ | ✓ |
 | `restore.in_place` | | | ✓ |
 | `retention.cut` (includes Prune now) | | | ✓ |
+| `snapshot.delete` (includes Delete now) | | | ✓ |
 | `config.access` | | | ✓ |
 | `config.storage` | | | ✓ |
 | remove host / job | | | ✓ |
@@ -422,21 +423,9 @@ auth:
     issuer: https://auth.example.internal
     groups_claim: groups
   bootstrap_admins: []
-
-content_view:
-  enabled: false            # default: no file contents in the UI, API or CLI
-  require_mode_bits: "0004" # show a file only if its mode has all of these bits
-  roles: [admin]
-  max_file_size: 1MiB
 ```
 
 ### 6.5 File contents
 
-- By default, no file contents reach the UI, the API or the CLI. Only names and metadata do (§5.3).
-- When `content_view.enabled` is true, a file's contents may be shown only if all of these hold:
-  - the viewer has one of `content_view.roles`;
-  - the file's mode has all of `content_view.require_mode_bits`;
-  - the file is no larger than `content_view.max_file_size`.
-- Some files are always denied. This cannot be configured:
-  - `/etc/holdfast/**`;
-  - every job's repository password file.
+No file contents reach the UI, the API or the CLI. Only names and metadata do (§5.3). `content_view` was cut
+(decision 030). A restore runs on an agent and writes to that host.
