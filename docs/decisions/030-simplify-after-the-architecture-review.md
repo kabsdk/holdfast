@@ -81,11 +81,23 @@ is one example.
 
 - **No guard in retention against snapshots dated in the future,** by the principle above.
 
-## Still open
+## Decided afterwards (2026-11-21): off-site copies use `restic copy`
 
-- **How off-site copies are made:** holdfast-vault with `restic copy` (decision 027), or a mirror that
-  copies the repository's files from A to B as they are, and never overwrites or deletes. Either way, site B
-  runs a small service of its own for the copies, B's retention and status.
+You left the choice to me ("Whatever you say"). Decision 027 stands: the vault in site B copies each
+new snapshot with `restic copy` into a separate repository in B, which has its own password.
+
+**Why not the mirror** (copying A's repository files to B as they are):
+- **B's retention breaks it.** B's own forget and prune delete data in B. But the mirror keeps copying in
+  A's index files, which still point at data B has deleted, so B's repository reports errors.
+- **The only fix is patching restic's own files.** That means rebuilding B's index by hand, which is the
+  "fixing restic" the principle above rules out.
+- **`restic copy` is restic's own feature for this.** B stays a normal, independent repository that
+  restic's forget and prune handle as usual.
+
+**What it costs:**
+- Restoring from B uses B's password and B's snapshot IDs. The vault handles that.
+- Every copy is read and written again by restic.
+- B's copies stay sealed even if one of A's passwords leaks.
 
 ## Why
 

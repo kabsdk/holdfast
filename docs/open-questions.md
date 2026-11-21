@@ -19,9 +19,9 @@ around it. M6 waits until the off-site and rebuild questions are decided.
 > The remaining points are in [research/off-site.md](research/off-site.md) §7. The text below is kept as the
 > history of how the question was framed.
 >
-> **Reopened in part on 2026-11-21 ([decision 030](decisions/030-simplify-after-the-architecture-review.md)):**
-> how copies are made is open again. The choice is the vault's `restic copy`, or a mirror that copies the
-> repository's files from A to B as they are, and never overwrites or deletes.
+> **Reopened and closed again on 2026-11-21 ([decision 030](decisions/030-simplify-after-the-architecture-review.md)):**
+> copies are made with `restic copy`, as in decision 027. A mirror of the repository files was considered
+> and rejected: it breaks when B keeps other snapshots than A.
 
 **Original leaning**
 - A second repository per host in site B, filled with `restic copy`.

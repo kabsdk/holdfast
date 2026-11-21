@@ -1,9 +1,9 @@
 # 027: Off-site copies are made and governed by holdfast-vault in site B
 
-Status: accepted, 2026-11-21, then reopened by [decision 030](030-simplify-after-the-architecture-review.md):
-how copies are made (this vault's `restic copy`, or a mirror of the repository files) is open again.
-030 also drops the shared cross-site key (O10) and the "one snapshot, for a limited time" restore grant.
-This decides part of OQ1. The remaining points are listed in
+Status: accepted, 2026-11-21. [Decision 030](030-simplify-after-the-architecture-review.md) reopened how
+copies are made, then confirmed `restic copy`: a mirror of the repository files breaks when B keeps other
+snapshots than A. 030 also drops the shared cross-site key (O10) and the "one snapshot, for a limited time"
+restore grant. This decides part of OQ1. The remaining points are listed in
 [research/off-site.md](../research/off-site.md) §7.
 
 ## Decision
