@@ -653,6 +653,14 @@ func (e *env) host(fqdn string) hostView {
 	return h
 }
 
+// hostRaw is the API's host view as a plain map, for fields hostView does not carry.
+func (e *env) hostRaw(fqdn string) map[string]any {
+	e.t.Helper()
+	var m map[string]any
+	must(e.t, json.Unmarshal(e.cli("host", "show", fqdn), &m))
+	return m
+}
+
 func (e *env) waitProgress(fqdn, progress string, d time.Duration) {
 	e.t.Helper()
 	waitFor(e.t, fqdn+" "+progress, d, func() bool { return e.host(fqdn).Progress == progress })

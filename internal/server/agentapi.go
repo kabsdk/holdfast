@@ -255,6 +255,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 // Events stores each event once and acknowledges all of them, including ones stored before.
 func (s *Server) Events(ctx context.Context, fqdn string, evs []proto.Event) ([]string, error) {
 	acked := []string{}
+	newSnapshot := false
 	for _, e := range evs {
 		if e.ID == "" {
 			continue
@@ -270,6 +271,12 @@ func (s *Server) Events(ctx context.Context, fqdn string, evs []proto.Event) ([]
 			return acked, err
 		}
 		acked = append(acked, e.ID)
+		if e.SnapshotID != "" {
+			newSnapshot = true
+		}
+	}
+	if newSnapshot {
+		s.refreshSoon(fqdn) // the catalogue follows each new snapshot (plan-m2 §3)
 	}
 	return acked, nil
 }

@@ -46,6 +46,9 @@ type Runner struct {
 	CacheDir     string        // RESTIC_CACHE_DIR; restic's default when empty
 	Env          []string      // extra variables, e.g. AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY
 	RetryLock    time.Duration // --retry-lock; 0 means fail at once when locked
+	// NoLock reads without creating a lock (--no-lock). The server's reads (snapshot lists, files,
+	// changes, find) use it, so they never wait for an agent's check or delay a backup (plan-m2 Q1).
+	NoLock bool
 }
 
 // Error carries restic's exit code and the tail of its stderr.
@@ -91,8 +94,10 @@ func (r Runner) env() []string {
 
 // run executes restic and returns stdout; the last 8 KiB of stderr go into the error.
 func (r Runner) run(ctx context.Context, args ...string) ([]byte, error) {
-	if r.RetryLock > 0 {
-		// A global flag goes before the subcommand: after "--" restic would read it as a path.
+	// Global flags go before the subcommand: after "--" restic would read them as paths.
+	if r.NoLock {
+		args = append([]string{"--no-lock"}, args...)
+	} else if r.RetryLock > 0 {
 		args = append([]string{"--retry-lock", r.RetryLock.String()}, args...)
 	}
 	cmd := exec.CommandContext(ctx, r.bin(), args...)
@@ -220,12 +225,165 @@ func parseSummary(out []byte) (BackupResult, error) {
 
 // Snapshot is one entry of restic snapshots --json.
 type Snapshot struct {
-	ID       string    `json:"id"`
-	ShortID  string    `json:"short_id"`
-	Time     time.Time `json:"time"`
-	Hostname string    `json:"hostname"`
-	Tags     []string  `json:"tags"`
-	Paths    []string  `json:"paths"`
+	ID       string           `json:"id"`
+	ShortID  string           `json:"short_id"`
+	Time     time.Time        `json:"time"`
+	Hostname string           `json:"hostname"`
+	Tags     []string         `json:"tags"`
+	Paths    []string         `json:"paths"`
+	Parent   string           `json:"parent"`
+	Summary  *SnapshotSummary `json:"summary"` // restic 0.17 and later
+}
+
+// SnapshotSummary is what restic recorded about the backup that made a snapshot.
+type SnapshotSummary struct {
+	BackupStart         time.Time `json:"backup_start"`
+	BackupEnd           time.Time `json:"backup_end"`
+	DataAdded           int64     `json:"data_added"`
+	TotalFilesProcessed int64     `json:"total_files_processed"`
+	TotalBytesProcessed int64     `json:"total_bytes_processed"`
+}
+
+// Node is one file system entry in a snapshot: names and metadata, never contents.
+type Node struct {
+	Name        string    `json:"name"`
+	Type        string    `json:"type"` // file, dir, symlink, dev, chardev, fifo, socket
+	Path        string    `json:"path"`
+	UID         uint32    `json:"uid"`
+	GID         uint32    `json:"gid"`
+	User        string    `json:"user,omitempty"`
+	Group       string    `json:"group,omitempty"`
+	Size        uint64    `json:"size"`
+	Mode        uint32    `json:"mode"`
+	Permissions string    `json:"permissions"`
+	MTime       time.Time `json:"mtime"`
+	LinkTarget  string    `json:"link_target,omitempty"` // restic ls does not print it in 0.19
+}
+
+// Ls lists one directory of a snapshot: its direct children, not the directory itself and not deeper.
+func (r Runner) Ls(ctx context.Context, snapshot, dir string) ([]Node, error) {
+	out, err := r.run(ctx, "ls", "--json", "--long", snapshot, dir)
+	if err != nil {
+		return nil, err
+	}
+	nodes := []Node{}
+	err = eachJSONLine(out, func(line []byte) error {
+		var probe struct {
+			StructType string `json:"struct_type"`
+			Path       string `json:"path"`
+		}
+		if json.Unmarshal(line, &probe) != nil || probe.StructType != "node" || probe.Path == dir {
+			return nil
+		}
+		var n Node
+		if err := json.Unmarshal(line, &n); err != nil {
+			return err
+		}
+		nodes = append(nodes, n)
+		return nil
+	})
+	return nodes, err
+}
+
+// Change is one path in restic diff: "+" added, "-" removed, "M" content changed, "U" metadata changed,
+// "T" type changed, "?" bitrot.
+type Change struct {
+	Path     string `json:"path"`
+	Modifier string `json:"modifier"`
+}
+
+// DiffStats are restic diff's totals.
+type DiffStats struct {
+	ChangedFiles int `json:"changed_files"`
+	Added        struct {
+		Files int   `json:"files"`
+		Dirs  int   `json:"dirs"`
+		Bytes int64 `json:"bytes"`
+	} `json:"added"`
+	Removed struct {
+		Files int   `json:"files"`
+		Dirs  int   `json:"dirs"`
+		Bytes int64 `json:"bytes"`
+	} `json:"removed"`
+}
+
+// Diff compares two snapshots, metadata changes included (spec §5.3).
+func (r Runner) Diff(ctx context.Context, from, to string) ([]Change, DiffStats, error) {
+	out, err := r.run(ctx, "diff", "--json", "--metadata", from, to)
+	if err != nil {
+		return nil, DiffStats{}, err
+	}
+	changes := []Change{}
+	var stats DiffStats
+	err = eachJSONLine(out, func(line []byte) error {
+		var probe struct {
+			MessageType string `json:"message_type"`
+		}
+		if json.Unmarshal(line, &probe) != nil {
+			return nil
+		}
+		switch probe.MessageType {
+		case "change":
+			var c Change
+			if err := json.Unmarshal(line, &c); err != nil {
+				return err
+			}
+			changes = append(changes, c)
+		case "statistics":
+			return json.Unmarshal(line, &stats)
+		}
+		return nil
+	})
+	return changes, stats, err
+}
+
+// Found is one snapshot's matches in restic find.
+type Found struct {
+	Snapshot string `json:"snapshot"`
+	Matches  []Node `json:"matches"`
+}
+
+// Find looks for a name pattern in every snapshot.
+func (r Runner) Find(ctx context.Context, pattern string) ([]Found, error) {
+	out, err := r.run(ctx, "find", "--json", "--", pattern)
+	if err != nil {
+		return nil, err
+	}
+	found := []Found{}
+	if len(bytes.TrimSpace(out)) == 0 {
+		return found, nil
+	}
+	return found, json.Unmarshal(out, &found)
+}
+
+// RepoKey is one password (key) of the repository, from restic key list.
+type RepoKey struct {
+	ID       string `json:"id"`
+	Current  bool   `json:"current"`
+	UserName string `json:"userName"`
+	HostName string `json:"hostName"`
+	Created  string `json:"created"`
+}
+
+// Keys lists the repository's keys (decision 032: a key added outside Holdfast is reported).
+func (r Runner) Keys(ctx context.Context) ([]RepoKey, error) {
+	out, err := r.run(ctx, "key", "list", "--json")
+	if err != nil {
+		return nil, err
+	}
+	var keys []RepoKey
+	return keys, json.Unmarshal(out, &keys)
+}
+
+func eachJSONLine(out []byte, fn func([]byte) error) error {
+	sc := bufio.NewScanner(bytes.NewReader(out))
+	sc.Buffer(make([]byte, 1<<20), 1<<24)
+	for sc.Scan() {
+		if err := fn(sc.Bytes()); err != nil {
+			return err
+		}
+	}
+	return sc.Err()
 }
 
 // Snapshots lists snapshots that carry all the given tags.

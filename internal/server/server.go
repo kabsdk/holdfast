@@ -41,6 +41,17 @@ type Server struct {
 	log      *slog.Logger
 	hub      *hub
 	now      func() time.Time
+
+	runCtx    context.Context // set by Run; background work stops with it
+	refresher catalogueRefresher
+}
+
+// background is the context for work that outlives a request, such as a catalogue refresh.
+func (s *Server) background() context.Context {
+	if s.runCtx != nil {
+		return s.runCtx
+	}
+	return context.Background()
 }
 
 // Deps are what New needs besides the settings. Tests replace parts of them.
@@ -74,11 +85,13 @@ func New(set Settings, d Deps) (*Server, error) {
 		d.Prober = storage.S3Prober{Location: loc, Maint: d.Maintenance}
 	}
 	return &Server{set: set, st: d.Store, seal: d.Sealer, prov: d.Provisioner, prober: d.Prober, maintKey: d.Maintenance,
-		loc: loc, zone: zone, log: d.Logger, hub: newHub(), now: d.Now}, nil
+		loc: loc, zone: zone, log: d.Logger, hub: newHub(), now: d.Now,
+		refresher: catalogueRefresher{running: map[string]bool{}, again: map[string]bool{}}}, nil
 }
 
 // Run starts the background work: the notification listener and the maintenance loop.
 func (s *Server) Run(ctx context.Context) {
+	s.runCtx = ctx
 	go s.hub.listen(ctx, s.st.Pool(), s.log)
 	go s.maintenanceLoop(ctx)
 }
@@ -624,8 +637,13 @@ type HostView struct {
 	DesiredSHA256   string       `json:"desired_sha256"` // what the host's agent should run now
 	InSync          bool         `json:"in_sync"`
 	// ResticWarning is set when the agent runs another restic than the one Holdfast is tested with.
-	ResticWarning string    `json:"restic_warning,omitempty"`
-	Jobs          []JobView `json:"jobs"`
+	ResticWarning string `json:"restic_warning,omitempty"`
+	// The snapshot catalogue's counts, and its banners (decision 032): snapshots in the repository that
+	// Holdfast did not make, and snapshots that disappeared without Holdfast deleting them.
+	Snapshots         int       `json:"snapshots"`
+	NotMadeByHoldfast int       `json:"not_made_by_holdfast"`
+	Disappeared       int       `json:"disappeared"`
+	Jobs              []JobView `json:"jobs"`
 }
 
 // OnlineWithin is how recently an agent must have polled to count as online.
@@ -651,6 +669,10 @@ func (s *Server) Hosts(ctx context.Context) ([]HostView, error) {
 		byHost[a.FQDN] = a
 	}
 	statuses, err := q.ListJobStatus(ctx)
+	if err != nil {
+		return nil, err
+	}
+	counts, err := q.CountCatalogue(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -680,6 +702,8 @@ func (s *Server) Hosts(ctx context.Context) ([]HostView, error) {
 		// In sync means the agent runs what the server would send it now. That includes server settings
 		// such as the daily check, so it is compared with the config as rendered now, not with the hash
 		// stored when the revision was saved.
+		c := counts[h.FQDN]
+		v.Snapshots, v.NotMadeByHoldfast, v.Disappeared = c.Snapshots, c.NotMadeByHoldfast, c.Disappeared
 		v.DesiredSHA256 = s.renderHost(head.Config, h.FQDN).SHA256
 		v.InSync = v.Agent != nil && v.Agent.AppliedSHA256 == v.DesiredSHA256
 		hc := head.Config.Hosts[h.FQDN]

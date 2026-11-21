@@ -125,6 +125,7 @@ func (s *Server) maintenanceLoop(ctx context.Context) {
 			return
 		case <-t.C:
 			s.checkStorageDue(ctx)
+			s.refreshCatalogueDue(ctx)
 		}
 	}
 }

@@ -60,6 +60,11 @@ func (s *Server) APIHandler(local bool) http.Handler {
 	mux.HandleFunc("GET /api/v1/hosts/{fqdn}/events", s.apiHostEvents)
 	mux.HandleFunc("POST /api/v1/hosts/{fqdn}/enrollment-code", s.apiEnrollmentCode)
 	mux.HandleFunc("PUT /api/v1/hosts/{fqdn}/s3-key", s.apiSetS3Key)
+	mux.HandleFunc("GET /api/v1/hosts/{fqdn}/snapshots", s.apiSnapshots)
+	mux.HandleFunc("GET /api/v1/hosts/{fqdn}/snapshots/{id}/files", s.apiFiles)
+	mux.HandleFunc("GET /api/v1/hosts/{fqdn}/snapshots/{id}/changes", s.apiChanges)
+	mux.HandleFunc("GET /api/v1/hosts/{fqdn}/find", s.apiFind)
+	mux.HandleFunc("POST /api/v1/hosts/{fqdn}/snapshots/acknowledge", s.apiAcknowledge)
 	mux.HandleFunc("PUT /api/v1/hosts/{fqdn}/jobs/{job}", s.apiSetJob)
 	mux.HandleFunc("POST /api/v1/hosts/{fqdn}/jobs/{job}/run", s.apiRunNow)
 	mux.HandleFunc("GET /api/v1/revisions", s.apiRevisions)
@@ -88,6 +93,8 @@ func apiError(w http.ResponseWriter, err error) {
 		writeErr(w, http.StatusConflict, err.Error())
 	case errors.Is(err, store.ErrNotFound):
 		writeErr(w, http.StatusNotFound, err.Error())
+	case errors.Is(err, ErrTimeout):
+		writeErr(w, http.StatusGatewayTimeout, err.Error())
 	default:
 		writeErr(w, http.StatusInternalServerError, err.Error())
 	}
@@ -163,6 +170,55 @@ func (s *Server) apiEnrollmentCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, e)
+}
+
+func (s *Server) apiSnapshots(w http.ResponseWriter, r *http.Request) {
+	qv := r.URL.Query()
+	list, err := s.Snapshots(r.Context(), r.PathValue("fqdn"), SnapshotQuery{JobID: qv.Get("job"), Month: qv.Get("month"),
+		All: qv.Get("all") == "1", Refresh: qv.Get("refresh") == "1"})
+	if err != nil {
+		apiError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, list)
+}
+
+func (s *Server) apiFiles(w http.ResponseWriter, r *http.Request) {
+	n, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	p, err := s.Files(r.Context(), r.PathValue("fqdn"), r.PathValue("id"), r.URL.Query().Get("path"), n)
+	if err != nil {
+		apiError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, p)
+}
+
+func (s *Server) apiChanges(w http.ResponseWriter, r *http.Request) {
+	n, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	v, err := s.Changes(r.Context(), r.PathValue("fqdn"), r.PathValue("id"), r.URL.Query().Get("against"), n)
+	if err != nil {
+		apiError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, v)
+}
+
+func (s *Server) apiFind(w http.ResponseWriter, r *http.Request) {
+	found, err := s.Find(r.Context(), r.PathValue("fqdn"), r.URL.Query().Get("pattern"))
+	if err != nil {
+		apiError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, found)
+}
+
+func (s *Server) apiAcknowledge(w http.ResponseWriter, r *http.Request) {
+	n, err := s.AcknowledgeDisappeared(r.Context(), actorOf(r), r.PathValue("fqdn"))
+	if err != nil {
+		apiError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"acknowledged": n})
 }
 
 func (s *Server) apiSetS3Key(w http.ResponseWriter, r *http.Request) {

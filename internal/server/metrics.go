@@ -125,6 +125,17 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 			fmt.Fprintf(&b, "holdfast_maintenance_last_success_timestamp_seconds{host=%q,kind=\"check\"} %s\n", f, ts(&t))
 		}
 	}
+	gauge("holdfast_snapshots", "Snapshots in the host's repository, from the catalogue.")
+	gauge("holdfast_snapshots_not_made_by_holdfast", "Snapshots in the repository that no agent reported (decision 032).")
+	gauge("holdfast_snapshots_disappeared", "Snapshots gone from the repository without Holdfast deleting them, not yet acknowledged.")
+	for _, h := range hosts {
+		if h.CatalogueRefreshedAt == nil {
+			continue
+		}
+		fmt.Fprintf(&b, "holdfast_snapshots{host=%q} %d\n", h.FQDN, h.Snapshots)
+		fmt.Fprintf(&b, "holdfast_snapshots_not_made_by_holdfast{host=%q} %d\n", h.FQDN, h.NotMadeByHoldfast)
+		fmt.Fprintf(&b, "holdfast_snapshots_disappeared{host=%q} %d\n", h.FQDN, h.Disappeared)
+	}
 	gauge("holdfast_storage_contract_ok", "1 if the host's keys passed every storage check at the last test (decision 029).")
 	gauge("holdfast_storage_contract_failed", "1 for each storage check (code) that failed at the last test.")
 	gauge("holdfast_storage_checked_timestamp_seconds", "When the host's storage contract was last tested.")

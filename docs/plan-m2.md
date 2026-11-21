@@ -1,6 +1,8 @@
 # Plan for M2: snapshots, files, changes and restore
 
-Status: proposed, 2026-11-21. **No M2 code is written until the questions in §6 are answered.**
+Status: accepted, 2026-11-21. You answered the questions in §6 with "Continue", which I took as yes to
+every proposal as written. That includes Q2, which touches OQ3: the catalogue keeps tombstones. Say if any
+should change.
 
 ## 1. Goal and done when
 

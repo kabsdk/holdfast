@@ -6,6 +6,30 @@ rule_files:
 evaluation_interval: 1m
 
 tests:
+  # Snapshots that disappeared page at once; snapshots Holdfast did not make raise a ticket after an hour.
+  - interval: 1m
+    input_series:
+      - series: 'holdfast_snapshots_disappeared{host="web01"}'
+        values: '2x120'
+      - series: 'holdfast_snapshots_not_made_by_holdfast{host="web01"}'
+        values: '1x120'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: HoldfastSnapshotsDisappeared
+        exp_alerts:
+          - exp_labels: {severity: page, host: web01}
+            exp_annotations:
+              summary: "web01: 2 snapshots disappeared without Holdfast deleting them (holdfast host show web01)"
+      - eval_time: 30m
+        alertname: HoldfastSnapshotsNotMadeByHoldfast
+        exp_alerts: []
+      - eval_time: 90m
+        alertname: HoldfastSnapshotsNotMadeByHoldfast
+        exp_alerts:
+          - exp_labels: {severity: ticket, host: web01}
+            exp_annotations:
+              summary: "web01: 1 snapshots in its repository were not made by Holdfast"
+
   # A host that runs another restic raises a ticket after an hour, not at once (an upgrade in progress).
   - interval: 1m
     input_series:

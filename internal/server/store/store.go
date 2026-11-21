@@ -295,6 +295,9 @@ type Host struct {
 	FirstBackupAt *time.Time `json:"first_backup_at,omitempty"`
 	// Storage is the last storage contract test (decision 029); nil before the first.
 	Storage *storage.Report `json:"storage,omitempty"`
+	// CatalogueRefreshedAt is when the snapshot catalogue last read the repository (M2).
+	CatalogueRefreshedAt *time.Time `json:"catalogue_refreshed_at,omitempty"`
+	CatalogueError       string     `json:"catalogue_error,omitempty"`
 }
 
 // CreateHost records a new host. A host that exists already (even retired) is refused.
@@ -306,13 +309,15 @@ func (q *Q) CreateHost(ctx context.Context, fqdn string, rev int64, now time.Tim
 	return err
 }
 
-const hostCols = `fqdn, state, added_revision, added_at, connected_at, first_backup_at, storage_checked_at, storage_findings`
+const hostCols = `fqdn, state, added_revision, added_at, connected_at, first_backup_at, storage_checked_at, storage_findings,
+	catalogue_refreshed_at, catalogue_error`
 
 func scanHost(row pgx.Row) (Host, error) {
 	var h Host
 	var checked *time.Time
 	var findings []byte
-	err := row.Scan(&h.FQDN, &h.State, &h.AddedRevision, &h.AddedAt, &h.ConnectedAt, &h.FirstBackupAt, &checked, &findings)
+	err := row.Scan(&h.FQDN, &h.State, &h.AddedRevision, &h.AddedAt, &h.ConnectedAt, &h.FirstBackupAt, &checked, &findings,
+		&h.CatalogueRefreshedAt, &h.CatalogueError)
 	if err == nil && checked != nil {
 		h.Storage = &storage.Report{CheckedAt: *checked, Findings: []storage.Finding{}}
 		if len(findings) > 0 {

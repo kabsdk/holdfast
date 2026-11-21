@@ -112,6 +112,22 @@ groups:
         annotations:
           summary: "{{ $labels.host }}: restic check has not succeeded for 3 days"
 
+      - alert: HoldfastSnapshotsDisappeared
+        # Snapshots left the repository, and Holdfast did not delete them (decision 032). They can still be
+        # recovered from S3's old versions until the bucket's lifecycle rule expires them.
+        expr: holdfast_snapshots_disappeared > 0
+        labels: {severity: page}
+        annotations:
+          summary: "{{ $labels.host }}: {{ $value }} snapshots disappeared without Holdfast deleting them (holdfast host show {{ $labels.host }})"
+
+      - alert: HoldfastSnapshotsNotMadeByHoldfast
+        # Someone ran restic backup by hand. Holdfast leaves those snapshots alone, and never cleans them up.
+        expr: holdfast_snapshots_not_made_by_holdfast > 0
+        for: 1h
+        labels: {severity: ticket}
+        annotations:
+          summary: "{{ $labels.host }}: {{ $value }} snapshots in its repository were not made by Holdfast"
+
       - alert: HoldfastResticNotPinned
         # The agent runs a restic other than the one Holdfast is tested with, which its package ships
         # (decision 032): someone replaced the binary, or the package is old.

@@ -30,7 +30,7 @@ func main() {
 	root := &cobra.Command{Use: "holdfast", Short: "Holdfast command line (a client of the Holdfast API)", SilenceUsage: true}
 	root.PersistentFlags().StringVar(&socketPath, "socket", envOr("HOLDFAST_SOCKET", "/run/holdfast/api.sock"), "API socket of holdfast-server")
 	root.PersistentFlags().BoolVar(&asJSON, "json", false, "print the API's JSON answer")
-	root.AddCommand(statusCmd(), hostCmd(), jobCmd(), revisionCmd(), auditCmd(), checkCmd(), escrowCmd())
+	root.AddCommand(statusCmd(), hostCmd(), jobCmd(), snapshotCmd(), revisionCmd(), auditCmd(), checkCmd(), escrowCmd())
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
 	}
@@ -203,16 +203,20 @@ type jobStatus struct {
 }
 
 type hostView struct {
-	FQDN            string         `json:"fqdn"`
-	State           string         `json:"state"`
-	Progress        string         `json:"progress"`
-	Online          bool           `json:"online"`
-	InSync          bool           `json:"in_sync"`
-	DesiredRevision int64          `json:"desired_revision"`
-	FirstBackupAt   *time.Time     `json:"first_backup_at"`
-	Storage         *storageReport `json:"storage"`
-	ResticWarning   string         `json:"restic_warning"`
-	Agent           *struct {
+	FQDN              string         `json:"fqdn"`
+	State             string         `json:"state"`
+	Progress          string         `json:"progress"`
+	Online            bool           `json:"online"`
+	InSync            bool           `json:"in_sync"`
+	DesiredRevision   int64          `json:"desired_revision"`
+	FirstBackupAt     *time.Time     `json:"first_backup_at"`
+	Storage           *storageReport `json:"storage"`
+	ResticWarning     string         `json:"restic_warning"`
+	Snapshots         int            `json:"snapshots"`
+	NotMadeByHoldfast int            `json:"not_made_by_holdfast"`
+	Disappeared       int            `json:"disappeared"`
+	CatalogueError    string         `json:"catalogue_error"`
+	Agent             *struct {
 		LastSeenAt      *time.Time `json:"last_seen_at"`
 		AgentVersion    string     `json:"agent_version"`
 		ResticVersion   string     `json:"restic_version"`
@@ -284,6 +288,17 @@ func hostCmd() *cobra.Command {
 		}
 		if h.ResticWarning != "" {
 			fmt.Println("warning:", h.ResticWarning)
+		}
+		if h.Disappeared > 0 {
+			fmt.Printf("ALERT: %d snapshots disappeared from the repository without Holdfast deleting them.\n"+
+				"  They can be recovered from S3's old versions until the bucket's lifecycle rule expires them.\n"+
+				"  holdfast snapshot list %s --all shows them; holdfast host acknowledge %s clears this.\n", h.Disappeared, h.FQDN, h.FQDN)
+		}
+		if h.NotMadeByHoldfast > 0 {
+			fmt.Printf("warning: %d snapshots in the repository were not made by Holdfast; Holdfast leaves them alone\n", h.NotMadeByHoldfast)
+		}
+		if h.CatalogueError != "" {
+			fmt.Println("warning: the snapshot list could not be read:", h.CatalogueError)
 		}
 		if h.Storage != nil {
 			if len(h.Storage.Findings) == 0 {
@@ -381,6 +396,19 @@ func hostCmd() *cobra.Command {
 	setKey.Flags().StringVar(&setKeyFile, "s3-key-file", "", "a root-only file of AWS_ACCESS_KEY_ID= and AWS_SECRET_ACCESS_KEY= lines, or - for stdin")
 	setKey.Flags().StringVarP(&setKeyMsg, "message", "m", "", "why the key is replaced, for the audit log")
 	c.AddCommand(setKey)
+	c.AddCommand(&cobra.Command{Use: "acknowledge <fqdn>", Short: "Clear the alert for snapshots that disappeared (the record of them stays)", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, a []string) error {
+		var res struct{ Acknowledged int }
+		raw, err := call("POST", "/api/v1/hosts/"+url.PathEscape(a[0])+"/snapshots/acknowledge", nil, &res)
+		if err != nil {
+			return err
+		}
+		if asJSON {
+			printJSON(raw)
+			return nil
+		}
+		fmt.Printf("acknowledged %d disappeared snapshots of %s\n", res.Acknowledged, a[0])
+		return nil
+	}})
 	c.AddCommand(&cobra.Command{Use: "enroll-code <fqdn>", Short: "Issue a new 15-minute enrollment code (revokes the open one)", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, a []string) error {
 		var e struct {
 			Code           string    `json:"code"`
