@@ -50,16 +50,18 @@ func (q *Q) MadeByHoldfast(ctx context.Context, fqdn string, ids []string) (map[
 }
 
 // MarkDeleting marks snapshots Holdfast is about to forget, before restic forgets them, so a catalogue
-// refresh in between never reports them as disappeared.
+// refresh in between never reports them as disappeared. A snapshot that is gone already keeps its
+// tombstone as it is: if it disappeared outside Holdfast, that stays reported.
 func (q *Q) MarkDeleting(ctx context.Context, fqdn string, ids []string) error {
-	_, err := q.db.Exec(ctx, `UPDATE snapshots SET deleted_by_holdfast = true WHERE fqdn = $1 AND id = ANY($2)`, fqdn, nonNil(ids))
+	_, err := q.db.Exec(ctx, `UPDATE snapshots SET deleted_by_holdfast = true WHERE fqdn = $1 AND id = ANY($2) AND gone_at IS NULL`, fqdn, nonNil(ids))
 	return err
 }
 
-// MarkDeleted gives the snapshots restic forgot their tombstones.
+// MarkDeleted gives the snapshots restic forgot their tombstones: those MarkDeleting marked, and those
+// still there.
 func (q *Q) MarkDeleted(ctx context.Context, fqdn string, ids []string, now time.Time) error {
 	_, err := q.db.Exec(ctx, `UPDATE snapshots SET deleted_by_holdfast = true, gone_at = COALESCE(gone_at, $3)
-		WHERE fqdn = $1 AND id = ANY($2)`, fqdn, nonNil(ids), now)
+		WHERE fqdn = $1 AND id = ANY($2) AND (gone_at IS NULL OR deleted_by_holdfast)`, fqdn, nonNil(ids), now)
 	return err
 }
 

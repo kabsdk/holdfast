@@ -51,7 +51,7 @@ decisions D1–D10 for you to make. Nothing is decided.
 
 > **Decided on 2026-11-21 (plan-m3 Q3; you left it to me):** yes. Each host has a list of its prunes, both
 > scheduled ones and Prune now. Each entry shows when, which kind, who, how many snapshots were forgotten and
-> the bytes freed.
+> the bytes freed. Built in M3: `holdfast prunes [<fqdn>]`, `GET /api/v1/hosts/{fqdn}/prunes` (spec §3.4).
 
 A list of prunes, both manual (Prune now) and scheduled, under Config history.
 

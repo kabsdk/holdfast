@@ -88,6 +88,48 @@ noncurrent-version days. The gone date is then the prune date plus those days.
 - Unit: each check code, with its boundary cases.
 - Integration: prune placement uses the quiet window, and a failed pre-prune check blocks the prune.
 
+## 5a. Progress
+
+**Built:**
+- the checks engine (`internal/checks`), on `host add` and `job set`, with `--accept`, and `holdfast job check`;
+- the daily run, `holdfast pending`, `holdfast job keep-longer`, `holdfast prune-now`, `holdfast snapshot
+  delete`, `holdfast prunes`, and the really-gone dates;
+- the test clock (Q6).
+
+**Tests that pass:**
+- e2e: `TestChecks`; `TestRetentionMatchesRestic`, the PoC's retention test ported; `TestRetentionCutWaitsSevenDays`,
+  which covers the cut, Keep longer, Delete snapshot, Prune now and the hand-made snapshot;
+- unit: every check code, and `TestRetentionProtectionPruneAndDelete`, where a scripted restic fails the
+  check so the prune is blocked;
+- `TestRetentionSlot`: the placement in the quiet stretch. This one is a unit test, not an e2e test as §1
+  says: an e2e test would have to wait for the slot's time of day.
+
+**Where the build differs from §2 and §3, and why:**
+- **The check endpoint is per job:** `POST /api/v1/hosts/{fqdn}/jobs/{job}/check`, not `POST /api/v1/check`.
+  S002 needs the job's runs, and R104 needs its repository.
+- **Keep longer has its own endpoint,** `POST …/jobs/{job}/keep-longer`. It still saves a normal revision.
+  The server picks the older retention, because logic stays behind the API (decision 028).
+- **Added `holdfast retention run <fqdn>`** (`POST …/retention/run`). It starts the daily run now, with the
+  same protection. The e2e tests need it, and so does an admin who does not want to wait for the slot.
+- **Added `maintenance.retention: daily | off`,** next to `maintenance.check`. The e2e harness turns the
+  daily run off, so it cannot race the tests' snapshot counts.
+- **Prune now and Delete now run in the background.** Each returns a run ID, and its outcome is in
+  `holdfast prunes`. `--wait` waits for it. A prune can take longer than an API call should.
+- **A missed slot waits for the next day.** If the server was down during a host's quiet stretch, the run
+  does not catch up in the middle of the backups.
+- **Removed jobs are not covered.** The daily run only covers the jobs in the current config, because removing
+  a job never deletes data (§3.5).
+- **If restic cannot be asked for R104,** the change counts as a cut, so it needs R104 accepted. The 7-day
+  protection applies either way.
+- **Delete snapshot works on any snapshot in the catalogue,** including one Holdfast did not make. It is an
+  admin's explicit request, and restic's own `forget <id>`. The daily run still never touches such
+  snapshots. This was my call within decision 031; say if you want Delete limited to Holdfast's own
+  snapshots.
+- **M1's unused `maintenance_runs` table was renamed** to `m1_check_runs`, and a new one holds the runs.
+  Checks moved to the agent in M2, so nothing wrote the old table.
+- **An alert, `HoldfastRetentionFailing`,** fires when a host's last run failed, such as a check that blocked
+  the prune.
+
 ## 6. Questions
 
 **Q1. Grouping.** Retention forgets per job with `--group-by host`, ignoring paths.

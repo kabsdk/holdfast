@@ -18,7 +18,8 @@ A rule that fails is reported with its code (spec §4.5). The host cannot enroll
 - **Versioning must be enabled (B008).** It is what makes a deleted or overwritten object recoverable.
 - **A lifecycle rule must expire noncurrent versions under `repos/` (B011).** Without one, the bucket only
   grows: nothing a prune deletes is ever freed. The expiry is your choice. It is also how long deleted
-  data can still be recovered.
+  data can still be recovered, and Holdfast uses it to say when deleted data is really gone: the prune's
+  date plus the rule's days (spec §3.4). With several rules, it counts the longest.
 - **The real safety floor is versioning plus that expiry.** It holds against a compromised host, a
   compromised server and Prune now, as long as no Holdfast key can delete versions or change the bucket's
   settings (B006, B009, B010).

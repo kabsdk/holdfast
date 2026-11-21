@@ -546,7 +546,8 @@ func (s *Server) RunRetention(ctx context.Context, a Actor, fqdn string) (RunSta
 type PruneNowPreview struct {
 	FQDN      string            `json:"fqdn"`
 	Confirm   string            `json:"confirm"` // type this to confirm: the host's short name
-	Count     int               `json:"count"`
+	Count     int               `json:"count"`   // forgotten
+	Kept      int               `json:"kept"`    // what the current policies keep
 	From      *time.Time        `json:"from,omitempty"`
 	To        *time.Time        `json:"to,omitempty"`
 	Snapshots []PendingSnapshot `json:"snapshots"` // oldest first
@@ -576,6 +577,9 @@ func (s *Server) PruneNowPlan(ctx context.Context, fqdn string) (PruneNowPreview
 	for _, j := range plan.Jobs {
 		ids = append(ids, j.DropNow...)
 		p.NotMadeByHoldfast += len(j.NotMadeByHoldfast)
+		if len(j.Policies) > 0 {
+			p.Kept += j.Policies[0].Keeps // the current policy comes first
+		}
 	}
 	for _, id := range ids {
 		ps := PendingSnapshot{ID: id, ShortID: id[:min(8, len(id))]}

@@ -28,6 +28,10 @@ maintenance:
   # rotating 1/check_cycle_days of the data. "off" leaves only `holdfast check`.
   check: daily
   check_cycle_days: 30
+  # Once a day per host, in the middle of its longest quiet stretch, the server forgets what no retention
+  # in force during the last 7 days keeps, then checks the repository and prunes it (spec §3.4). "off"
+  # forgets nothing by itself; holdfast retention run, Prune now and Delete now still work.
+  retention: daily
 
 # Spec §6.4. Acted on from M4.
 auth:

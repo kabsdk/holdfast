@@ -222,6 +222,7 @@ func pruneNowCmd() *cobra.Command {
 				var p struct {
 					Confirm   string        `json:"confirm"`
 					Count     int           `json:"count"`
+					Kept      int           `json:"kept"`
 					From      *time.Time    `json:"from"`
 					To        *time.Time    `json:"to"`
 					Snapshots []pendingSnap `json:"snapshots"`
@@ -241,7 +242,7 @@ func pruneNowCmd() *cobra.Command {
 				if p.Count > 0 {
 					fmt.Printf(", from %s to %s", p.From.Local().Format("2006-01-02 15:04"), p.To.Local().Format("2006-01-02 15:04"))
 				}
-				fmt.Println(", without the 7-day protection, and then prune.")
+				fmt.Printf(", without the 7-day protection, and then prune; it keeps %d.\n", p.Kept)
 				w := table()
 				fmt.Fprintln(w, "SNAPSHOT\tTIME\tJOB")
 				for _, s := range p.Snapshots {

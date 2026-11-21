@@ -156,29 +156,58 @@ These rules hold whatever the config says.
 **High-water mark.** Maintenance never prunes a snapshot that any policy in force during the last 7 days
 would keep.
 
-**Pending prune.** A retention cut becomes a pending prune for 7 days, however the cut was made. During
-those 7 days a one-click **Keep \<longer\> retention** action is available.
+**The daily run** (plan-m3 §3). Once a day per host, the server:
+1. takes each job's retention policies that were in force during the last 7 days, from the revisions;
+2. asks restic what each one keeps: `restic forget --dry-run --json --tag job=<id> --group-by host`, with
+   the policy's flags (decision 030);
+3. keeps the union, and forgets the rest by exact snapshot ID. It forgets only snapshots its agents
+   reported; a snapshot Holdfast did not make is left alone (decision 032);
+4. runs a structural `restic check`, then `restic prune`. A failed check blocks the prune; the run is
+   recorded as failed and raises `HoldfastRetentionFailing`.
 
-**Prune now** lets an admin skip the 7-day wait.
+- It runs in the middle of the host's longest quiet stretch, so it rarely meets a backup, and it waits for
+  a backup's lock rather than failing. A run missed while the server was down waits for the next day's slot.
+- Only the server runs forget and prune, with its maintenance key; agents never do.
+- `holdfast retention run <fqdn>` starts the same run now, with the same protection.
+  `maintenance.retention: off` in `server.yaml` turns the daily run off.
+- Removing a job never deletes data (§3.5): the daily run covers the jobs in the current config only.
+
+**Pending.** A retention cut becomes pending for 7 days, however the cut was made. `holdfast pending
+<fqdn>` (`GET /api/v1/hosts/{fqdn}/pending`) shows each waiting snapshot, the revision whose policy still
+keeps it, and when the daily run may forget it.
+
+**Keep longer.** `holdfast job keep-longer <fqdn> <job>` saves a new revision in which the job has an older
+retention again: by default the newest one in force during the last 7 days that differs from today's. It
+is a normal save, with the normal checks.
+
+**Prune now** lets an admin skip the 7-day wait. It forgets what the job's *current* policy drops, ignoring
+the union, then checks and prunes.
 - Only admins can use it.
 - It needs a confirmation page that shows:
   - how many snapshots will be deleted and how many kept;
   - the date range;
   - the full list of snapshots, paginated and filterable by month, with every ID clickable;
-  - the exact `restic forget --prune` command that will run.
-- The admin confirms by typing the host's short name.
+  - the exact restic commands that will run: `forget -- <ids>`, `check`, `prune`.
+- The admin confirms by typing the host's short name (`holdfast prune-now <fqdn>` shows the page;
+  `--confirm <short name>` goes ahead).
 - It is recorded in the host's history and in the audit log.
 - The deleted snapshot IDs can still be found in search, marked **Deleted**.
 
 **Delete a snapshot** (decision 031)
 - An admin can delete one snapshot, with restic's `forget <id>`. It is a UI action, an API endpoint, and
   `holdfast snapshot delete <fqdn> <id>`.
-- It becomes a pending deletion for 7 days, which can be cancelled. **Delete now** skips the wait, with the
-  same confirmation as Prune now.
+- It becomes a pending deletion for 7 days, which can be cancelled (`--cancel`). **Delete now** (`--now
+  --confirm <short name>`) skips the wait, with the same confirmation as Prune now.
 - It never touches site B. The vault marks its copy **Deleted in primary**, and a vault admin can choose
   **Delete here too**. That deletion follows the same rules in B.
 - The snapshot page shows when the data is really gone in each site. Space is freed at the next prune, and
-  S3 versioning keeps the old files until the bucket's lifecycle rule expires them.
+  S3 versioning keeps the old files until the bucket's lifecycle rule expires them. The daily storage test
+  reads that rule's days (B011), so the date is the prune's date plus those days.
+
+**Past prunes** (OQ2). `holdfast prunes [<fqdn>]` lists each forget and prune: when, the daily run or Prune
+now or Delete now, who, the snapshots forgotten, what restic said the prune freed, and when the data is
+really gone. Snapshots Holdfast deleted keep tombstones marked **Deleted by Holdfast**; they never count as
+disappeared (§3.6).
 
 ### 3.5 Removing and decommissioning
 
@@ -306,10 +335,15 @@ cannot enroll.
 
 - The accepted codes are stored in the revision and in the audit log.
 - The CLI takes them explicitly, for example `holdfast job set … --accept R102,R104`. Without them it
-  refuses the change and prints the same explanation as the UI.
+  refuses the change and prints the same explanation as the UI. The API takes them as `accept`, and
+  answers a refused save with 422 and every finding.
+- `holdfast job check` (`POST /api/v1/hosts/{fqdn}/jobs/{job}/check`) runs the checks without saving.
+- S002 needs at least 5 finished runs. R101, R102 and R103 are estimates from the schedule and the
+  windows, so their messages say "about".
 - restic decides what each policy keeps (decision 030). Holdfast runs `restic forget --dry-run` for the
   old and the new policy. A change is a retention cut (R104) when the new policy keeps a strict subset of
   what the old one keeps. Removing a tier is therefore not a cut if a finer tier keeps the same snapshots.
+  A job with no snapshots yet has nothing to cut. If restic cannot be asked, the change counts as a cut.
 
 ---
 
