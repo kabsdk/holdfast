@@ -93,7 +93,7 @@ func TestVersionAndUnlock(t *testing.T) {
 	if err != nil || v != "0.19.1" {
 		t.Fatalf("version = %q, %v", v, err)
 	}
-	if err := (Runner{Bin: bin}).Unlock(context.Background()); err != nil {
+	if _, err := (Runner{Bin: bin}).Unlock(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if got := read(t, log); !strings.Contains(got, "ARGS unlock") || strings.Contains(got, "remove-all") {

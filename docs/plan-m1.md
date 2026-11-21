@@ -46,6 +46,7 @@ proposal. Each sits behind an interface where that matters, so it can change. **
 | Agent: schedule and spread, catch-up once, skip when overlapping, spool, interrupted runs, commands run once | in-process against the server |
 | CLI (`holdfast`) as a thin API client; storage witness; alert rules | promtool |
 | e2e: fidelity with escrow, server outage, storage isolation, witness | real restic 0.19.1, MinIO, PostgreSQL |
+| e2e: backup killed mid-upload and recovered (the PoC's test 3, using an S3 throttling proxy); exactly-once delivery with dropped answers, and runs on their schedule slots; history, diff, stale base, drift, `holdfast check`, audit, no credential leaks; enrollment refusals and expiry; TLS with certificate pinning | same: **all 9 e2e tests pass** |
 
 **Found and fixed along the way**
 - The metric label `job` collides with Prometheus's own scrape label, so it is now `job_id`. The PoC had the same bug.
@@ -53,9 +54,11 @@ proposal. Each sits behind an interface where that matters, so it can change. **
 - An agent killed during its very first backup would never have run that job again.
 
 **Remaining for M1**
-- e2e: killed backup with an S3 throttling proxy (PoC test 3); exactly-once delivery with a proxy that drops responses; revisions, diffs and drift; enrollment expiry and refusals; schedule slot alignment; no credential leaks in logs, CLI output or metrics; `holdfast check`.
-- TLS on the agent listener, and a test of certificate pinning.
 - An RGW provisioner, and a lab in the style of Clusterlane: S3 in dc-a and dc-b, holdfast-server, a vault host and agents. The storage-isolation test also runs there against real RGW.
+
+**What the e2e tests taught**
+- A SIGKILLed restic leaves its lock behind. `restic unlock` removes it only once the process is gone. On a host, systemd reaps the orphaned process. In a container, PID 1 must do it, so `make e2e` runs the container with `--init`.
+- The first backup runs at enrollment, so the second can follow it within seconds, at the next slot. Tests that compare consecutive snapshots wait for the third.
 
 Spec: [spec.md](spec.md). Working rules: [../CLAUDE.md](../CLAUDE.md). Undecided topics:
 [open-questions.md](open-questions.md).

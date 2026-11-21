@@ -804,8 +804,10 @@ func (a *Agent) recoverInterrupted(ctx context.Context) {
 	r := a.runner()
 	a.mu.Unlock()
 	if r.Repo != "" {
-		if err := r.Unlock(ctx); err != nil {
+		if out, err := r.Unlock(ctx); err != nil {
 			a.log.Warn("removing stale locks failed", "err", err)
+		} else {
+			a.log.Info("removed stale locks after an interrupted run", "restic", out)
 		}
 	}
 }

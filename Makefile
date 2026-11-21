@@ -65,10 +65,12 @@ tools:
 	@test -x $(TOOLS)/mc || { id=$$(docker create $(MC_IMAGE)); docker cp $$id:/usr/bin/mc $(TOOLS)/mc; docker rm $$id >/dev/null; }
 
 # The end-to-end suite, as root in a privileged container (the metadata tests need root), on an ext4
-# volume so ACLs, trusted.* xattrs and SELinux labels behave as on a host.
+# volume so ACLs, trusted.* xattrs and SELinux labels behave as on a host. --init gives the container
+# a PID 1 that reaps orphans, as systemd does on a host: without it a SIGKILLed restic stays a zombie,
+# and restic rightly will not call a lock stale while its process still exists.
 E2E_ARGS ?=
 e2e: tools pg-up minio-up
-	docker run --rm --privileged --network host -v $(CURDIR):/src -w /src \
+	docker run --rm --init --privileged --network host -v $(CURDIR):/src -w /src \
 		-v holdfast-gomod:/go/pkg/mod -v holdfast-gocache:/root/.cache/go-build -v holdfast-e2e-work:/work \
 		-v $(TOOLS):/tools:ro -e TMPDIR=/work -e GOFLAGS=-buildvcs=false \
 		-e "HOLDFAST_TEST_PG=$(HOLDFAST_TEST_PG)" -e HOLDFAST_S3_ENDPOINT=http://127.0.0.1:$(MINIO_PORT) \

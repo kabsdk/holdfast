@@ -7,19 +7,30 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
+	"math/big"
 	"net"
 	"net/http"
+	"net/http/httptest"
+	"net/http/httputil"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -153,20 +164,40 @@ type env struct {
 	url     string
 	sock    string
 	bucket  string
+	dsn     string
 	cfgPath string
 	srv     *proc
 	srvEnv  []string
 	logs    []string
+	client  *http.Client
 }
 
-func newEnv(t *testing.T) *env {
+// envOpts change one test environment.
+type envOpts struct {
+	S3Endpoint string    // the endpoint the server and agents use (a proxy in front of MinIO); default: MinIO
+	TLS        *tlsFiles // serve the agent listener over TLS with this certificate
+}
+
+func newEnv(t *testing.T) *env { return newEnvWith(t, envOpts{}) }
+
+func newEnvWith(t *testing.T, o envOpts) *env {
 	t.Helper()
 	dir := t.TempDir()
-	e := &env{t: t, dir: dir, port: freePort(t), sock: filepath.Join(dir, "run", "api.sock"), bucket: "hf-" + randHex(6)}
-	e.url = fmt.Sprintf("http://127.0.0.1:%d", e.port)
+	e := &env{t: t, dir: dir, port: freePort(t), sock: filepath.Join(dir, "run", "api.sock"), bucket: "hf-" + randHex(6), client: http.DefaultClient}
+	scheme := "http"
+	if o.TLS != nil {
+		scheme = "https"
+		e.client = &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}}
+	}
+	e.url = fmt.Sprintf("%s://127.0.0.1:%d", scheme, e.port)
+	endpoint := s3Endpoint
+	if o.S3Endpoint != "" {
+		endpoint = o.S3Endpoint
+	}
 	mc(t, "mb", "--quiet", "hf/"+e.bucket)
 	mc(t, "version", "enable", "hf/"+e.bucket)
 	dsn := testpg.DSN(t)
+	e.dsn = dsn
 	keygen := exec.Command(filepath.Join(binDir, "holdfast-server"), "keygen", filepath.Join(dir, "credentials.key"))
 	if out, err := keygen.CombinedOutput(); err != nil {
 		t.Fatalf("keygen: %v %s", err, out)
@@ -177,9 +208,13 @@ func newEnv(t *testing.T) *env {
 		"listen": fmt.Sprintf("127.0.0.1:%d", e.port), "api_socket": e.sock, "public_url": e.url,
 		"database_dsn": dsn, "credentials_key_file": filepath.Join(dir, "credentials.key"), "state_dir": filepath.Join(dir, "server"),
 		"restic_bin": resticBin, "default_zone": "UTC", "node_name": "e2e",
-		"storage": map[string]any{"endpoint": s3Endpoint, "bucket": e.bucket, "region": "us-east-1", "maintenance_credentials_file": maint,
+		"storage": map[string]any{"endpoint": endpoint, "bucket": e.bucket, "region": "us-east-1", "maintenance_credentials_file": maint,
 			"provisioner_command": []string{"bash", filepath.Join(repoRoot, "test", "e2e", "provision-minio.sh")}},
 		"maintenance": map[string]any{"check_cycle_days": 30},
+	}
+	if o.TLS != nil {
+		set["tls"] = map[string]any{"cert_file": o.TLS.cert, "key_file": o.TLS.key}
+		set["ca_sha256"] = o.TLS.pin
 	}
 	b, _ := yaml.Marshal(set)
 	e.cfgPath = filepath.Join(dir, "server.yaml")
@@ -218,7 +253,7 @@ func (e *env) logFile(name string) string {
 func (e *env) startServer() {
 	e.srv = start(e.t, e.logFile("server"), e.srvEnv, "holdfast-server", "-config", e.cfgPath)
 	waitFor(e.t, "server healthz", 20*time.Second, func() bool {
-		r, err := http.Get(e.url + "/healthz")
+		r, err := e.client.Get(e.url + "/healthz")
 		if err != nil {
 			return false
 		}
@@ -280,19 +315,181 @@ func (a *agentProc) spooled() int {
 	return n
 }
 
-// enrollAgent enrolls an agent for the host; startAgent then runs it.
+// enrollAgent enrolls an agent for the host; runAgent then runs it.
 func (e *env) enrollAgent(fqdn, code string) *agentProc {
 	e.t.Helper()
-	dir := filepath.Join(e.dir, "agent-"+strings.Split(fqdn, ".")[0])
-	must(e.t, os.MkdirAll(dir, 0o700))
-	a := &agentProc{dir: dir, cfgPath: filepath.Join(dir, "agent.yaml")}
-	cmd := exec.Command(filepath.Join(binDir, "holdfast-agent"), "enroll", "--server", e.url, "--fqdn", fqdn, "--code", code,
-		"--config", a.cfgPath, "--state-dir", filepath.Join(dir, "state"), "--credentials-dir", filepath.Join(dir, "credentials"),
-		"--restic", resticBin, "--poll-timeout", "2s", "--tick", "250ms")
-	if out, err := cmd.CombinedOutput(); err != nil {
+	a, out, err := e.enrollAgentWith(fqdn, code, e.url)
+	if err != nil {
 		e.t.Fatalf("agent enroll: %v\n%s", err, out)
 	}
 	return a
+}
+
+// enrollAgentWith enrolls through the given server URL (a proxy, say) with extra flags, and
+// returns the error instead of failing, for tests of refused enrollments.
+func (e *env) enrollAgentWith(fqdn, code, server string, extra ...string) (*agentProc, []byte, error) {
+	dir := filepath.Join(e.dir, "agent-"+strings.Split(fqdn, ".")[0])
+	must(e.t, os.MkdirAll(dir, 0o700))
+	a := &agentProc{dir: dir, cfgPath: filepath.Join(dir, "agent.yaml")}
+	args := append([]string{"enroll", "--server", server, "--fqdn", fqdn, "--code", code,
+		"--config", a.cfgPath, "--state-dir", filepath.Join(dir, "state"), "--credentials-dir", filepath.Join(dir, "credentials"),
+		"--restic", resticBin, "--poll-timeout", "2s", "--tick", "250ms"}, extra...)
+	out, err := exec.Command(filepath.Join(binDir, "holdfast-agent"), args...).CombinedOutput()
+	return a, out, err
+}
+
+// event is one run as the API returns it.
+type event struct {
+	ID           string     `json:"id"`
+	Kind         string     `json:"kind"`
+	JobID        string     `json:"job_id"`
+	CommandID    string     `json:"command_id"`
+	Status       string     `json:"status"`
+	ScheduledFor *time.Time `json:"scheduled_for"`
+	Started      time.Time  `json:"started"`
+	Finished     time.Time  `json:"finished"`
+	Revision     int64      `json:"revision"`
+	SnapshotID   string     `json:"snapshot_id"`
+	Error        string     `json:"error"`
+}
+
+// events returns a host's runs, newest first, through the CLI.
+func (e *env) events(fqdn string) []event {
+	e.t.Helper()
+	var evs []event
+	out, err := e.cliErr("host", "events", fqdn)
+	if err != nil {
+		return nil
+	}
+	_ = json.Unmarshal(out, &evs)
+	return evs
+}
+
+type auditEntry struct {
+	Actor  string         `json:"actor"`
+	Action string         `json:"action"`
+	FQDN   string         `json:"fqdn"`
+	Detail map[string]any `json:"detail"`
+}
+
+func (e *env) audit(fqdn string) []auditEntry {
+	e.t.Helper()
+	var list []auditEntry
+	if err := json.Unmarshal(e.cli("audit", "--host", fqdn), &list); err != nil {
+		e.t.Fatal(err)
+	}
+	return list
+}
+
+/* ---------------- TLS ---------------- */
+
+type tlsFiles struct{ cert, key, pin string }
+
+// selfSigned makes a certificate for 127.0.0.1 and returns its files and its sha256 pin.
+func selfSigned(t *testing.T) *tlsFiles {
+	t.Helper()
+	k, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	must(t, err)
+	tmpl := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "holdfast-e2e"},
+		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(24 * time.Hour), IPAddresses: []net.IP{net.ParseIP("127.0.0.1")},
+		KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &k.PublicKey, k)
+	must(t, err)
+	kb, err := x509.MarshalECPrivateKey(k)
+	must(t, err)
+	dir := t.TempDir()
+	f := &tlsFiles{cert: filepath.Join(dir, "server.crt"), key: filepath.Join(dir, "server.key")}
+	must(t, os.WriteFile(f.cert, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o644))
+	must(t, os.WriteFile(f.key, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: kb}), 0o600))
+	sum := sha256.Sum256(der)
+	f.pin = hex.EncodeToString(sum[:])
+	return f
+}
+
+/* ---------------- proxies ---------------- */
+
+// throttle is a TCP proxy whose upload direction (towards the target) can be slowed down, so a
+// backup is still uploading when the test kills the agent.
+type throttle struct {
+	l      net.Listener
+	target string
+	rate   atomic.Int64 // bytes per second towards the target; 0 means unlimited
+}
+
+func newThrottle(t *testing.T, target string) *throttle {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	must(t, err)
+	p := &throttle{l: l, target: target}
+	t.Cleanup(func() { l.Close() })
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			go p.handle(c)
+		}
+	}()
+	return p
+}
+
+func (p *throttle) addr() string { return p.l.Addr().String() }
+
+func (p *throttle) handle(c net.Conn) {
+	defer c.Close()
+	up, err := net.Dial("tcp", p.target)
+	if err != nil {
+		return
+	}
+	defer up.Close()
+	go func() { _, _ = io.Copy(c, up); c.Close() }()
+	buf := make([]byte, 4096)
+	for {
+		n, err := c.Read(buf)
+		if n > 0 {
+			if _, werr := up.Write(buf[:n]); werr != nil {
+				return
+			}
+			if r := p.rate.Load(); r > 0 {
+				time.Sleep(time.Duration(float64(n) / float64(r) * float64(time.Second)))
+			}
+		}
+		if err != nil {
+			return
+		}
+	}
+}
+
+// dropProxy forwards everything to the server, but for the first n event deliveries it throws the
+// server's answer away and tells the agent the delivery failed. The server has stored the events;
+// the agent sends them again.
+type dropProxy struct {
+	url       string
+	remaining atomic.Int32
+	dropped   atomic.Int32
+}
+
+func newDropProxy(t *testing.T, target string, n int32) *dropProxy {
+	u, _ := url.Parse(target)
+	rp := httputil.NewSingleHostReverseProxy(u)
+	p := &dropProxy{}
+	p.remaining.Store(n)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/agent/v1/events" && p.remaining.Load() > 0 {
+			rec := httptest.NewRecorder()
+			rp.ServeHTTP(rec, r)
+			if rec.Code == http.StatusOK {
+				p.remaining.Add(-1)
+				p.dropped.Add(1)
+			}
+			http.Error(w, "dropped by the test proxy", http.StatusBadGateway)
+			return
+		}
+		rp.ServeHTTP(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	p.url = srv.URL
+	return p
 }
 
 func (e *env) runAgent(a *agentProc) {

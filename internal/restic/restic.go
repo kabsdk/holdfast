@@ -247,10 +247,12 @@ func (r Runner) Check(ctx context.Context, subset string) error {
 	return err
 }
 
-// Unlock removes stale locks only. It never passes --remove-all.
-func (r Runner) Unlock(ctx context.Context) error {
-	_, err := r.run(ctx, "unlock")
-	return err
+// Unlock removes stale locks only, and returns restic's report of what it removed. It never passes
+// --remove-all. A lock is stale when it is older than 30 minutes, or when it was made on this host by a
+// process that no longer exists.
+func (r Runner) Unlock(ctx context.Context) (string, error) {
+	out, err := r.run(ctx, "unlock")
+	return strings.TrimSpace(string(out)), err
 }
 
 // Restore restores a snapshot into target, keeping metadata. --sparse keeps holes in sparse files and
