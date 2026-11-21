@@ -334,7 +334,7 @@ Restore and inspection behave like restic does on the host.
 | Tab | Behaviour |
 | --- | --- |
 | Files | `restic ls --long`: names and metadata only. |
-| Changes | `restic diff` against the previous snapshot or any older one. Shows counts of added, removed, content-changed and metadata-changed files. Never shows contents. |
+| Changes | `restic diff --metadata` against the previous snapshot or any older one: what restic's diff shows, and nothing more. That means the changed paths (added, removed, content changed, metadata only, type changed) and their counts. It never shows contents or line diffs, as restic's diff does not. To compare the lines of a file, **Restore both versions to diff on the host** (§5.4) and run the `diff -u` it prints, on the host. |
 | Restore | See §5.4. |
 
 ### 5.4 Restore
