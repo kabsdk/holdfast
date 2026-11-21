@@ -56,8 +56,37 @@ proposal. Each sits behind an interface where that matters, so it can change. **
 - The daily check ran every host on one fixed timer, not in each host's quiet stretch as §10 promised.
   Because check's lock is exclusive, it could have made scheduled backups fail.
 
+**The lab** (`lab/`, in the style of Clusterlane).
+- `lab/lab up m1` brings up five VMs:
+  - s3a: Ceph Squid 19.2.3 RGW, with MicroCeph;
+  - hfsrv: AlmaLinux 9, with PostgreSQL;
+  - three agent hosts: Ubuntu 24.04, AlmaLinux 9 and Oracle Linux 9.
+- A second `up` changes nothing. `lab/README.md` explains how to use it.
+- dc-b and the vault come in M6.
+
+**What real RGW taught, and MinIO could not.**
+- On RGW an object belongs to the user who uploaded it. With plain users, the maintenance key gets 403
+  on every host's data, so `restic check` fails. Forget and prune would fail the same way.
+- MinIO has no ownership per object, so the e2e suite could not show this. restic cannot send
+  `bucket-owner-full-control`, and RGW answers 400 to `BucketOwnerEnforced`.
+- Two set-ups work. In both, each host key stays limited to its own prefix, and to deletes under
+  `locks/` only, as spec §2.3 requires.
+  - **An RGW account** holding all of Holdfast's users. Objects then belong to the account, and IAM
+    policies decide access. 27 PASS, 0 FAIL. The maintenance key ran `check --read-data` and
+    `forget --prune`.
+  - **Plain users**, plus a bucket-policy statement that gives the maintenance user `s3:*` on the bucket
+    and its objects. 40 and 38 PASS, 0 FAIL.
+- The vault's reader key (O10) needs the same treatment.
+- For provisioning:
+  - RGW's Admin Ops API takes a chosen key, which fits `storage.Provisioner` as it is.
+  - IAM's `CreateAccessKey` makes the secret itself. That would mean Holdfast receives the key rather
+    than chooses it.
+
 **Remaining for M1**
-- An RGW provisioner, and a lab in the style of Clusterlane: S3 in dc-a and dc-b, holdfast-server, a vault host and agents. The storage-isolation test also runs there against real RGW.
+- Q4 again: does Holdfast make each host's key through the provisioner command, or does the admin
+  make it, with Holdfast only documenting the permissions? Either way, the storage requirement above
+  goes into the operator documentation.
+- If the provisioner stays: an RGW example script, and the storage-isolation test run against RGW.
 
 **What the e2e tests taught**
 - A SIGKILLed restic leaves its lock behind. `restic unlock` removes it only once the process is gone. On a host, systemd reaps the orphaned process. In a container, PID 1 must do it, so `make e2e` runs the container with `--init`.

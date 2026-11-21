@@ -1,0 +1,10 @@
+# root's awscli settings on {{ inventory_hostname }} in the Holdfast lab {{ lab }}, written by lab/ansible/site.yml.
+# RGW serves path-style requests only (no rgw_dns_name), and its zonegroup is {{ storage.region }}. awscli 2.23 and
+# later add CRC checksums (and aws-chunked uploads) to every request by default; "when_required" keeps the requests
+# plain, as restic's and Holdfast's are. No key is here: the lab's commands pass one in the environment.
+[default]
+region = {{ storage.region }}
+request_checksum_calculation = when_required
+response_checksum_validation = when_required
+s3 =
+  addressing_style = path

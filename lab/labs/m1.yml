@@ -1,0 +1,74 @@
+---
+# lab/labs/m1.yml: the lab m1, for milestone 1 and the RGW provisioning experiment. lab/ansible/ reads it, and
+# lab/lab up m1 brings it up (lab/README.md). The VMs are site A's storage (MicroCeph with RGW), the Holdfast server
+# with PostgreSQL, and one agent host per family Holdfast supports.
+lab_name: m1
+index: 0                              # each lab has its own network, 10.<79+index>.20.0/24 (Clusterlane has 10.77, 10.78)
+
+network:
+  subnet: 10.79.20.0/24               # the host is .1, the VMs' gateway and DNS
+  dhcp: {first: 10.79.20.100, last: 10.79.20.199}   # for a VM of your own: the lab's VMs have fixed addresses
+
+# A MAC is 52:54:00 (QEMU's), then 79+index and 20 in hex, then the host part in hex, so no two labs share one. memory
+# in MiB, disk in GiB (a thin qcow2 overlay: at least the image's own size, which for ol9 is 37 GiB); the CPU is the
+# host's (host-passthrough). group: storage, server or agent, the inventory's groups. 9216 MiB in all.
+vms:
+  s3a: {group: storage, addresses: [10.79.20.10], mac: "52:54:00:4f:14:0a", image: ubuntu2404, cpus: 2, memory: 4096, disk: 40}
+  hfsrv: {group: server, addresses: [10.79.20.20], mac: "52:54:00:4f:14:14", image: alma9, cpus: 2, memory: 2048, disk: 20}
+  ub24: {group: agent, addresses: [10.79.20.31], mac: "52:54:00:4f:14:1f", image: ubuntu2404, cpus: 1, memory: 1024, disk: 12}
+  el9: {group: agent, addresses: [10.79.20.32], mac: "52:54:00:4f:14:20", image: alma9, cpus: 1, memory: 1024, disk: 12}
+  ol9: {group: agent, addresses: [10.79.20.33], mac: "52:54:00:4f:14:21", image: ol9, cpus: 1, memory: 1024, disk: 12}
+
+# Each image pinned by URL and sha256 (checked on every download into ~/.cache/holdfast-lab), and the name it has in the
+# cache and the pool (file), dated so that a new pin is a new volume. family: debian or el (el VMs keep SELinux
+# enforcing). cpu: the x86-64 level the image needs, which the doctor checks.
+images:
+  # Ubuntu's dated release (SHA256SUMS in the same directory).
+  ubuntu2404:
+    url: https://cloud-images.ubuntu.com/releases/noble/release-20261017/ubuntu-24.04-server-cloudimg-amd64.img
+    sha256: 04e8f2461a16a44e78a370284471f29616cdd9baf1893df25807b71f985b6c94
+    file: ubuntu-24.04-server-cloudimg-amd64-20261017.img
+    family: debian
+    cpu: x86-64-v2
+  # AlmaLinux 9.8 (CHECKSUM in the same directory); the file Clusterlane's lab is validated with, now in the vault
+  # since 9.9 came out, so the URL stays.
+  alma9:
+    url: https://vault.almalinux.org/9.8/cloud/x86_64/images/AlmaLinux-9-GenericCloud-9.8-20261112.x86_64.qcow2
+    sha256: bf9088375c94dd5df7c22ab78f6183eea007a1c66076224e115d4e2c26205fa4
+    file: AlmaLinux-9-GenericCloud-9.8-20261112.x86_64.qcow2
+    family: el
+    cpu: x86-64-v2
+  # Oracle Linux 9.8's KVM template (https://yum.oracle.com/oracle-linux-templates.html lists its sha256): UEK, LVM,
+  # firewalld on, a 37 GiB disk.
+  ol9:
+    url: https://yum.oracle.com/templates/OracleLinux/OL9/u8/x86_64/OL9U8_x86_64-kvm-b293.qcow2
+    sha256: b12103391327abee8090686759c0d62dac9a7af2bf0f45fdf6b0d085a0fbb52b
+    file: OL9U8_x86_64-kvm-b293.qcow2
+    family: el
+    cpu: x86-64-v2
+
+# restic for hfsrv and the agents: the release binary scripts/fetch-restic.sh puts in ~/.cache/holdfast (checked there
+# against the release's SHA256SUMS), and its own sha256, which provisioning checks again before it copies it.
+restic:
+  version: 0.19.1
+  sha256: 20d4142678d0d95ec11a4759def1b73fd9190abc9ca19e4b62d067c0b387e639
+
+# Site A's storage on s3a: MicroCeph from its Squid channel (held, so the snap does not refresh itself), loop-file OSDs,
+# RGW on port 80. The users' keys are made once in the lab's state (credentials/<user>.env).
+storage:
+  microceph_channel: squid/stable
+  awscli_channel: v2/stable            # AWS's aws-cli snap: Ubuntu 24.04 has no awscli package
+  osds: {count: 3, size: 4G}
+  osd_memory_target: 939524096        # 896 MiB, Ceph's minimum: three OSDs, a mon, a mgr and RGW in 4 GiB
+  rgw_port: 80
+  bucket: holdfast
+  region: default
+  users:
+    holdfast-maint: {display_name: Holdfast maintenance, caps: ""}                         # owns the bucket
+    holdfast-provisioner: {display_name: Holdfast provisioner, caps: "users=*;user-policy=*"}  # Admin Ops, IAM user policies
+
+# PostgreSQL on hfsrv, from AppStream's module stream.
+postgresql:
+  stream: "16"
+  database: holdfast
+  user: holdfast

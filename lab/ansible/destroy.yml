@@ -1,0 +1,63 @@
+---
+# Removes a lab: its VMs (every domain named hf-<lab>-*), every volume of the lab in the pool (the disks, seeds and its
+# copies of the images, all named hf-<lab>-*), its network hf-<lab> and its state directory (key, credentials,
+# inventory). The image cache (~/.cache/holdfast-lab) stays, and so does the pool. lab/lab destroy <lab> runs it after
+# you type the lab's name.
+# Usage: ansible-playbook -i localhost, lab/ansible/destroy.yml -e lab=<lab>
+- name: Remove the lab
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - "../labs/{{ lab }}.yml"
+    - lab-vars.yml
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+  tasks:
+    - name: Refuse a network name outside the lab's prefix
+      ansible.builtin.assert:
+        that: lab_net is match('^hf-[a-z0-9]+$')
+        quiet: true
+
+    - name: List the VMs libvirt has
+      community.libvirt.virt:
+        command: list_vms
+        uri: "{{ lab_uri }}"
+      register: lab_all
+
+    - name: Power off each VM of the lab that runs
+      ansible.builtin.command:
+        argv: [virsh, -c, "{{ lab_uri }}", destroy, "{{ item }}"]
+      register: lab_off
+      changed_when: lab_off.rc == 0
+      failed_when: lab_off.rc != 0 and 'not running' not in lab_off.stderr
+      loop: "{{ lab_all.list_vms | select('match', '^' ~ lab_net ~ '-[a-z0-9]+$') | list }}"
+
+    - name: Remove each VM of the lab with any snapshots
+      ansible.builtin.command:
+        argv: [virsh, -c, "{{ lab_uri }}", undefine, "{{ item }}", --snapshots-metadata]
+      changed_when: true
+      loop: "{{ lab_all.list_vms | select('match', '^' ~ lab_net ~ '-[a-z0-9]+$') | list }}"
+
+    - name: Read the pools
+      community.libvirt.virt_pool:
+        command: info
+        uri: "{{ lab_uri }}"
+      register: lab_pools
+
+    - name: Delete every volume of the lab
+      ansible.builtin.command:
+        argv: [virsh, -c, "{{ lab_uri }}", vol-delete, --pool, "{{ lab_pool }}", "{{ item }}"]
+      changed_when: true
+      loop: "{{ lab_pools.pools[lab_pool].volumes | default([]) | select('match', '^' ~ lab_net ~ '-') | list }}"
+
+    - name: Remove the lab's network
+      community.libvirt.virt_net:
+        name: "{{ lab_net }}"
+        state: absent
+        uri: "{{ lab_uri }}"
+
+    - name: Remove the lab's state
+      ansible.builtin.file:
+        path: "{{ lab_state }}"
+        state: absent

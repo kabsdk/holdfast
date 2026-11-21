@@ -1,0 +1,18 @@
+# {{ vm }}'s network in the Holdfast lab {{ lab }}, in its NoCloud seed: the one interface, matched by the MAC the lab
+# file gives it, is eth0 with a fixed address; the gateway and DNS are the host's address on the lab's network
+# (libvirt's NAT and dnsmasq).
+version: 2
+ethernets:
+  eth0:
+    match:
+      macaddress: "{{ vms[vm].mac }}"
+    set-name: eth0
+    dhcp4: false
+    dhcp6: false
+    addresses: [{{ vms[vm].addresses | map('regex_replace', '$', '/24') | join(', ') }}]
+    routes:
+      - to: 0.0.0.0/0
+        via: {{ lab_gateway }}
+    nameservers:
+      search: [{{ lab_domain }}]
+      addresses: [{{ lab_gateway }}]

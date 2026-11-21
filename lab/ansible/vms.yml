@@ -1,0 +1,281 @@
+---
+# A lab's VMs on this host's libvirt, as lab/labs/<lab>.yml says: the storage pool default, the lab's NAT network, its
+# images (downloaded once into ~/.cache/holdfast-lab and checked against the pinned sha256, or copied from another
+# lab's cache when the file there has that sha256) and each VM, a qcow2 overlay on the lab's copy of its image, a
+# cloud-init seed and a domain from domain.xml.j2. A VM that exists is never changed, so a second run resumes an up
+# that stopped or starts a lab that is off. Then it checks each VM's first boot over SSH. It writes the lab's state
+# directory (tasks/render.yml), and refuses VMs whose state is gone or another's, since a new key would shut you out of
+# them. Every object it makes is named hf-<lab>-*. lab/lab up runs it first.
+# Usage: ansible-playbook -i localhost, lab/ansible/vms.yml -e lab=<lab>
+- name: The lab's pool, network, volumes and VMs
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - "../labs/{{ lab }}.yml"
+    - lab-vars.yml
+  vars:
+    # The distribution's python3-libvirt and python3-lxml, which community.libvirt imports (libvirt-python on PyPI
+    # builds from source only).
+    ansible_python_interpreter: /usr/bin/python3
+  tasks:
+    - name: List this host's VMs
+      ansible.builtin.command:
+        argv: [virsh, -c, "{{ lab_uri }}", list, --all, --name]
+      register: lab_virsh_list
+      changed_when: false
+
+    - name: Keep the lab's own
+      ansible.builtin.set_fact:
+        lab_existing: "{{ lab_virsh_list.stdout_lines | select('match', '^' ~ lab_net ~ '-') | list }}"
+
+    - name: Refuse VMs whose state is gone (a new key would shut you out of them)
+      ansible.builtin.assert:
+        that: lab_existing | length == 0 or lab_key is file
+        fail_msg: >-
+          The lab {{ lab }}'s VMs exist ({{ lab_existing | join(', ') }}) but its state {{ lab_state }} has no SSH key:
+          restore that directory, or remove the lab with lab/lab destroy {{ lab }}
+        quiet: true
+
+    - name: Read the key each VM was made for
+      ansible.builtin.command:
+        argv: [virsh, -c, "{{ lab_uri }}", metadata, "{{ item }}", --uri, "{{ lab_meta_ns }}"]
+      register: lab_vm_keys
+      changed_when: false
+      failed_when: false
+      loop: "{{ lab_existing }}"
+
+    - name: Read the state's key
+      ansible.builtin.command:
+        argv: [ssh-keygen, -l, -E, sha256, -f, "{{ lab_key }}.pub"]
+      register: lab_state_key
+      changed_when: false
+      when: lab_existing | length > 0
+
+    - name: Refuse VMs made for another key than the state's
+      ansible.builtin.assert:
+        that: item.rc != 0 or '<key>' not in item.stdout or lab_state_key.stdout.split()[1] in item.stdout
+        fail_msg: >-
+          {{ item.item }} was made for another SSH key than {{ lab_key }}: this state directory is not the lab's.
+          Restore the lab's own, or remove the lab with lab/lab destroy {{ lab }}
+        quiet: true
+      loop: "{{ lab_vm_keys.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: List the storage pools
+      community.libvirt.virt_pool:
+        command: list_pools
+        uri: "{{ lab_uri }}"
+      register: lab_pool_list
+
+    - name: Make the storage pool, missing on this host, in /var/lib/libvirt/images as virt-manager does
+      when: lab_pool not in lab_pool_list.list_pools
+      block:
+        - name: Define the pool
+          community.libvirt.virt_pool:
+            name: "{{ lab_pool }}"
+            command: define
+            xml: "<pool type='dir'><name>{{ lab_pool }}</name><target><path>/var/lib/libvirt/images</path></target></pool>"
+            uri: "{{ lab_uri }}"
+
+        - name: Make its directory
+          community.libvirt.virt_pool:
+            name: "{{ lab_pool }}"
+            command: build
+            uri: "{{ lab_uri }}"
+
+        - name: Start it at every boot
+          community.libvirt.virt_pool:
+            name: "{{ lab_pool }}"
+            autostart: true
+            uri: "{{ lab_uri }}"
+
+    - name: Start the pool
+      community.libvirt.virt_pool:
+        name: "{{ lab_pool }}"
+        state: active
+        uri: "{{ lab_uri }}"
+
+    - name: Read the pool's path and volumes
+      community.libvirt.virt_pool:
+        command: info
+        uri: "{{ lab_uri }}"
+      register: lab_pools
+
+    - name: Remember them
+      ansible.builtin.set_fact:
+        lab_pool_path: "{{ lab_pools.pools[lab_pool].path }}"
+        lab_volumes: "{{ lab_pools.pools[lab_pool].volumes }}"
+
+    - name: Render the lab's files, the domains with the pool's path
+      ansible.builtin.include_tasks: tasks/render.yml
+
+    - name: Define the lab's network
+      community.libvirt.virt_net:
+        name: "{{ lab_net }}"
+        command: define
+        xml: "{{ lookup('ansible.builtin.file', lab_state ~ '/network.xml') }}"
+        uri: "{{ lab_uri }}"
+
+    - name: Start the lab's network
+      community.libvirt.virt_net:
+        name: "{{ lab_net }}"
+        state: active
+        uri: "{{ lab_uri }}"
+
+    - name: Start the lab's network at every boot
+      community.libvirt.virt_net:
+        name: "{{ lab_net }}"
+        autostart: true
+        uri: "{{ lab_uri }}"
+
+    - name: Refuse an image this host's CPU cannot run
+      ansible.builtin.assert:
+        that: images[item].cpu in lab_cpu_has
+        fail_msg: "this host's CPU lacks {{ images[item].cpu }} for the image {{ item }} (lab/lab doctor {{ lab }})"
+        quiet: true
+      loop: "{{ images.keys() | list }}"
+
+    - name: Make the image cache
+      ansible.builtin.file:
+        path: "{{ lab_cache }}"
+        state: directory
+        mode: "0755"
+
+    - name: Look for each image missing from the cache in other labs' caches (read only)
+      ansible.builtin.stat:
+        path: "{{ item.1 }}/{{ item.0.value.url | basename }}"
+        checksum_algorithm: sha256
+      register: lab_peer_images
+      when: (lab_cache ~ '/' ~ item.0.value.file) is not file
+      loop: "{{ images | dict2items | product(lab_cache_peers) | list }}"
+      loop_control:
+        label: "{{ item.1 }}/{{ item.0.value.url | basename }}"
+
+    - name: Copy an image whose file in another lab's cache has the pinned sha256
+      ansible.builtin.copy:
+        src: "{{ item.stat.path }}"
+        dest: "{{ lab_cache }}/{{ item.item.0.value.file }}"
+        remote_src: true
+        mode: "0644"
+      when: item.stat is defined and item.stat.exists and item.stat.checksum == item.item.0.value.sha256 and
+        (lab_cache ~ '/' ~ item.item.0.value.file) is not file
+      loop: "{{ lab_peer_images.results }}"
+      loop_control:
+        label: "{{ item.item.0.value.file }}"
+
+    - name: Download each image once, checked against its pinned sha256 (600-800 MB each)
+      ansible.builtin.get_url:
+        url: "{{ item.value.url }}"
+        dest: "{{ lab_cache }}/{{ item.value.file }}"
+        checksum: "sha256:{{ item.value.sha256 }}"
+        mode: "0644"
+        timeout: 60
+      loop: "{{ images | dict2items }}"
+      loop_control:
+        label: "{{ item.value.file }}"
+
+    - name: Read each image's virtual size, the least its VMs' disks can be
+      ansible.builtin.command:
+        argv: [qemu-img, info, --output=json, -U, "{{ lab_cache }}/{{ item.value.file }}"]
+      register: lab_image_info
+      changed_when: false
+      loop: "{{ images | dict2items }}"
+      loop_control:
+        label: "{{ item.value.file }}"
+
+    - name: Remember the sizes
+      ansible.builtin.set_fact:
+        lab_image_size: "{{ dict(lab_image_info.results | map(attribute='item.key') | zip(lab_image_info.results | map(attribute='stdout') | map('from_json') | map(attribute='virtual-size'))) }}"
+
+    - name: Copy each image into the pool, the base of the lab's disks
+      ansible.builtin.include_tasks: tasks/upload.yml
+      vars:
+        volume: "{{ lab_net }}-{{ item.value.file }}"
+        file: "{{ lab_cache }}/{{ item.value.file }}"
+        format: qcow2
+        stamp: "{{ lab_state }}/{{ lab_net }}-{{ item.value.file }}.uploaded"
+      loop: "{{ images | dict2items }}"
+      loop_control:
+        label: "{{ item.value.file }}"
+      when: (lab_state ~ '/' ~ lab_net ~ '-' ~ item.value.file ~ '.uploaded') is not file
+
+    - name: List the VMs libvirt has
+      community.libvirt.virt:
+        command: list_vms
+        uri: "{{ lab_uri }}"
+      register: lab_doms
+
+    - name: Make each VM that does not exist
+      ansible.builtin.include_tasks: tasks/new-vm.yml
+      loop: "{{ vms.keys() | reject('in', existing) | list }}"
+      loop_control:
+        loop_var: vm
+      vars:
+        existing: "{{ lab_doms.list_vms | select('match', '^' ~ lab_net ~ '-') | map('regex_replace', '^' ~ lab_net ~ '-', '') | list }}"
+
+    - name: Refresh the pool, so libvirt reads what was uploaded
+      community.libvirt.virt_pool:
+        name: "{{ lab_pool }}"
+        command: refresh
+        uri: "{{ lab_uri }}"
+      changed_when: false
+
+    - name: Start each VM
+      community.libvirt.virt:
+        name: "{{ lab_net }}-{{ item }}"
+        state: running
+        uri: "{{ lab_uri }}"
+      loop: "{{ vms.keys() | list }}"
+
+    - name: Add the VMs, to check their first boot
+      ansible.builtin.add_host:
+        name: "{{ item.key }}"
+        groups: [lab_vms]
+        ansible_host: "{{ item.value.addresses[0] }}"
+        ansible_user: root
+        ansible_ssh_private_key_file: "{{ lab_key }}"
+        ansible_ssh_common_args: "{{ lab_ssh_args }}"
+        ansible_python_interpreter: /usr/bin/python3
+        lab_family: "{{ images[item.value.image].family }}"
+      loop: "{{ vms | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+      changed_when: false
+
+- name: Each VM's first boot
+  hosts: lab_vms
+  gather_facts: false
+  tasks:
+    - name: Wait for SSH
+      ansible.builtin.wait_for_connection:
+        timeout: 600
+        sleep: 5
+
+    # rc 2: done, with errors cloud-init recovered from; once it has turned itself off, "disabled" and rc 0.
+    - name: Wait for cloud-init to finish
+      ansible.builtin.command:
+        argv: [cloud-init, status, --wait]
+      register: lab_cloud_init
+      changed_when: false
+      failed_when: lab_cloud_init.rc not in [0, 2]
+
+    - name: Say that cloud-init recovered from errors
+      ansible.builtin.debug:
+        msg: "cloud-init finished with errors it recovered from: lab/lab ssh {{ lab }} {{ inventory_hostname }} cloud-init status --long"
+      when: lab_cloud_init.rc == 2
+
+    - name: Read the SELinux mode of an EL VM
+      ansible.builtin.command:
+        argv: [getenforce]
+      register: lab_selinux
+      changed_when: false
+      when: lab_family == 'el'
+
+    - name: Refuse an EL VM whose SELinux is not enforcing
+      ansible.builtin.assert:
+        that: lab_selinux.stdout == 'Enforcing'
+        fail_msg: "SELinux is {{ lab_selinux.stdout }}, not Enforcing (lab/README.md, Troubleshooting)"
+        quiet: true
+      when: lab_family == 'el'

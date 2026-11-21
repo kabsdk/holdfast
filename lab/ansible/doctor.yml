@@ -1,0 +1,185 @@
+---
+# Checks this host for everything `lab/lab up` needs (lab/README.md, Set up this host): each requirement an assert that
+# says what is missing and how to get it, the CPU for each of the lab's images, then notes that stop nothing (memory,
+# disk, the pool, Docker's FORWARD policy, ufw). It needs no root and changes nothing, and fails at the end when a
+# requirement is missing. lab/lab doctor <lab> runs it.
+# Usage: ansible-playbook -i localhost, lab/ansible/doctor.yml -e lab=<lab>
+- name: Check this host for the lab
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - "../labs/{{ lab }}.yml"
+    - lab-vars.yml
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+    tools: [virsh, qemu-img, xorriso, ssh, ssh-keygen, scp, make, git, go, ansible-playbook, ansible-galaxy, flock, curl,
+            bunzip2, sha256sum, python3]
+    probes:
+      platform: [uname, -sm]
+      tools: "{{ ['sh', '-c', 'for c; do command -v \"$c\" >/dev/null || echo \"$c\"; done', 'sh'] + tools }}"
+      libvirt: [virsh, -c, "{{ lab_uri }}", uri]
+      pool: [virsh, -c, "{{ lab_uri }}", pool-info, "{{ lab_pool }}"]
+      python: [/usr/bin/python3, -c, "import libvirt, lxml.etree"]
+      go: [go, env, GOVERSION, GOTOOLCHAIN]
+      community_libvirt: [ansible-galaxy, collection, list, community.libvirt, --format, json]
+      dockerd: [dockerd, --version]
+      pid1: [ps, -p, "1", -o, "comm="]
+      repo_fs: [stat, -f, -c, "%T", "{{ lab_repo }}"]
+      disk: [sh, -c, "df -Pk /var/lib/libvirt/images 2>/dev/null || df -Pk /var/lib/libvirt 2>/dev/null || df -Pk /var"]
+      cache_disk: [sh, -c, "mkdir -p {{ lab_cache | quote }} && df -Pk {{ lab_cache | quote }}"]
+      restic: [sha256sum, "{{ lab_restic_cache }}"]
+      others: [virsh, -c, "{{ lab_uri }}", list, --all, --name]
+    wsl: "{{ lookup('ansible.builtin.file', '/proc/sys/kernel/osrelease') is search('(?i)microsoft') }}"
+    daemon_json: "{{ lookup('ansible.builtin.file', '/etc/docker/daemon.json', errors='ignore') | default('', true) }}"
+    ufw_on: "{{ lookup('ansible.builtin.file', '/etc/ufw/ufw.conf', errors='ignore') | default('', true) is search('(?m)^ENABLED=yes') }}"
+    ufw_drop: "{{ lookup('ansible.builtin.file', '/etc/default/ufw', errors='ignore') | default('', true) is search('(?m)^DEFAULT_FORWARD_POLICY=\"?DROP') }}"
+    want_mib: "{{ vms.values() | map(attribute='memory') | sum }}"
+    docker_version: "{{ p.dockerd.stdout | default('') | regex_search('version ([0-9.]+)', '\\1') | default(['0'], true) | first }}"
+  tasks:
+    - name: Probe the host
+      ansible.builtin.command:
+        argv: "{{ item.value }}"
+      register: lab_probe
+      changed_when: false
+      failed_when: false
+      loop: "{{ probes | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+
+    - name: Keep what the probes found
+      ansible.builtin.set_fact:
+        p: "{{ dict(lab_probe.results | map(attribute='item.key') | zip(lab_probe.results)) }}"
+
+    - name: Check each requirement
+      ansible.builtin.assert:
+        that: checks[item].ok | bool
+        fail_msg: "MISSING for up: {{ checks[item].what }}: {{ checks[item].how }}"
+        success_msg: "ok {{ checks[item].what }}"
+      register: lab_need
+      ignore_errors: true
+      when: checks[item].applies | default(true) | bool
+      loop: "{{ checks.keys() | list }}"
+      vars:
+        want_go: "{{ lookup('ansible.builtin.file', lab_repo ~ '/go.mod') | regex_search('^go (\\S+)', '\\1', multiline=True) | first }}"
+        have_go: "{{ p.go.stdout_lines | first | default('go0') | regex_replace('^go', '') }}"
+        libvirt: "{{ p.community_libvirt.stdout | regex_search('\"version\": \"([^\"]+)\"', '\\1') | default(['0'], true) | first }}"
+        checks:
+          linux-x86_64:
+            what: a Linux x86_64 host
+            ok: "{{ p.platform.stdout == 'Linux x86_64' }}"
+            how: run the lab on an x86_64 Linux host
+          wsl-systemd:
+            applies: "{{ wsl }}"
+            what: systemd in WSL, which libvirt runs under
+            ok: "{{ p.pid1.stdout | trim == 'systemd' }}"
+            how: add [boot] and systemd=true to /etc/wsl.conf (sudo), run wsl --shutdown in Windows, and open Ubuntu again
+          wsl-checkout:
+            applies: "{{ wsl }}"
+            what: a checkout in WSL's own filesystem, not on a Windows drive
+            ok: "{{ p.repo_fs.stdout | trim not in ['9p', 'v9fs', 'drvfs'] and lab_repo is not match('^/mnt/[a-z]/') }}"
+            how: this checkout ({{ lab_repo }}) is on a Windows drive, where files lose their execute bits; clone it into your WSL home
+          commands:
+            what: "the commands {{ (p.tools.stdout_lines or tools) | join(' ') }}"
+            ok: "{{ p.tools.rc == 0 and p.tools.stdout == '' }}"
+            how: install them (lab/README.md, Set up this host)
+          kvm:
+            what: /dev/kvm
+            ok: "{{ '/dev/kvm' is exists }}"
+            how: >-
+              {{ 'nested virtualisation in WSL: [wsl2] nestedVirtualization=true in %UserProfile%\.wslconfig, then wsl
+              --shutdown' if wsl else 'enable virtualisation (VT-x or AMD-V) in the firmware, or nested virtualisation
+              for a VM' }}
+          libvirt-access:
+            what: "libvirt's {{ lab_uri }} as you"
+            ok: "{{ p.libvirt.rc == 0 }}"
+            how: >-
+              start libvirtd (sudo systemctl enable --now libvirtd), add yourself to the group libvirt (sudo usermod -aG
+              libvirt $USER), and log in again
+          python3-libvirt:
+            what: python3-libvirt and python3-lxml for /usr/bin/python3, which community.libvirt imports
+            ok: "{{ p.python.rc == 0 }}"
+            how: install python3-libvirt and python3-lxml
+          go:
+            what: "Go {{ want_go }} or one that fetches it, for make build"
+            ok: "{{ have_go is version(want_go, '>=') or (have_go is version('1.21', '>=') and p.go.stdout_lines[1] | default('') is not match('local')) }}"
+            how: >-
+              this host has Go {{ have_go }}: Go 1.21 or later fetches go.mod's when GOTOOLCHAIN is auto (go env -w
+              GOTOOLCHAIN=auto); older, install Go from https://go.dev/dl/
+          community.libvirt:
+            what: the collection community.libvirt 2.4.0 or later, for the VMs
+            ok: "{{ libvirt is version('2.4.0', '>=') }}"
+            how: "this host has {{ libvirt }}: ansible-galaxy collection install -r lab/ansible/requirements.yml"
+          docker-forward:
+            applies: "{{ p.dockerd.rc == 0 and docker_version is version('28', '>=') }}"
+            what: Docker leaving the FORWARD policy alone, so the VMs reach the internet through libvirt's NAT
+            ok: "{{ daemon_json is search('\"ip-forward-no-drop\"\\s*:\\s*true') }}"
+            how: >-
+              Docker sets the iptables FORWARD policy to DROP when it starts, which drops the VMs' traffic: put
+              {"ip-forward-no-drop": true} in /etc/docker/daemon.json (sudo) and restart Docker{{ ' (in WSL, wsl
+              --shutdown)' if wsl else '' }}
+          repository-path:
+            what: a repository path without spaces
+            ok: "{{ ' ' not in lab_repo }}"
+            how: "move the checkout ({{ lab_repo }}): Ansible's SSH arguments cannot take a space"
+
+    - name: Check the CPU for each image the lab boots (host-passthrough shows it to the VMs as it is)
+      ansible.builtin.assert:
+        that: images[item].cpu in lab_cpu_has
+        fail_msg: >-
+          MISSING for up: a CPU with {{ images[item].cpu }} for the image {{ item }}: it lacks
+          {{ lab_cpu_levels[images[item].cpu] | difference(lab_cpu_flags) | join(' ') }}
+        success_msg: "ok a CPU for the image {{ item }}"
+      register: lab_cpu
+      ignore_errors: true
+      loop: "{{ images.keys() | list }}"
+
+    - name: Notes, worth knowing, that stop nothing
+      ansible.builtin.debug:
+        msg: "note {{ item.text }}"
+      when: item.show | bool
+      loop_control:
+        label: "{{ item.text }}"
+      vars:
+        avail_mib: "{{ lookup('ansible.builtin.file', '/proc/meminfo') | regex_search('^MemAvailable:\\s+(\\d+)', '\\1', multiline=True)
+          | first | int // 1024 }}"
+        free_gib: "{{ (p.disk.stdout_lines | last | default('0 0 0 0')).split()[3] | int // 1048576 }}"
+        cache_free_gib: "{{ (p.cache_disk.stdout_lines | last | default('0 0 0 0')).split()[3] | int // 1048576 }}"
+        theirs: "{{ p.others.stdout_lines | reject('match', '^' ~ lab_net ~ '-') | select | list }}"
+      loop:
+        - show: true
+          text: "the lab's VMs take {{ want_mib }} MiB; {{ avail_mib }} MiB of memory is available now"
+        - show: "{{ avail_mib | int < want_mib | int + 1024 }}"
+          text: "that leaves less than 1 GiB for this host: stop other VMs first"
+        - show: true
+          text: >-
+            {{ free_gib }} GiB is free for the pool's volumes and {{ cache_free_gib }} GiB for the image cache; the lab
+            takes about 3 GiB of images in each and grows to 25-30 GiB of disks (lab/README.md, What it costs)
+        - show: "{{ free_gib | int < 40 }}"
+          text: "less than 40 GiB is free in the pool: the lab may fill the disk"
+        - show: "{{ p.pool.rc != 0 }}"
+          text: "the storage pool {{ lab_pool }} is missing: lab/lab up makes it in /var/lib/libvirt/images"
+        - show: "{{ p.restic.rc != 0 }}"
+          text: "{{ lab_restic_cache }} is missing: lab/lab up fetches it (scripts/fetch-restic.sh {{ restic.version }})"
+        - show: "{{ p.restic.rc == 0 and p.restic.stdout.split() | first != restic.sha256 }}"
+          text: "{{ lab_restic_cache }} does not have the lab file's sha256 {{ restic.sha256 }}: remove it, and up fetches it again"
+        - show: "{{ theirs | length > 0 }}"
+          text: "other VMs on this libvirt, which the lab leaves alone: {{ theirs | join(', ') }}"
+        - show: "{{ p.dockerd.rc == 0 and docker_version is version('28', '<') }}"
+          text: >-
+            Docker {{ docker_version }} sets the iptables FORWARD policy to DROP when it starts, which drops the VMs'
+            traffic through libvirt's NAT: sudo iptables -I DOCKER-USER -i {{ lab_bridge }} -j ACCEPT; sudo iptables -I
+            DOCKER-USER -o {{ lab_bridge }} -j ACCEPT (until the next boot), or Docker 28 or later
+        - show: "{{ ufw_on and ufw_drop }}"
+          text: >-
+            ufw is on and drops forwarded traffic: allow the lab's bridge (sudo ufw allow in on {{ lab_bridge }}; sudo ufw
+            route allow in on {{ lab_bridge }}; sudo ufw route allow out on {{ lab_bridge }})
+
+    - name: Sum up
+      ansible.builtin.assert:
+        that: missing | length == 0
+        fail_msg: "MISSING on this host, as said above: {{ missing | join(', ') }}. lab/README.md (Set up this host) says how to get each."
+        success_msg: "this host has everything the lab {{ lab }} needs"
+      vars:
+        missing: "{{ lab_need.results | selectattr('failed', 'defined') | selectattr('failed') | map(attribute='item') | list
+          + lab_cpu.results | selectattr('failed') | map(attribute='item') | map('regex_replace', '^', 'a CPU for ') | list }}"

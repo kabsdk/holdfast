@@ -1,0 +1,6 @@
+---
+# The collection lab/ansible/ uses beyond ansible-core's own: community.libvirt for the VMs (vms.yml, destroy.yml).
+# Install it with `ansible-galaxy collection install -r lab/ansible/requirements.yml`; lab/lab doctor checks its version.
+collections:
+  - name: community.libvirt
+    version: ">=2.4.0"

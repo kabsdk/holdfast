@@ -1,0 +1,40 @@
+---
+# Makes the VM `vm`, which does not exist yet: its cloud-init seed ISO from the files render.yml wrote, the seed and a
+# qcow2 overlay on the lab's copy of its image as volumes of the pool, and the domain from its rendered XML. The disk
+# is the lab file's size, or the image's own when that is larger (an overlay smaller than its image would cut its
+# partitions off). A disk or seed without its VM is left from an up that stopped, and is made again.
+- name: Make the cloud-init seed ISO of {{ vm }}
+  ansible.builtin.command:
+    argv: [xorriso, -as, mkisofs, -quiet, -o, "{{ lab_state }}/seed/{{ vm }}.iso", -V, cidata, -J, -r, "{{ lab_state }}/seed/{{ vm }}"]
+  changed_when: true
+
+- name: Put the seed into the pool for {{ vm }}
+  ansible.builtin.include_tasks: upload.yml
+  vars:
+    volume: "{{ lab_net }}-{{ vm }}-seed.iso"
+    file: "{{ lab_state }}/seed/{{ vm }}.iso"
+    format: raw
+
+- name: Remove a disk an up that stopped left for {{ vm }}
+  ansible.builtin.command:
+    argv: [virsh, -c, "{{ lab_uri }}", vol-delete, --pool, "{{ lab_pool }}", "{{ lab_net }}-{{ vm }}.qcow2"]
+  when: lab_net ~ '-' ~ vm ~ '.qcow2' in lab_volumes
+  changed_when: true
+
+- name: Make the disk, a qcow2 overlay on its image, of {{ vm }}
+  ansible.builtin.command:
+    argv: [virsh, -c, "{{ lab_uri }}", vol-create-as, "{{ lab_pool }}", "{{ lab_net }}-{{ vm }}.qcow2", "{{ [vms[vm].disk | int * 1073741824, lab_image_size[vms[vm].image] | int] | max }}",
+           --format, qcow2, --backing-vol, "{{ lab_net }}-{{ images[vms[vm].image].file }}", --backing-vol-format, qcow2]
+  changed_when: true
+
+- name: Define the domain of {{ vm }}
+  community.libvirt.virt:
+    command: define
+    xml: "{{ lookup('ansible.builtin.file', lab_state ~ '/domains/' ~ vm ~ '.xml') }}"
+    uri: "{{ lab_uri }}"
+
+- name: Forget an older VM's host key at the address of {{ vm }}
+  ansible.builtin.known_hosts:
+    path: "{{ lab_state }}/known_hosts"
+    name: "{{ vms[vm].addresses[0] }}"
+    state: absent

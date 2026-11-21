@@ -1,0 +1,32 @@
+---
+# Puts the local file `file` into the pool as the volume `volume` of the format `format` through libvirt (vol-upload),
+# so libvirt owns and labels it and no root is needed. A volume of that name, left by a run that stopped, is replaced;
+# with `stamp`, that file is touched once the upload is done.
+- name: Read the size of the file to upload, {{ file | basename }}
+  ansible.builtin.stat:
+    path: "{{ file }}"
+    get_checksum: false
+  register: lab_upload
+
+- name: Remove what a run that stopped left of the volume {{ volume }}
+  ansible.builtin.command:
+    argv: [virsh, -c, "{{ lab_uri }}", vol-delete, --pool, "{{ lab_pool }}", "{{ volume }}"]
+  when: volume in lab_volumes
+  changed_when: true
+
+- name: Make the volume {{ volume }}
+  ansible.builtin.command:
+    argv: [virsh, -c, "{{ lab_uri }}", vol-create-as, "{{ lab_pool }}", "{{ volume }}", "{{ lab_upload.stat.size }}", --format, "{{ format }}"]
+  changed_when: true
+
+- name: Upload the file into the volume {{ volume }}
+  ansible.builtin.command:
+    argv: [virsh, -c, "{{ lab_uri }}", vol-upload, --pool, "{{ lab_pool }}", "{{ volume }}", "{{ file }}"]
+  changed_when: true
+
+- name: Note that the upload is done
+  ansible.builtin.file:
+    path: "{{ stamp }}"
+    state: touch
+    mode: "0644"
+  when: stamp is defined

@@ -1,0 +1,16 @@
+---
+# A lab's files in its state directory (${XDG_STATE_HOME:-~/.local/state}/holdfast/labs/<lab>/) and nothing else: no
+# libvirt, no VM. vms.yml renders them the same way on every lab/lab up; run this alone to see what a lab file renders.
+# Usage: ansible-playbook -i localhost, lab/ansible/render.yml -e lab=<lab>
+- name: Render a lab's files
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - "../labs/{{ lab }}.yml"
+    - lab-vars.yml
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+  tasks:
+    - name: Render the lab's files
+      ansible.builtin.include_tasks: tasks/render.yml

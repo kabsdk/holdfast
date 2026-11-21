@@ -1,0 +1,43 @@
+---
+# What the lab's playbooks (render, vms, site, destroy, doctor) derive from a lab's file, lab/labs/<lab>.yml, which each
+# loads before this one: names, paths, and libvirt's connection. Every libvirt object is named hf-<lab>-*, so nothing
+# here can touch another project's lab on the same host.
+lab_uri: qemu:///system
+lab_pool: default
+lab_pool_path: /var/lib/libvirt/images       # vms.yml reads the pool's own path before it renders the domains
+lab_repo: "{{ playbook_dir | dirname | dirname }}"   # this repository
+lab_home: "{{ lookup('ansible.builtin.env', 'HOME') }}"
+# A lab's state lives outside the checkout, so every checkout and worktree sees the same lab and `git clean` cannot
+# take its key or its credentials.
+lab_state_home: "{{ lookup('ansible.builtin.env', 'XDG_STATE_HOME', default=lab_home ~ '/.local/state') }}/holdfast/labs"
+lab_state: "{{ lab_state_home }}/{{ lab }}"
+lab_key: "{{ lab_state }}/id_ed25519"
+lab_creds: "{{ lab_state }}/credentials"     # 0700; every file in it 0600
+lab_meta_ns: https://github.com/kabsdk/holdfast/lab   # the namespace of each domain's <metadata>, the key's fingerprint
+lab_ssh_args: "-o IdentitiesOnly=yes -o UserKnownHostsFile={{ lab_state }}/known_hosts -o StrictHostKeyChecking=accept-new"
+lab_cache: "{{ lookup('ansible.builtin.env', 'XDG_CACHE_HOME', default=lab_home ~ '/.cache') }}/holdfast-lab"
+# Other labs' image caches on this host, only ever read: an image missing here whose file there has the pinned sha256
+# is copied from there instead of downloaded.
+lab_cache_peers:
+  - "{{ lab_home }}/.cache/clusterlane-lab"
+lab_domain: "{{ lab }}.holdfast.test"
+lab_net: "hf-{{ lab }}"                       # the libvirt network, and the prefix of every domain and volume
+lab_bridge: "hfbr-{{ lab }}"
+lab_prefix: "{{ network.subnet | regex_replace('\\.0/24$', '') }}"   # the first three octets
+lab_gateway: "{{ lab_prefix }}.1"
+lab_ssh_timeout: 600                         # seconds for a VM to answer SSH after it starts
+lab_storage_vm: "{{ vms | dict2items | selectattr('value.group', 'eq', 'storage') | map(attribute='key') | first }}"
+lab_server_vm: "{{ vms | dict2items | selectattr('value.group', 'eq', 'server') | map(attribute='key') | first }}"
+lab_agent_vms: "{{ vms | dict2items | selectattr('value.group', 'eq', 'agent') | map(attribute='key') | list }}"
+# RGW by name, as the VMs (and Holdfast on them) reach it, and by address, which this host reaches too.
+lab_rgw_port_suffix: "{{ '' if storage.rgw_port | int == 80 else ':' ~ storage.rgw_port }}"
+lab_rgw_url: "http://{{ lab_storage_vm }}.{{ lab_domain }}{{ lab_rgw_port_suffix }}"
+lab_rgw_url_host: "http://{{ vms[lab_storage_vm].addresses[0] }}{{ lab_rgw_port_suffix }}"
+lab_restic_cache: "{{ lookup('ansible.builtin.env', 'HOLDFAST_CACHE', default=lab_home ~ '/.cache/holdfast') }}/restic-{{ restic.version }}"
+
+# The x86-64 levels by the flags /proc/cpuinfo shows for them (pni is SSE3, abm LZCNT), and those this host has.
+lab_cpu_levels:
+  x86-64-v2: [cx16, lahf_lm, popcnt, pni, sse4_1, sse4_2, ssse3]
+  x86-64-v3: [cx16, lahf_lm, popcnt, pni, sse4_1, sse4_2, ssse3, avx, avx2, bmi1, bmi2, f16c, fma, abm, movbe, xsave]
+lab_cpu_flags: "{{ (lookup('ansible.builtin.file', '/proc/cpuinfo') | regex_search('^flags\\s*:(.*)$', '\\1', multiline=True) | first).split() }}"
+lab_cpu_has: "{{ lab_cpu_levels | dict2items | selectattr('value', 'subset', lab_cpu_flags) | map(attribute='key') | list }}"

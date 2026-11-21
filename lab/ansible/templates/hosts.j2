@@ -1,0 +1,8 @@
+{# The lab's names: /etc/hosts on every VM (user-data.j2 at the first boot, site.yml afterwards) and what lab/lab status
+   prints. Each VM by its first address, with its FQDN first, so that hostname -f gives the FQDN Holdfast takes as the
+   host's identity. #}
+127.0.0.1   localhost localhost.localdomain localhost4 localhost4.localdomain4
+::1         localhost localhost.localdomain localhost6 localhost6.localdomain6
+{% for vm, v in vms.items() %}
+{{ v.addresses[0] }} {{ vm }}.{{ lab_domain }} {{ vm }}
+{% endfor %}

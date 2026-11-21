@@ -1,0 +1,555 @@
+---
+# Provisions the Holdfast lab's VMs once vms.yml has made them: every step checks before it changes, so a second run
+# changes nothing and a run after a failure resumes. lab/lab up runs it after `make build`, and lab/lab deploy runs its
+# binaries part (--tags binaries -e lab_deploy=true).
+#   - localhost: the lab's credentials, made once in its state (credentials/, 0600), and restic, checked
+#   - every VM: the lab's names in /etc/hosts
+#   - storage (s3a): MicroCeph, its loop-file OSDs and RGW; the users holdfast-maint (owns the bucket) and
+#     holdfast-provisioner (Admin Ops and IAM user policies); the bucket, versioned; awscli and s3req for experiments
+#   - server (hfsrv): PostgreSQL from AppStream, its database and user
+#   - server and agents: Holdfast's binaries in /usr/bin, restic in /usr/libexec/holdfast, the systemd units (not
+#     enabled: nothing is configured or enrolled)
+# Usage: ansible-playbook -i <state>/inventory.yml lab/ansible/site.yml -e lab=<lab> [--tags binaries -e lab_deploy=true]
+- name: The lab's credentials and what goes onto the VMs, on this host
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tags: [always]
+  vars_files:
+    - "../labs/{{ lab }}.yml"
+    - lab-vars.yml
+  tasks:
+    - name: Make the credentials directory, private to you
+      ansible.builtin.file:
+        path: "{{ lab_creds }}"
+        state: directory
+        mode: "0700"
+
+    - name: Make each RGW user's key once (credentials/<user>.env)
+      ansible.builtin.command:
+        argv: [python3, "{{ playbook_dir }}/files/credential.py", s3, "{{ lab_creds }}/{{ item }}.env",
+               "HF{{ (item | regex_replace('^holdfast-', '') | regex_replace('[^a-z0-9]', '') | upper)[:6] }}"]
+        creates: "{{ lab_creds }}/{{ item }}.env"
+      loop: "{{ storage.users.keys() | list }}"
+
+    - name: Make PostgreSQL's password for {{ postgresql.user }} once
+      ansible.builtin.command:
+        argv: [python3, "{{ playbook_dir }}/files/credential.py", password, "{{ lab_creds }}/postgresql-{{ postgresql.user }}.pw"]
+        creates: "{{ lab_creds }}/postgresql-{{ postgresql.user }}.pw"
+
+    - name: Write the DSN that reaches it from this host and the lab
+      ansible.builtin.copy:
+        dest: "{{ lab_creds }}/postgresql-{{ postgresql.user }}.dsn"
+        content: "postgres://{{ postgresql.user }}:{{ lookup('ansible.builtin.file', lab_creds ~ '/postgresql-' ~ postgresql.user ~ '.pw') }}@{{ lab_server_vm }}.{{ lab_domain }}:5432/{{ postgresql.database }}?sslmode=disable\n"
+        mode: "0600"
+      no_log: true
+
+    - name: Fetch restic {{ restic.version }} when it is missing (scripts/fetch-restic.sh checks it against the release's SHA256SUMS)
+      ansible.builtin.command:
+        argv: ["{{ lab_repo }}/scripts/fetch-restic.sh", "{{ restic.version }}"]
+        creates: "{{ lab_restic_cache }}"
+
+    - name: Read restic's sha256
+      ansible.builtin.stat:
+        path: "{{ lab_restic_cache }}"
+        checksum_algorithm: sha256
+      register: lab_restic
+
+    - name: Refuse a restic that is not the lab file's
+      ansible.builtin.assert:
+        that: lab_restic.stat.checksum == restic.sha256
+        fail_msg: "{{ lab_restic_cache }} has sha256 {{ lab_restic.stat.checksum }}, not {{ restic.sha256 }}: remove it, and lab/lab up fetches it again"
+        quiet: true
+
+    - name: Read this checkout's binaries (make build)
+      ansible.builtin.stat:
+        path: "{{ lab_repo }}/bin/{{ item }}"
+        get_checksum: false
+      register: lab_bins
+      loop: [holdfast-server, holdfast, holdfast-freshness, holdfast-agent]
+
+    - name: Refuse to go on without them
+      ansible.builtin.assert:
+        that: lab_bins.results | rejectattr('stat.exists') | list == []
+        fail_msg: "{{ lab_repo }}/bin/ lacks {{ lab_bins.results | rejectattr('stat.exists') | map(attribute='item') | join(', ') }}: CGO_ENABLED=0 make build"
+        quiet: true
+
+- name: Every VM
+  hosts: all
+  gather_facts: false
+  vars_files:
+    - "../labs/{{ lab }}.yml"
+    - lab-vars.yml
+  tasks:
+    - name: The lab's names in /etc/hosts
+      ansible.builtin.template:
+        src: hosts.j2
+        dest: /etc/hosts
+        owner: root
+        group: root
+        mode: "0644"
+
+- name: Site A's storage, MicroCeph with RGW
+  hosts: storage
+  gather_facts: false
+  vars_files:
+    - "../labs/{{ lab }}.yml"
+    - lab-vars.yml
+  vars:
+    microceph: /snap/bin/microceph
+    ceph: /snap/bin/microceph.ceph
+    rgw_admin: /snap/bin/microceph.radosgw-admin
+    maint: "{{ dict(lookup('ansible.builtin.file', lab_creds ~ '/holdfast-maint.env').splitlines() | map('split', '=')) }}"
+    maint_env:
+      AWS_ACCESS_KEY_ID: "{{ maint.AWS_ACCESS_KEY_ID }}"
+      AWS_SECRET_ACCESS_KEY: "{{ maint.AWS_SECRET_ACCESS_KEY }}"
+      AWS_DEFAULT_REGION: "{{ storage.region }}"
+    aws: [/snap/bin/aws, --endpoint-url, "{{ lab_rgw_url }}", --output, json]
+  tasks:
+    - name: botocore, which s3req signs with
+      ansible.builtin.apt:
+        name: [python3-botocore]
+        state: present
+        update_cache: true
+        cache_valid_time: 86400
+
+    # Ubuntu 24.04 has no awscli package: AWS's own snap (aws-cli, v2), held like MicroCeph.
+    - name: Install MicroCeph from {{ storage.microceph_channel }}, and awscli
+      ansible.builtin.command:
+        argv: "{{ item.argv }}"
+        creates: "{{ item.creates }}"
+      loop:
+        - {argv: [snap, install, microceph, --channel, "{{ storage.microceph_channel }}"], creates: "{{ microceph }}"}
+        - {argv: [snap, install, aws-cli, --classic, --channel, "{{ storage.awscli_channel }}"], creates: /snap/bin/aws}
+      loop_control:
+        label: "{{ item.argv[2] }}"
+
+    - name: Read whether their refreshes are held
+      ansible.builtin.command:
+        argv: [snap, list, microceph, aws-cli]
+      register: lab_snap
+      changed_when: false
+
+    - name: Hold their refreshes, so the lab's Ceph and awscli change only when the lab file says
+      ansible.builtin.command:
+        argv: [snap, refresh, --hold, "{{ item }}"]
+      when: lab_snap.stdout_lines | select('match', '^' ~ item ~ '\s') | select('search', 'held') | list | length == 0
+      changed_when: true
+      loop: [microceph, aws-cli]
+
+    - name: Read MicroCeph's cluster
+      ansible.builtin.command:
+        argv: ["{{ microceph }}", status]
+      register: lab_mc
+      changed_when: false
+      failed_when: false
+
+    - name: Bootstrap a single-node cluster
+      ansible.builtin.command:
+        argv: ["{{ microceph }}", cluster, bootstrap]
+      when: lab_mc.rc != 0
+      register: lab_boot
+      retries: 6
+      delay: 10
+      until: lab_boot.rc == 0
+      changed_when: true
+
+    - name: Count the OSDs
+      ansible.builtin.command:
+        argv: ["{{ ceph }}", osd, ls, --format, json]
+      register: lab_osds
+      changed_when: false
+
+    - name: Add the loop-file OSDs that are missing
+      ansible.builtin.command:
+        argv: ["{{ microceph }}", disk, add, "loop,{{ storage.osds.size }},{{ storage.osds.count - lab_osds.stdout | from_json | length }}"]
+      when: lab_osds.stdout | from_json | length < storage.osds.count
+      changed_when: true
+
+    - name: Read the OSDs' memory target
+      ansible.builtin.command:
+        argv: ["{{ ceph }}", config, get, osd, osd_memory_target]
+      register: lab_omt
+      changed_when: false
+
+    - name: Lower it to fit three OSDs in the VM's memory
+      ansible.builtin.command:
+        argv: ["{{ ceph }}", config, set, osd, osd_memory_target, "{{ storage.osd_memory_target }}"]
+      when: lab_omt.stdout | trim | int != storage.osd_memory_target | int
+      changed_when: true
+
+    - name: Enable RGW on port {{ storage.rgw_port }}
+      ansible.builtin.command:
+        argv: ["{{ microceph }}", enable, rgw, --port, "{{ storage.rgw_port }}"]
+      when: lab_mc.rc != 0 or lab_mc.stdout is not search('rgw')
+      changed_when: true
+
+    - name: Wait for RGW to answer
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ storage.rgw_port }}/"
+        status_code: 200
+      register: lab_rgw
+      retries: 60
+      delay: 5
+      until: lab_rgw.status == 200
+
+    - name: Read each RGW user
+      ansible.builtin.command:
+        argv: ["{{ rgw_admin }}", user, info, --uid, "{{ item }}"]
+      register: lab_users
+      changed_when: false
+      failed_when: false
+      loop: "{{ storage.users.keys() | list }}"
+
+    - name: Create the users that are missing, with the keys in the lab's state
+      ansible.builtin.command:
+        argv: ["{{ rgw_admin }}", user, create, --uid, "{{ item.item }}", --display-name, "{{ storage.users[item.item].display_name }}",
+               --access-key, "{{ cred.AWS_ACCESS_KEY_ID }}", --secret-key, "{{ cred.AWS_SECRET_ACCESS_KEY }}"]
+      vars:
+        cred: "{{ dict(lookup('ansible.builtin.file', lab_creds ~ '/' ~ item.item ~ '.env').splitlines() | map('split', '=')) }}"
+      when: item.rc != 0
+      changed_when: true
+      no_log: true
+      loop: "{{ lab_users.results }}"
+
+    - name: Read each RGW user again
+      ansible.builtin.command:
+        argv: ["{{ rgw_admin }}", user, info, --uid, "{{ item }}"]
+      register: lab_users
+      changed_when: false
+      loop: "{{ storage.users.keys() | list }}"
+      no_log: true
+
+    - name: Give a user the key in the lab's state when it lacks it
+      ansible.builtin.command:
+        argv: ["{{ rgw_admin }}", key, create, --uid, "{{ item.item }}", --key-type, s3,
+               --access-key, "{{ cred.AWS_ACCESS_KEY_ID }}", --secret-key, "{{ cred.AWS_SECRET_ACCESS_KEY }}"]
+      vars:
+        cred: "{{ dict(lookup('ansible.builtin.file', lab_creds ~ '/' ~ item.item ~ '.env').splitlines() | map('split', '=')) }}"
+      when: cred.AWS_ACCESS_KEY_ID not in (item.stdout | from_json)['keys'] | map(attribute='access_key') | list
+      changed_when: true
+      no_log: true
+      loop: "{{ lab_users.results }}"
+
+    - name: Give each user its admin caps
+      ansible.builtin.command:
+        argv: ["{{ rgw_admin }}", caps, add, --uid, "{{ item.item }}", --caps, "{{ storage.users[item.item].caps }}"]
+      vars:
+        info: "{{ item.stdout | from_json }}"
+        have: "{{ info['caps'] | map(attribute='type') | zip(info['caps'] | map(attribute='perm')) | map('join', '=') | list }}"
+      when: storage.users[item.item].caps | length > 0 and storage.users[item.item].caps.split(';') | difference(have) | length > 0
+      changed_when: true
+      no_log: true                     # the user's info holds its secret key
+      loop: "{{ lab_users.results }}"
+
+    - name: Make /root/hf-lab, root's own, for the lab's experiments
+      ansible.builtin.file:
+        path: /root/hf-lab
+        state: directory
+        mode: "0700"
+
+    - name: Put the users' key files there (0600)
+      ansible.builtin.copy:
+        src: "{{ lab_creds }}/{{ item }}.env"
+        dest: "/root/hf-lab/{{ item }}.env"
+        mode: "0600"
+      loop: "{{ storage.users.keys() | list }}"
+
+    - name: Make /root/.aws
+      ansible.builtin.file:
+        path: /root/.aws
+        state: directory
+        mode: "0700"
+
+    - name: awscli's settings for root (path-style, the zonegroup's region)
+      ansible.builtin.template:
+        src: aws-config.j2
+        dest: /root/.aws/config
+        mode: "0600"
+
+    - name: s3req, one SigV4-signed request (lab/ansible/files/s3req.py)
+      ansible.builtin.copy:
+        src: files/s3req.py
+        dest: /usr/local/bin/s3req
+        mode: "0755"
+
+    - name: Look for the bucket {{ storage.bucket }}
+      ansible.builtin.command:
+        argv: "{{ aws + ['s3api', 'head-bucket', '--bucket', storage.bucket] }}"
+      environment: "{{ maint_env }}"
+      register: lab_bucket
+      changed_when: false
+      failed_when: false
+
+    - name: Make it, owned by holdfast-maint
+      ansible.builtin.command:
+        argv: "{{ aws + ['s3api', 'create-bucket', '--bucket', storage.bucket] }}"
+      environment: "{{ maint_env }}"
+      when: lab_bucket.rc != 0
+      changed_when: true
+
+    - name: Read its versioning
+      ansible.builtin.command:
+        argv: "{{ aws + ['s3api', 'get-bucket-versioning', '--bucket', storage.bucket] }}"
+      environment: "{{ maint_env }}"
+      register: lab_versioning
+      changed_when: false
+
+    - name: Turn versioning on
+      ansible.builtin.command:
+        argv: "{{ aws + ['s3api', 'put-bucket-versioning', '--bucket', storage.bucket, '--versioning-configuration', 'Status=Enabled'] }}"
+      environment: "{{ maint_env }}"
+      when: (lab_versioning.stdout | default('{}', true) | from_json).Status | default('') != 'Enabled'
+      changed_when: true
+
+    - name: Read its versioning again (GetBucketVersioning)
+      ansible.builtin.command:
+        argv: "{{ aws + ['s3api', 'get-bucket-versioning', '--bucket', storage.bucket] }}"
+      environment: "{{ maint_env }}"
+      register: lab_versioning
+      changed_when: false
+
+    - name: Refuse a bucket whose versioning is not Enabled
+      ansible.builtin.assert:
+        that: (lab_versioning.stdout | default('{}', true) | from_json).Status | default('') == 'Enabled'
+        fail_msg: "GetBucketVersioning on {{ storage.bucket }} says {{ lab_versioning.stdout }}"
+        success_msg: "GetBucketVersioning on {{ storage.bucket }}: {{ lab_versioning.stdout | from_json | to_json }}"
+
+    - name: Read Ceph's version and the snap's
+      ansible.builtin.shell:
+        cmd: "{{ ceph }} version && snap list microceph | tail -1"
+      register: lab_ceph_version
+      changed_when: false
+
+    - name: Record them in the lab's state (ceph-version)
+      ansible.builtin.copy:
+        dest: "{{ lab_state }}/ceph-version"
+        content: "{{ lab_ceph_version.stdout }}\n"
+        mode: "0644"
+      delegate_to: localhost
+
+- name: The Holdfast server's PostgreSQL
+  hosts: server
+  gather_facts: false
+  vars_files:
+    - "../labs/{{ lab }}.yml"
+    - lab-vars.yml
+  vars:
+    pg_password: "{{ lookup('ansible.builtin.file', lab_creds ~ '/postgresql-' ~ postgresql.user ~ '.pw') }}"
+    psql: [runuser, -u, postgres, --, psql, -X, -q, -t, -A, -v, ON_ERROR_STOP=1]
+  handlers:
+    - name: Restart PostgreSQL
+      ansible.builtin.systemd:
+        name: postgresql
+        state: restarted
+  tasks:
+    - name: Read the enabled PostgreSQL module stream
+      ansible.builtin.command:
+        argv: [dnf, -q, module, list, --enabled, postgresql]
+      register: lab_pg_stream
+      changed_when: false
+      failed_when: false
+
+    - name: Enable the stream postgresql:{{ postgresql.stream }}
+      ansible.builtin.command:
+        argv: [dnf, -y, -q, module, enable, "postgresql:{{ postgresql.stream }}"]
+      when: lab_pg_stream.stdout is not search('(?m)^postgresql\s+' ~ postgresql.stream ~ '\s.*\[e\]')
+      changed_when: true
+
+    - name: Install PostgreSQL's server
+      ansible.builtin.dnf:
+        name: [postgresql-server]
+        state: present
+
+    - name: Make its cluster
+      ansible.builtin.command:
+        argv: [postgresql-setup, --initdb]
+        creates: /var/lib/pgsql/data/PG_VERSION
+
+    - name: Listen on the lab's network too
+      ansible.builtin.lineinfile:
+        path: /var/lib/pgsql/data/postgresql.conf
+        regexp: "^#?listen_addresses\\s*="
+        line: "listen_addresses = '*'"
+      notify: Restart PostgreSQL
+
+    - name: Who may log in, and how (pg_hba.conf)
+      ansible.builtin.template:
+        src: pg_hba.conf.j2
+        dest: /var/lib/pgsql/data/pg_hba.conf
+        owner: postgres
+        group: postgres
+        mode: "0600"
+      notify: Restart PostgreSQL
+
+    - name: Start it, and at every boot
+      ansible.builtin.systemd:
+        name: postgresql
+        state: started
+        enabled: true
+
+    - name: Restart it now if its settings changed
+      ansible.builtin.meta: flush_handlers
+
+    - name: Look for the role {{ postgresql.user }}
+      ansible.builtin.command:
+        argv: "{{ psql + ['-c', \"SELECT 1 FROM pg_roles WHERE rolname = '\" ~ postgresql.user ~ \"'\"] }}"
+        chdir: /
+      register: lab_pg_role
+      changed_when: false
+
+    - name: Make it
+      ansible.builtin.command:
+        argv: "{{ psql + ['-c', 'CREATE ROLE ' ~ postgresql.user ~ ' LOGIN'] }}"
+        chdir: /
+      when: lab_pg_role.stdout | trim != '1'
+      changed_when: true
+
+    - name: Look for the database {{ postgresql.database }}
+      ansible.builtin.command:
+        argv: "{{ psql + ['-c', \"SELECT 1 FROM pg_database WHERE datname = '\" ~ postgresql.database ~ \"'\"] }}"
+        chdir: /
+      register: lab_pg_db
+      changed_when: false
+
+    - name: Make it, owned by {{ postgresql.user }}
+      ansible.builtin.command:
+        argv: "{{ psql + ['-c', 'CREATE DATABASE ' ~ postgresql.database ~ ' OWNER ' ~ postgresql.user] }}"
+        chdir: /
+      when: lab_pg_db.stdout | trim != '1'
+      changed_when: true
+
+    - name: Try the password in the lab's state, as the server will log in
+      ansible.builtin.command:
+        argv: [psql, -X, -t, -A, -h, 127.0.0.1, -U, "{{ postgresql.user }}", -d, "{{ postgresql.database }}", -c, "SELECT 1"]
+      environment:
+        PGPASSWORD: "{{ pg_password }}"
+      register: lab_pg_login
+      changed_when: false
+      failed_when: false
+      no_log: true
+
+    - name: Set it when it does not work (through stdin, not argv)
+      ansible.builtin.command:
+        argv: "{{ psql }}"
+        stdin: "ALTER ROLE {{ postgresql.user }} PASSWORD '{{ pg_password }}';"
+        chdir: /
+      when: lab_pg_login.rc != 0
+      changed_when: true
+      no_log: true
+
+    - name: Try it again
+      ansible.builtin.command:
+        argv: [psql, -X, -t, -A, -h, 127.0.0.1, -U, "{{ postgresql.user }}", -d, "{{ postgresql.database }}", -c, "SELECT current_user"]
+      environment:
+        PGPASSWORD: "{{ pg_password }}"
+      register: lab_pg_login
+      changed_when: false
+      failed_when: lab_pg_login.rc != 0 or lab_pg_login.stdout | trim != postgresql.user
+
+    - name: Read whether firewalld runs
+      ansible.builtin.command:
+        argv: [systemctl, is-active, firewalld]
+      register: lab_fw
+      changed_when: false
+      failed_when: false
+
+    - name: Open PostgreSQL and Holdfast's port in it
+      ansible.builtin.shell:
+        cmd: |
+          set -e
+          c=0
+          for s in --add-service=postgresql --add-port=8443/tcp; do
+            q=${s/--add-/--query-}
+            firewall-cmd -q --permanent "$q" || { firewall-cmd -q --permanent "$s"; c=1; }
+          done
+          [ "$c" = 0 ] || firewall-cmd -q --reload
+          echo "changed=$c"
+      register: lab_fw_open
+      changed_when: "'changed=1' in lab_fw_open.stdout"
+      when: lab_fw.stdout | trim == 'active'
+
+    - name: Make /etc/holdfast, root's own
+      ansible.builtin.file:
+        path: /etc/holdfast
+        state: directory
+        mode: "0700"
+
+    - name: The server's DSN in /etc/holdfast/db.dsn (0600), for server.yaml's database_dsn_file
+      ansible.builtin.copy:
+        dest: /etc/holdfast/db.dsn
+        content: "postgres://{{ postgresql.user }}:{{ pg_password }}@127.0.0.1:5432/{{ postgresql.database }}?sslmode=disable\n"
+        mode: "0600"
+      no_log: true
+
+- name: Holdfast's binaries, restic and the systemd units
+  hosts: server:agent
+  gather_facts: false
+  tags: [binaries]
+  vars_files:
+    - "../labs/{{ lab }}.yml"
+    - lab-vars.yml
+  vars:
+    lab_deploy: false
+    is_server: "{{ inventory_hostname in groups['server'] }}"
+    hf_binaries: "{{ ['holdfast-server', 'holdfast', 'holdfast-freshness'] if is_server else ['holdfast-agent'] }}"
+    hf_units: "{{ ['holdfast-server.service', 'holdfast-freshness.service'] if is_server else ['holdfast-agent.service'] }}"
+  tasks:
+    - name: Make /usr/libexec/holdfast
+      ansible.builtin.file:
+        path: /usr/libexec/holdfast
+        state: directory
+        mode: "0755"
+
+    - name: restic {{ restic.version }} in /usr/libexec/holdfast/restic
+      ansible.builtin.copy:
+        src: "{{ lab_restic_cache }}"
+        dest: /usr/libexec/holdfast/restic
+        mode: "0755"
+
+    - name: This checkout's binaries in /usr/bin
+      ansible.builtin.copy:
+        src: "{{ lab_repo }}/bin/{{ item }}"
+        dest: "/usr/bin/{{ item }}"
+        mode: "0755"
+      loop: "{{ hf_binaries }}"
+      register: lab_bin
+
+    - name: The systemd units from deploy/systemd, not enabled
+      ansible.builtin.copy:
+        src: "{{ lab_repo }}/deploy/systemd/{{ item }}"
+        dest: "/usr/lib/systemd/system/{{ item }}"
+        mode: "0644"
+      loop: "{{ hf_units }}"
+      register: lab_unit
+
+    - name: Make systemd read them
+      ansible.builtin.systemd:
+        daemon_reload: true
+      when: lab_unit.changed
+
+    - name: Read which of them run
+      ansible.builtin.command:
+        argv: "{{ ['systemctl', 'is-active'] + hf_units }}"
+      register: lab_active
+      changed_when: false
+      failed_when: false
+
+    - name: Restart those that run, on the new binaries
+      ansible.builtin.command:
+        argv: "{{ ['systemctl', 'try-restart'] + running }}"
+      vars:
+        running: "{{ hf_units | zip(lab_active.stdout_lines) | selectattr('1', 'eq', 'active') | map(attribute='0') | list }}"
+      when: running | length > 0 and (lab_bin.changed or lab_deploy | bool)
+      changed_when: true
+
+    - name: Read the units' state
+      ansible.builtin.command:
+        argv: "{{ ['systemctl', 'is-enabled'] + hf_units }}"
+      register: lab_enabled
+      changed_when: false
+      failed_when: false
+
+    - name: Say it
+      ansible.builtin.debug:
+        msg: "{{ hf_units | zip(lab_enabled.stdout_lines) | map('join', ': ') | join(', ') }}"

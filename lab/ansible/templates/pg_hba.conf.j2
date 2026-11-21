@@ -1,0 +1,9 @@
+# {{ inventory_hostname }}'s pg_hba.conf in the Holdfast lab {{ lab }}, written by lab/ansible/site.yml: do not edit.
+# postgres as itself over the socket; {{ postgresql.user }} with its password to {{ postgresql.database }} over the
+# socket, from this host and from the lab's network (the host's tests reach it there).
+# TYPE	DATABASE	USER	ADDRESS	METHOD
+local	all	postgres		peer
+local	{{ postgresql.database }}	{{ postgresql.user }}		scram-sha-256
+host	{{ postgresql.database }}	{{ postgresql.user }}	127.0.0.1/32	scram-sha-256
+host	{{ postgresql.database }}	{{ postgresql.user }}	::1/128	scram-sha-256
+host	{{ postgresql.database }}	{{ postgresql.user }}	{{ network.subnet }}	scram-sha-256

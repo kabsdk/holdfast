@@ -1,0 +1,18 @@
+# The Holdfast lab {{ lab }}'s inventory, written by lab/ansible/render.yml on every lab/lab up: do not edit.
+# lab/ansible/site.yml provisions through it: the groups storage, server and agent, each host by its short name with
+# its eth0 address.
+all:
+  vars:
+    ansible_user: root
+    ansible_python_interpreter: /usr/bin/python3
+    ansible_ssh_private_key_file: {{ lab_key | to_json }}
+    ansible_ssh_common_args: {{ lab_ssh_args | to_json }}
+  children:
+{% for group in ['storage', 'server', 'agent'] %}
+    {{ group }}:
+      hosts:
+{% for vm, v in vms.items() if v.group == group %}
+        {{ vm }}:
+          ansible_host: {{ v.addresses[0] | to_json }}
+{% endfor %}
+{% endfor %}

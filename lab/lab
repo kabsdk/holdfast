@@ -1,0 +1,336 @@
+#!/usr/bin/env bash
+# lab/lab: Holdfast's local test lab on this host's KVM and libvirt, for people and agents alike, in the manner of
+# Clusterlane's lab. The lab is lab/labs/<lab>.yml, Ansible brings it up and provisions it (lab/ansible/,
+# community.libvirt), and lab/README.md is the guide.
+# Usage: lab/lab <command> <lab> [arguments]
+#   doctor <lab>             check this host for what the lab needs, and say how to get what lacks
+#   up <lab>                 make the lab ready: its VMs made or started (lab/ansible/vms.yml), this checkout built
+#                            (CGO_ENABLED=0 make build), every VM provisioned (lab/ansible/site.yml: MicroCeph and RGW
+#                            on s3a, PostgreSQL on hfsrv, Holdfast's binaries and restic on hfsrv and the agents), then
+#                            checked. Run it again after a failure: it resumes; on a ready lab it changes nothing
+#   deploy <lab>             build this checkout (CGO_ENABLED=0 make build) and install its binaries on hfsrv and the
+#                            agents, restarting the Holdfast services that run there
+#   status <lab> [--json]    the lab's state: absent, off, ready or broken, with its VMs, what each answered, the RGW
+#                            endpoint, the credentials' files and why it is not ready
+#   ssh <lab> <vm> [command] SSH to a VM as root with the lab's key
+#   isolation <lab> account  the same question with an RGW account (lab/rgw-account.sh, a scratch account it removes
+#                            again): one maintenance key for every host's objects, each host key on its own prefix
+#   isolation <lab> <user-policy|bucket-policy> [--maint-policy]
+#                            the RGW host-isolation experiment (lab/rgw-isolation.sh): test-host made through the Admin
+#                            Ops API, Holdfast's host policy given by that mechanism (--maint-policy: and holdfast-maint
+#                            given the bucket's objects in the bucket policy), then what test-host and holdfast-maint
+#                            may and may not do, with restic from an agent; every request's HTTP status, PASS or FAIL
+#   stop <lab>               shut the VMs down, keeping everything; up starts them again
+#   destroy <lab> [--yes]    remove the VMs, their volumes, the network and the lab's state (asks first, or --yes)
+# The lab's state (its key, credentials, lab.env, inventory, lock and runs) is in
+# ${XDG_STATE_HOME:-~/.local/state}/holdfast/labs/<lab>/, outside the checkout, so every checkout sees the same lab;
+# the images are cached in ~/.cache/holdfast-lab. Every libvirt object the lab makes is named hf-<lab>-*.
+# up, deploy, isolation, stop and destroy hold the lab's lock, and exit 75 at once, naming the holder, when another
+# command holds it; --wait [<seconds>] right after the lab's name waits instead. They print a line per step and write
+# everything to <state>/runs/<UTC time>-<command>/log (destroy's beside the state, which it removes).
+# Exit codes: 0 done (status: ready); 1 a step failed (the log says which); 2 refused or misused; 3 the lab is not
+# there, off or broken; 75 busy.
+set -euo pipefail
+self=$(cd "$(dirname "$0")" && pwd)/$(basename "$0")
+cd "$(dirname "$self")/.."
+usage() { sed -n '2,/^set -e/{/^set -e/d; s/^# \{0,1\}//; p}' "$self"; exit "$1"; }
+case ${1:-} in -h | --help | help) usage 0 ;; esac
+(($# >= 2)) || usage 2
+cmd=$1 lab=$2 && shift 2
+[[ $lab =~ ^[a-z0-9]+$ && -f lab/labs/$lab.yml ]] ||
+	{ echo "lab: no lab '$lab' (lab/labs/ has: $(basename -s .yml lab/labs/*.yml | paste -sd' '))" >&2; exit 2; }
+state=${XDG_STATE_HOME:-$HOME/.local/state}/holdfast/labs/$lab
+lock=$state/lock
+net=hf-$lab
+v() { virsh -c qemu:///system "$@"; }
+doms() { v list --all --name | grep "^$net-" || true; }
+ssh_opts() { echo -i "$state/id_ed25519" -o IdentitiesOnly=yes -o "UserKnownHostsFile=$state/known_hosts" -o StrictHostKeyChecking=accept-new -o LogLevel=ERROR; }
+
+case $cmd in up | deploy | isolation | stop | destroy)
+	if [[ ${HF_LAB_LOCK_HELD:-} != "$lock" ]]; then
+		[[ $cmd == up || -d $state ]] || { echo "lab: the lab $lab is not there (lab/lab up $lab)" >&2; exit 3; }
+		wait=(-n) && hint=" (lab/lab $cmd $lab --wait [<seconds>] waits for it)"
+		if [[ ${1:-} == --wait ]]; then
+			shift && wait=() && hint="; waiting"
+			if [[ ${1:-} =~ ^[0-9]+$ ]]; then wait=(-w "$1") && hint="; waiting up to $1 s" && shift; fi
+		fi
+		case $cmd in
+		destroy)
+			if [[ $# -gt 1 || ($# == 1 && $1 != --yes) ]]; then
+				echo "lab: destroy $lab takes --wait [<seconds>] and --yes, not '$*'" >&2
+				exit 2
+			fi
+			if [[ ${1:-} != --yes ]]; then
+				what="removes the lab $lab: its VMs, volumes, network and $state (the image cache stays)"
+				[[ -t 0 ]] || { echo "lab: destroy $what; run it from a terminal, or with --yes" >&2; exit 2; }
+				read -r -p "This $what. Type its name: " a
+				[[ $a == "$lab" ]] || { echo "lab: not confirmed, nothing changed" >&2; exit 2; }
+				set -- --yes
+			fi ;;
+		isolation)
+			[[ ($# == 1 && $1 == account) || (($# == 1 || ($# == 2 && $2 == --maint-policy)) && ($1 == user-policy || $1 == bucket-policy)) ]] ||
+				{ echo "lab: isolation $lab takes account, or user-policy or bucket-policy and --maint-policy, not '$*'" >&2; exit 2; } ;;
+		*) (($# == 0)) || { echo "lab: $cmd $lab takes --wait [<seconds>], not '$*'" >&2; exit 2; } ;;
+		esac
+		mkdir -p "$state" && chmod 0700 "$state"
+		flock -n -o "$lock" true || echo "lab: the lab $lab is busy with: $(cat "$lock.who" 2>/dev/null || echo unknown)$hint" >&2
+		# The lock is held by flock itself (-o), so nothing this starts (Ansible's SSH masters) keeps it afterwards.
+		export HF_LAB_LOCK_HELD=$lock
+		exec flock -o "${wait[@]}" -E 75 "$lock" "$self" "$cmd" "$lab" "$@"
+	fi
+	echo "lab/lab $cmd $lab $* (pid $$, since $(date -u +%FT%TZ))" >"$lock.who"
+	stamp=$(date -u +%Y%m%dT%H%M%SZ)
+	if [[ $cmd == destroy ]]; then
+		log=${state%/*}/$lab-destroy-$stamp.log
+	else
+		run=$state/runs/$stamp-$cmd n=1
+		while [[ -e $run ]]; do n=$((n + 1)) && run=$state/runs/$stamp.$n-$cmd; done
+		log=$run/log
+	fi
+	mkdir -p "${log%/*}"
+	echo "lab: $cmd $lab; the log is $log"
+	# Each step's line on the terminal and in the log; everything else in the log alone. On a failure, its last lines on
+	# the terminal too, and what to run next.
+	resume="lab/lab $cmd $lab again resumes" shown=
+	exec 3>&1 4>&2 >>"$log" 2>&1
+	trap 'rc=$?; if ((rc == 1)); then { [[ -n $shown ]] || { echo "lab: $cmd failed. The last lines of $log:"; tail -25 "$log" | sed "s/^/    /"; }; echo "lab: $resume"; } >&4; fi' EXIT ;;
+esac
+step() { echo "== $*"; echo "lab: $*" >&3; }
+
+# play <playbook> <inventory> [ansible-playbook arguments]: one of lab/ansible's playbooks, its output in the log, and
+# on the terminal a line of what it changed, per host (a lab that is ready already changes nothing).
+play() {
+	local pb=$1 inv=$2 out rc=0
+	shift 2
+	out=$(mktemp)
+	ANSIBLE_CALLBACK_RESULT_FORMAT=yaml ANSIBLE_NOCOLOR=1 ANSIBLE_DISPLAY_SKIPPED_HOSTS=false \
+		ansible-playbook -i "$inv" -e "lab=$lab" "lab/ansible/$pb" "$@" >"$out" 2>&1 </dev/null || rc=$?
+	cat "$out"
+	echo "lab:   $pb: $(awk '/^PLAY RECAP/ {r = 1; next} r && / : ok=/ {
+		for (i = 1; i <= NF; i++) if ($i ~ /^changed=/) {split($i, c, "="); t += c[2]; if (c[2] > 0) h = h " " $1 " " c[2]}
+		n++} END {printf "%d changes on %d hosts%s", t, n, (h ? " (" substr(h, 2) ")" : "")}' "$out")" >&3
+	rm -f "$out"
+	((rc == 0)) || exit 1
+}
+build() {
+	step "this checkout's binaries (CGO_ENABLED=0 make build: static, for every VM's libc)"
+	CGO_ENABLED=0 make -s build || exit 1
+}
+
+# probe prints the lab's state, as status reports it and up checks it: "state <absent|off|ready|broken>", then
+# "vm <vm> <libvirt state>", "got <vm> <key> <value>" for what each running VM answered over SSH, "host rgw <status>"
+# for RGW seen from this host, "note <text>" and "reason <why the lab is not ready>". Ready: every VM runs and answers,
+# RGW answers 200 from every VM and from this host, PostgreSQL runs on the server, and restic and Holdfast's binaries
+# and units are on the server and the agents.
+probe() {
+	local d vm n=0 off=0 out k val ip c bin u want reasons=() notes=()
+	declare -A dom=() got=()
+	for d in $(doms); do dom[${d#"$net"-}]=$(v domstate "$d") && n=$((n + 1)); done
+	if ((n == 0)); then echo "state absent"; return; fi
+	# shellcheck source=/dev/null
+	source "$state/lab.env" 2>/dev/null || { echo "state broken"; echo "reason the lab's VMs exist, but $state/lab.env does not"; return; }
+	for vm in "${HF_VMS[@]}"; do
+		echo "vm $vm ${dom[$vm]:-missing}"
+		[[ ${dom[$vm]:-} == running ]] || off=1
+	done
+	if ((off)); then echo "state off"; return; fi
+	for vm in "${HF_VMS[@]}"; do
+		c="echo fqdn \$(hostname -f); echo rgw \$(curl -s -o /dev/null -m 5 -w '%{http_code}' $HF_RGW_URL/)"
+		if [[ $vm == "$HF_STORAGE_VM" ]]; then
+			c+="; echo ceph \$(/snap/bin/microceph.ceph health 2>/dev/null | cut -d' ' -f1)"
+		else
+			c+="; echo restic \$(/usr/libexec/holdfast/restic version 2>/dev/null | cut -d' ' -f2)"
+		fi
+		if [[ $vm == "$HF_SERVER_VM" ]]; then
+			c+="; echo postgresql \$(systemctl is-active postgresql)"
+			for bin in holdfast-server holdfast holdfast-freshness; do c+="; echo bin-$bin \$(sha256sum /usr/bin/$bin 2>/dev/null | cut -c1-64)"; done
+			for u in holdfast-server holdfast-freshness; do c+="; echo unit-$u \$(systemctl is-enabled $u 2>/dev/null)"; done
+		elif [[ $vm != "$HF_STORAGE_VM" ]]; then
+			c+="; echo bin-holdfast-agent \$(sha256sum /usr/bin/holdfast-agent 2>/dev/null | cut -c1-64)"
+			c+="; echo unit-holdfast-agent \$(systemctl is-enabled holdfast-agent 2>/dev/null)"
+		fi
+		ip=HF_VM_IP_$vm
+		# shellcheck disable=SC2046
+		if ! out=$(ssh -n $(ssh_opts) -o BatchMode=yes -o ConnectTimeout=5 "root@${!ip}" "$c" 2>/dev/null); then
+			reasons+=("$vm does not answer SSH")
+			continue
+		fi
+		while read -r k val; do
+			got[$vm.$k]=$val
+			echo "got $vm $k ${val:--}"
+		done <<<"$out"
+		[[ ${got[$vm.fqdn]:-} == "$vm.$HF_DOMAIN" ]] || reasons+=("$vm's FQDN is '${got[$vm.fqdn]:-}', not $vm.$HF_DOMAIN")
+		[[ ${got[$vm.rgw]:-} == 200 ]] || reasons+=("RGW ($HF_RGW_URL) answers ${got[$vm.rgw]:-nothing} on $vm, not 200")
+		if [[ $vm == "$HF_STORAGE_VM" ]]; then
+			[[ ${got[$vm.ceph]:-} == HEALTH_OK ]] || notes+=("Ceph's health on $vm is ${got[$vm.ceph]:-unknown} (lab/lab ssh $lab $vm microceph.ceph health detail)")
+			continue
+		fi
+		[[ ${got[$vm.restic]:-} == "$HF_RESTIC_VERSION" ]] || reasons+=("$vm has restic '${got[$vm.restic]:-}', not $HF_RESTIC_VERSION")
+		[[ $vm != "$HF_SERVER_VM" || ${got[$vm.postgresql]:-} == active ]] || reasons+=("PostgreSQL on $vm is ${got[$vm.postgresql]:-unknown}")
+		for k in "${!got[@]}"; do
+			[[ $k == "$vm".bin-* ]] || continue
+			bin=${k#"$vm".bin-}
+			if [[ -z ${got[$k]} ]]; then
+				reasons+=("$vm has no /usr/bin/$bin")
+			elif [[ -f bin/$bin ]]; then
+				want=$(sha256sum "bin/$bin" | cut -c1-64)
+				[[ ${got[$k]} == "$want" ]] || notes+=("$vm's /usr/bin/$bin is not this checkout's bin/$bin (lab/lab deploy $lab)")
+			fi
+		done
+		for k in "${!got[@]}"; do
+			[[ $k == "$vm".unit-* ]] || continue
+			[[ -n ${got[$k]} ]] || reasons+=("$vm has no ${k#"$vm".unit-}.service")
+		done
+	done
+	val=$(curl -s -o /dev/null -m 5 -w '%{http_code}' "$HF_RGW_URL_HOST/" || true)
+	echo "host rgw $val"
+	[[ $val == 200 ]] || reasons+=("RGW ($HF_RGW_URL_HOST) answers ${val:-nothing} on this host, not 200")
+	if ((${#reasons[@]})); then echo "state broken"; else echo "state ready"; fi
+	for k in "${notes[@]}"; do echo "note $k"; done
+	for k in "${reasons[@]}"; do echo "reason $k"; done
+}
+
+# check probes the lab after up, says what it is, and exits 3 when it is not ready.
+check() {
+	local out st i
+	step "checking the lab"
+	for ((i = 0; i < 12; i++)); do
+		out=$(probe)
+		echo "$out"
+		st=$(sed -n 's/^state //p' <<<"$out")
+		[[ $st != ready ]] || break
+		sleep 5
+	done
+	{
+		echo "lab: the lab $lab is $st"
+		sed -n 's/^note /    note: /p; s/^reason /    not ready: /p' <<<"$out"
+	} >&3
+	[[ $st == ready ]] || exit 3
+	# shellcheck source=/dev/null
+	source "$state/lab.env"
+	{
+		echo "lab: RGW: $HF_RGW_URL from the VMs, $HF_RGW_URL_HOST from this host; bucket $HF_BUCKET (versioned)"
+		echo "lab: lab/lab status $lab; lab/lab ssh $lab <vm>; credentials in $state/credentials/"
+	} >&3
+}
+
+case $cmd in
+doctor)
+	exec env ANSIBLE_NOCOLOR=1 ANSIBLE_DISPLAY_SKIPPED_HOSTS=false ansible-playbook -i localhost, -e "lab=$lab" lab/ansible/doctor.yml ;;
+up)
+	step "the VMs (lab/ansible/vms.yml)"
+	play vms.yml localhost,
+	build
+	step "provisioning the VMs (lab/ansible/site.yml)"
+	play site.yml "$state/inventory.yml"
+	check ;;
+deploy)
+	out=$(probe)
+	st=$(sed -n 's/^state //p' <<<"$out")
+	[[ $st == ready || $st == broken ]] || { echo "lab: the lab $lab is $st: lab/lab up $lab first" >&3; exit 3; }
+	build
+	step "installing the binaries on the server and the agents, restarting the Holdfast services that run (site.yml --tags binaries)"
+	play site.yml "$state/inventory.yml" --tags binaries -e lab_deploy=true
+	resume="lab/lab deploy $lab again"
+	check ;;
+isolation)
+	out=$(probe)
+	st=$(sed -n 's/^state //p' <<<"$out")
+	[[ $st == ready ]] || { echo "lab: the lab $lab is $st, not ready: lab/lab up $lab first (lab/lab status $lab says why)" >&3; exit 3; }
+	script=(lab/rgw-isolation.sh "$lab" "$@")
+	[[ $1 != account ]] || script=(lab/rgw-account.sh "$lab")
+	step "the RGW isolation experiment: ${script[*]}"
+	shown=1 resume="lab/lab isolation $lab $* runs it again"
+	# Every line to the log and the terminal alike (fd 3 is written as it is, never opened again).
+	set +e
+	"${script[@]}" 2>&1 | while IFS= read -r line; do printf '%s\n' "$line"; printf '%s\n' "$line" >&3; done
+	rc=${PIPESTATUS[0]}
+	set -e
+	t=$state/isolation-$1${2:+-maint-policy}.txt
+	cp "$log" "$t"
+	echo "lab: the transcript is $t" >&3
+	exit "$rc" ;;
+stop)
+	step "shutting the VMs down (ACPI)"
+	for d in $(doms); do [[ $(v domstate "$d") != running ]] || v shutdown "$d"; done
+	for ((i = 0; i < 36; i++)); do
+		up=0 && for d in $(doms); do [[ $(v domstate "$d") == "shut off" ]] || up=$((up + 1)); done
+		((up == 0)) && break
+		sleep 5
+	done
+	((up == 0)) || { echo "lab: $up VMs still run after 180 s: virsh -c qemu:///system destroy $net-<vm>" >&3; exit 1; }
+	step "the lab $lab is off: lab/lab up $lab starts it" ;;
+destroy)
+	step "removing the lab $lab (lab/ansible/destroy.yml)"
+	play destroy.yml localhost,
+	echo "lab: the lab $lab is gone; the image cache ${XDG_CACHE_HOME:-$HOME/.cache}/holdfast-lab stays" >&3 ;;
+ssh)
+	# shellcheck source=/dev/null
+	source "$state/lab.env" 2>/dev/null || { echo "lab: the lab $lab is not up (lab/lab up $lab)" >&2; exit 3; }
+	ip=HF_VM_IP_${1:-none}
+	[[ ${1:-} =~ ^[a-z0-9]+$ && -n ${!ip:-} ]] || { echo "lab: no VM '${1:-}' in the lab $lab (it has: ${HF_VMS[*]})" >&2; exit 2; }
+	# shellcheck disable=SC2046
+	exec ssh $(ssh_opts) "root@${!ip}" "${@:2}" ;;
+status)
+	json=0
+	case ${1:-} in --json) json=1 ;; "") ;; *) echo "lab: status $lab takes --json, not '$*'" >&2; exit 2 ;; esac
+	busy=
+	if [[ -e $lock ]] && ! flock -n -o "$lock" true 2>/dev/null; then busy=$(cat "$lock.who" 2>/dev/null || echo unknown); fi
+	out=$( (set +u && probe))
+	python3 - "$json" "$lab" "$state" "$busy" "$out" <<'EOF' || true
+import json, os, sys
+as_json, lab, state, busy, out = sys.argv[1:6]
+st, vms, got, notes, reasons, host = "unknown", {}, {}, [], [], {}
+for line in out.splitlines():
+    w = line.split(" ", 3)
+    if w[0] == "state": st = w[1]
+    elif w[0] == "vm": vms[w[1]] = w[2]
+    elif w[0] == "got": got.setdefault(w[1], {})[w[2]] = (w[3] if len(w) > 3 else "")
+    elif w[0] == "host": host[w[1]] = w[2] if len(w) > 2 else ""
+    elif w[0] == "note": notes.append(line[5:])
+    elif w[0] == "reason": reasons.append(line[7:])
+env = {}
+try:
+    for l in open(os.path.join(state, "lab.env")):
+        if "=" in l and not l.startswith("#"):
+            k, v = l.rstrip("\n").split("=", 1)
+            env[k] = v.strip("'")
+except OSError:
+    pass
+creds = sorted(os.path.join(state, "credentials", f) for f in os.listdir(os.path.join(state, "credentials"))) \
+    if os.path.isdir(os.path.join(state, "credentials")) else []
+ceph = ""
+try:
+    ceph = open(os.path.join(state, "ceph-version")).read().splitlines()[0]
+except (OSError, IndexError):
+    pass
+if as_json == "1":
+    print(json.dumps({"lab": lab, "state": st, "stateDir": state, "busy": busy or None, "vms": vms, "answers": got,
+                      "rgw": {"url": env.get("HF_RGW_URL"), "urlFromHost": env.get("HF_RGW_URL_HOST"),
+                              "fromHost": host.get("rgw"), "bucket": env.get("HF_BUCKET"), "ceph": ceph or None},
+                      "credentials": creds, "notes": notes, "reasons": reasons}, indent=2))
+else:
+    hint = {"absent": f" (lab/lab up {lab} makes it)", "off": f" (lab/lab up {lab} starts it)"}.get(st, "")
+    print(f"lab {lab}: {st}{hint}" + (f" (busy with: {busy})" if busy else ""))
+    if vms:
+        print("  vms: " + ", ".join(f"{k} {s}" for k, s in vms.items()))
+    for vm, g in got.items():
+        shown = {k: (v or "-") for k, v in g.items() if not k.startswith("bin-")}
+        print(f"  {vm}: " + ", ".join(f"{k} {v}" for k, v in shown.items()))
+    if env.get("HF_RGW_URL"):
+        print(f"  rgw: {env['HF_RGW_URL']} from the VMs, {env.get('HF_RGW_URL_HOST')} from this host"
+              + (f" (answers {host['rgw']})" if host.get("rgw") else "") + f", bucket {env.get('HF_BUCKET')}")
+    if ceph:
+        print(f"  ceph: {ceph}")
+    print(f"  state: {state}")
+    if creds:
+        print("  credentials: " + ", ".join(os.path.basename(c) for c in creds) + f" (in {state}/credentials, 0600)")
+    for n in notes:
+        print(f"  note: {n}")
+    for r in reasons:
+        print(f"  not ready: {r}")
+EOF
+	[[ $(sed -n 's/^state //p' <<<"$out") == ready ]] || exit 3
+	[[ $json == 1 || ! -f $state/hosts ]] || { echo "the lab's names, for this host's /etc/hosts if you want them:"; grep -v localhost "$state/hosts"; } ;;
+*) usage 2 ;;
+esac

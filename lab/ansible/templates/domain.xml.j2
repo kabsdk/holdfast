@@ -1,0 +1,60 @@
+<domain type='kvm'>
+  <!-- {{ vm }} of the Holdfast lab {{ lab }}, defined once by lab/ansible/vms.yml. BIOS, since no <loader> is named
+       (every image of the lab boots that way, and BIOS keeps internal snapshots possible). Its disk is a qcow2 overlay
+       on the lab's copy of its image, and its cloud-init seed an ISO, both volumes of the pool {{ lab_pool }}. -->
+  <name>{{ lab_net }}-{{ vm }}</name>
+  <title>Holdfast lab {{ lab }}: {{ vm }}</title>
+  <metadata>
+    <!-- The SSH key this VM was made for: vms.yml refuses the VM when the lab's state holds another. -->
+    <hf:lab xmlns:hf='{{ lab_meta_ns }}'>
+      <hf:key>{{ lab_key_fingerprint }}</hf:key>
+    </hf:lab>
+  </metadata>
+  <memory unit='MiB'>{{ vms[vm].memory }}</memory>
+  <vcpu placement='static'>{{ vms[vm].cpus }}</vcpu>
+  <os>
+    <type arch='x86_64' machine='q35'>hvm</type>
+    <boot dev='hd'/>
+  </os>
+  <features>
+    <acpi/>
+    <apic/>
+  </features>
+  <cpu mode='host-passthrough'/>
+  <clock offset='utc'>
+    <timer name='rtc' tickpolicy='catchup'/>
+    <timer name='pit' tickpolicy='delay'/>
+    <timer name='hpet' present='no'/>
+  </clock>
+  <on_poweroff>destroy</on_poweroff>
+  <on_reboot>restart</on_reboot>
+  <on_crash>destroy</on_crash>
+  <devices>
+    <disk type='file' device='disk'>
+      <driver name='qemu' type='qcow2' discard='unmap'/>
+      <source file='{{ lab_pool_path }}/{{ lab_net }}-{{ vm }}.qcow2'/>
+      <target dev='vda' bus='virtio'/>
+    </disk>
+    <disk type='file' device='cdrom'>
+      <driver name='qemu' type='raw'/>
+      <source file='{{ lab_pool_path }}/{{ lab_net }}-{{ vm }}-seed.iso'/>
+      <target dev='sda' bus='sata'/>
+      <readonly/>
+    </disk>
+    <interface type='network'>
+      <mac address='{{ vms[vm].mac }}'/>
+      <source network='{{ lab_net }}'/>
+      <model type='virtio'/>
+    </interface>
+    <serial type='pty'>
+      <target port='0'/>
+    </serial>
+    <console type='pty'>
+      <target type='serial' port='0'/>
+    </console>
+    <rng model='virtio'>
+      <backend model='random'>/dev/urandom</backend>
+    </rng>
+    <memballoon model='virtio'/>
+  </devices>
+</domain>

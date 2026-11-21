@@ -1,0 +1,19 @@
+<network>
+  <!-- The Holdfast lab {{ lab }}'s NAT network. The host is .1, the gateway and DNS; libvirt's dnsmasq answers each of
+       the lab's names with its address (hosts.j2 has them too). The DHCP range is for a VM of your own: the lab's VMs
+       have fixed addresses outside it. -->
+  <name>{{ lab_net }}</name>
+  <forward mode='nat'/>
+  <bridge name='{{ lab_bridge }}' stp='on' delay='0'/>
+  <domain name='{{ lab_domain }}' localOnly='yes'/>
+  <dns>
+{% for vm, v in vms.items() %}
+    <host ip='{{ v.addresses[0] }}'><hostname>{{ vm }}.{{ lab_domain }}</hostname><hostname>{{ vm }}</hostname></host>
+{% endfor %}
+  </dns>
+  <ip address='{{ lab_gateway }}' netmask='255.255.255.0'>
+    <dhcp>
+      <range start='{{ network.dhcp.first }}' end='{{ network.dhcp.last }}'/>
+    </dhcp>
+  </ip>
+</network>

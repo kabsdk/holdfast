@@ -1,0 +1,76 @@
+---
+# A lab's files in its state directory, ${XDG_STATE_HOME:-~/.local/state}/holdfast/labs/<lab>/: its SSH key, lab.env
+# and inventory.yml, the names for /etc/hosts, the network's XML, and per VM its cloud-init seed and domain XML, which
+# records the key's fingerprint. Included by render.yml and vms.yml; it touches nothing outside the state directory.
+- name: Check the lab file's shape
+  ansible.builtin.assert:
+    that:
+      - lab_name == lab
+      - network.subnet == '10.%d.20.0/24' % (79 + index)
+      - vms.values() | selectattr('group', 'eq', 'storage') | list | length == 1
+      - vms.values() | selectattr('group', 'eq', 'server') | list | length == 1
+      - vms.values() | selectattr('group', 'eq', 'agent') | list | length > 0
+      - vms.values() | map(attribute='group') | difference(['storage', 'server', 'agent']) == []
+      - vms.keys() | reject('match', '^[a-z][a-z0-9]*$') | list == []
+      - vms.values() | map(attribute='addresses') | flatten | reject('match', lab_prefix ~ '\\.') | list == []
+      - vms.values() | map(attribute='mac') | reject('match', '^52:54:00:%02x:14:[0-9a-f]{2}$' % (79 + index)) | list == []
+      - vms.values() | map(attribute='image') | difference(images.keys()) == []
+      - images.values() | map(attribute='family') | difference(['debian', 'el']) == []
+      - "' ' not in lab_repo and ' ' not in lab_state"
+    fail_msg: >-
+      lab/labs/{{ lab }}.yml: lab_name is the file's, the subnet 10.<79+index>.20.0/24, one storage VM, one server VM and
+      agent VMs, VM names of lower-case letters and digits, every address in the subnet, every MAC
+      52:54:00:<79+index in hex>:14:xx, every image in images with a family debian or el; and neither the repository's
+      path ({{ lab_repo }}) nor the state's ({{ lab_state }}) has a space (Ansible's SSH arguments cannot take one)
+    quiet: true
+
+- name: Make the lab's state directory, private to you
+  ansible.builtin.file:
+    path: "{{ lab_state }}/{{ item }}"
+    state: directory
+    mode: "0700"
+  loop: [., seed, domains, credentials]
+
+- name: Make the lab's SSH key, once
+  ansible.builtin.command:
+    argv: [ssh-keygen, -q, -t, ed25519, -N, "", -C, "holdfast-lab-{{ lab }}", -f, "{{ lab_key }}"]
+    creates: "{{ lab_key }}"
+
+- name: Read the key's fingerprint, which each VM's domain records so up can refuse VMs made for another key
+  ansible.builtin.command:
+    argv: [ssh-keygen, -l, -E, sha256, -f, "{{ lab_key }}.pub"]
+  register: lab_key_print
+  changed_when: false
+
+- name: Keep the fingerprint
+  ansible.builtin.set_fact:
+    lab_key_fingerprint: "{{ lab_key_print.stdout.split()[1] }}"
+
+- name: Write lab.env, the inventory, the lab's names and the network's XML
+  ansible.builtin.template:
+    src: "{{ item.src }}"
+    dest: "{{ lab_state }}/{{ item.dest }}"
+    mode: "0644"
+  loop:
+    - {src: lab.env.j2, dest: lab.env}
+    - {src: inventory.yml.j2, dest: inventory.yml}
+    - {src: hosts.j2, dest: hosts}
+    - {src: network.xml.j2, dest: network.xml}
+
+- name: Make a seed directory for each VM
+  ansible.builtin.file:
+    path: "{{ lab_state }}/seed/{{ item }}"
+    state: directory
+    mode: "0700"
+  loop: "{{ vms.keys() | list }}"
+
+- name: Write each VM's cloud-init seed files and its domain XML
+  ansible.builtin.template:
+    src: "{{ item.1 }}.j2"
+    dest: "{{ lab_state }}/{{ 'domains/' ~ vm ~ '.xml' if item.1 == 'domain.xml' else 'seed/' ~ vm ~ '/' ~ item.1 }}"
+    mode: "0644"
+  vars:
+    vm: "{{ item.0 }}"
+  loop: "{{ vms.keys() | product(['user-data', 'meta-data', 'network-config', 'domain.xml']) | list }}"
+  loop_control:
+    label: "{{ item.0 }} {{ item.1 }}"

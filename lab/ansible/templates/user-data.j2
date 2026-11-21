@@ -1,0 +1,27 @@
+#cloud-config
+# {{ vm }}'s first boot in the Holdfast lab {{ lab }}, in its NoCloud seed. Root logs in with the lab's key only; the
+# lab's names are in /etc/hosts; on an EL VM SELinux stays enforcing. cloud-init runs this once and then turns itself
+# off, so a VM's settings never change at a later boot.
+hostname: {{ vm }}
+fqdn: {{ vm }}.{{ lab_domain }}
+prefer_fqdn_over_hostname: true
+manage_etc_hosts: false
+disable_root: false
+ssh_pwauth: false
+users:
+  - name: root
+    lock_passwd: true
+    ssh_authorized_keys:
+      - {{ lookup('ansible.builtin.file', lab_key ~ '.pub') | to_json }}
+write_files:
+  - path: /etc/hosts
+    owner: root:root
+    permissions: "0644"
+    content: |
+{% filter indent(6, true) %}{% include 'hosts.j2' %}{% endfilter %}
+runcmd:
+{% if images[vms[vm].image].family == 'el' %}
+  - grep -q '^SELINUX=enforcing$' /etc/selinux/config || sed -i 's/^SELINUX=.*/SELINUX=enforcing/' /etc/selinux/config
+  - test "$(getenforce)" = Enforcing || setenforce 1 || true
+{% endif %}
+  - touch /etc/cloud/cloud-init.disabled
