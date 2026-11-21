@@ -7,9 +7,11 @@
 #   - storage (s3a): MicroCeph, its loop-file OSDs and RGW; the users holdfast-maint (owns the bucket) and
 #     holdfast-provisioner (Admin Ops and IAM user policies); the bucket, versioned; awscli and s3req for experiments
 #   - server (hfsrv): PostgreSQL from AppStream, its database and user
-#   - server and agents: Holdfast's binaries in /usr/bin, restic in /usr/libexec/holdfast, the systemd units (not
-#     enabled: nothing is configured or enrolled)
-# Usage: ansible-playbook -i <state>/inventory.yml lab/ansible/site.yml -e lab=<lab> [--tags binaries -e lab_deploy=true]
+#   - server and agents: Holdfast's binaries in /usr/bin, restic in /usr/libexec/holdfast, the systemd units (the
+#     agents' not enabled: lab/lab test enrolls them); on the agents, the lab's fidelity tool in /usr/local/bin
+#   - server (hfsrv, tag hfserver): a TLS certificate from the lab's own CA (made in the lab's state), server.yaml, the
+#     maintenance key and the credentials key, and holdfast-server running, its /healthz answering over TLS
+# Usage: ansible-playbook -i <state>/inventory.yml lab/ansible/site.yml -e lab=<lab> [--tags binaries[,hfserver] -e lab_deploy=true]
 - name: The lab's credentials and what goes onto the VMs, on this host
   hosts: localhost
   connection: local
@@ -61,17 +63,17 @@
         fail_msg: "{{ lab_restic_cache }} has sha256 {{ lab_restic.stat.checksum }}, not {{ restic.sha256 }}: remove it, and lab/lab up fetches it again"
         quiet: true
 
-    - name: Read this checkout's binaries (make build)
+    - name: Read this checkout's binaries (make build, and the lab's fidelity tool)
       ansible.builtin.stat:
         path: "{{ lab_repo }}/bin/{{ item }}"
         get_checksum: false
       register: lab_bins
-      loop: [holdfast-server, holdfast, holdfast-freshness, holdfast-agent]
+      loop: [holdfast-server, holdfast, holdfast-freshness, holdfast-agent, hf-fidelity]
 
     - name: Refuse to go on without them
       ansible.builtin.assert:
         that: lab_bins.results | rejectattr('stat.exists') | list == []
-        fail_msg: "{{ lab_repo }}/bin/ lacks {{ lab_bins.results | rejectattr('stat.exists') | map(attribute='item') | join(', ') }}: CGO_ENABLED=0 make build"
+        fail_msg: "{{ lab_repo }}/bin/ lacks {{ lab_bins.results | rejectattr('stat.exists') | map(attribute='item') | join(', ') }}: CGO_ENABLED=0 make build && CGO_ENABLED=0 go build -o bin/hf-fidelity ./lab/fidelity (lab/lab up and deploy do both)"
         quiet: true
 
 - name: Every VM
@@ -515,6 +517,13 @@
       loop: "{{ hf_binaries }}"
       register: lab_bin
 
+    - name: The lab's fidelity tool (lab/fidelity, not shipped) in /usr/local/bin, on the agents
+      ansible.builtin.copy:
+        src: "{{ lab_repo }}/bin/hf-fidelity"
+        dest: /usr/local/bin/hf-fidelity
+        mode: "0755"
+      when: not is_server
+
     - name: The systemd units from deploy/systemd, not enabled
       ansible.builtin.copy:
         src: "{{ lab_repo }}/deploy/systemd/{{ item }}"
@@ -553,3 +562,118 @@
     - name: Say it
       ansible.builtin.debug:
         msg: "{{ hf_units | zip(lab_enabled.stdout_lines) | map('join', ': ') | join(', ') }}"
+
+# The server as an admin would set it up (deploy/examples/server.yaml, docs/storage.md): TLS from the lab's own CA, the
+# maintenance key, no provisioner command (each host's RGW key is the lab's, given with holdfast host add). lab/lab up
+# runs it with the rest, and lab/lab test runs it before every test (--tags binaries,hfserver).
+- name: The Holdfast server, configured and running
+  hosts: server
+  gather_facts: false
+  tags: [hfserver]
+  vars_files:
+    - "../labs/{{ lab }}.yml"
+    - lab-vars.yml
+  vars:
+    hf_ca_sha256: "{{ lab_ca_run.stdout | regex_search('(?m)^pin ([0-9a-f]{64})$', '\\1') | first }}"
+  handlers:
+    - name: Restart holdfast-server
+      ansible.builtin.systemd:
+        name: holdfast-server
+        state: restarted
+  tasks:
+    - name: The lab's CA, and a certificate from it for {{ lab_server_fqdn }} (lab/ansible/files/lab-ca.sh, in the lab's state)
+      ansible.builtin.command:
+        argv: [bash, "{{ playbook_dir }}/files/lab-ca.sh", "{{ lab_ca }}", "Holdfast lab {{ lab }} CA", "{{ lab_server_fqdn }}",
+               "DNS:{{ lab_server_fqdn }}, DNS:{{ lab_server_vm }}, IP:{{ vms[lab_server_vm].addresses[0] }}"]
+      delegate_to: localhost
+      register: lab_ca_run
+      changed_when: lab_ca_run.stdout is search('(?m)^made ')
+
+    - name: Refuse a pin that is not a sha256
+      ansible.builtin.assert:
+        that: hf_ca_sha256 is match('^[0-9a-f]{64}$')
+        fail_msg: "lab-ca.sh printed no pin: {{ lab_ca_run.stdout }}"
+        quiet: true
+
+    - name: Make /etc/holdfast/tls, root's own
+      ansible.builtin.file:
+        path: /etc/holdfast/tls
+        state: directory
+        mode: "0700"
+
+    - name: The server's certificate with the CA's after it, its key (0600), and the CA's certificate
+      ansible.builtin.copy:
+        src: "{{ lab_ca }}/{{ item.src }}"
+        dest: "/etc/holdfast/tls/{{ item.dest }}"
+        mode: "{{ item.mode }}"
+      loop:
+        - {src: "{{ lab_server_fqdn }}.chain.crt", dest: server.crt, mode: "0644"}
+        - {src: "{{ lab_server_fqdn }}.key", dest: server.key, mode: "0600"}
+        - {src: ca.crt, dest: ca.crt, mode: "0644"}
+      loop_control:
+        label: "{{ item.dest }}"
+      diff: false
+      notify: Restart holdfast-server
+
+    - name: The maintenance key, holdfast-maint's (/etc/holdfast/maintenance.env, 0600)
+      ansible.builtin.copy:
+        src: "{{ lab_creds }}/holdfast-maint.env"
+        dest: /etc/holdfast/maintenance.env
+        mode: "0600"
+      diff: false
+      notify: Restart holdfast-server
+
+    - name: The credentials key, made once on the server (holdfast-server keygen)
+      ansible.builtin.command:
+        argv: [/usr/bin/holdfast-server, keygen, /etc/holdfast/credentials.key]
+        creates: /etc/holdfast/credentials.key
+      notify: Restart holdfast-server
+
+    - name: /etc/holdfast/server.yaml (0600)
+      ansible.builtin.template:
+        src: server.yaml.j2
+        dest: /etc/holdfast/server.yaml
+        mode: "0600"
+      notify: Restart holdfast-server
+
+    - name: Restart holdfast-server now if any of that changed
+      ansible.builtin.meta: flush_handlers
+
+    - name: Start it, and at every boot
+      ansible.builtin.systemd:
+        name: holdfast-server
+        state: started
+        enabled: true
+
+    - name: Check that it serves
+      block:
+        - name: Wait for its /healthz over TLS, the certificate checked against the lab's CA
+          ansible.builtin.uri:
+            url: "https://{{ lab_server_fqdn }}:8443/healthz"
+            ca_path: /etc/holdfast/tls/ca.crt
+            status_code: 200
+          register: lab_healthz
+          retries: 24
+          delay: 5
+          until: lab_healthz.status == 200
+
+        - name: holdfast status, as root over the API socket
+          ansible.builtin.command:
+            argv: [holdfast, status]
+          register: lab_hf_status
+          changed_when: false
+      rescue:
+        - name: Read the server's journal
+          ansible.builtin.command:
+            argv: [journalctl, -u, holdfast-server, -n, "40", --no-pager, -o, cat]
+          register: lab_hf_journal
+          changed_when: false
+          failed_when: false
+
+        - name: Say why it does not serve
+          ansible.builtin.fail:
+            msg: "holdfast-server on {{ inventory_hostname }} does not serve. Its journal:\n{{ lab_hf_journal.stdout }}"
+
+    - name: Say it
+      ansible.builtin.debug:
+        msg: "{{ lab_hf_status.stdout }}; https://{{ lab_server_fqdn }}:8443, agents pin ca_sha256 {{ hf_ca_sha256 }}"

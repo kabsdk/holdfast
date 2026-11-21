@@ -15,6 +15,7 @@ import (
 	"syscall"
 
 	"github.com/kabsdk/holdfast/internal/agent"
+	"github.com/kabsdk/holdfast/internal/restic"
 )
 
 func main() {
@@ -53,7 +54,7 @@ func enroll(args []string, log *slog.Logger) error {
 	fs.StringVar(&c.CASHA256, "ca-sha256", "", "pin the server's certificate chain to this sha256")
 	fs.StringVar(&c.StateDir, "state-dir", "", "state directory (default /var/lib/holdfast-agent)")
 	fs.StringVar(&c.CredentialsDir, "credentials-dir", "", "credentials directory (default /etc/holdfast/credentials)")
-	fs.StringVar(&c.ResticBin, "restic", "", "path to restic (default: restic on PATH)")
+	fs.StringVar(&c.ResticBin, "restic", "", "path to restic (default: "+restic.DefaultBin+", where the agent's package puts it)")
 	fs.DurationVar(&c.PollTimeout, "poll-timeout", 0, "long-poll timeout (default 25s)")
 	fs.DurationVar(&c.Tick, "tick", 0, "scheduler resolution (default 1s)")
 	code := fs.String("code", "", "the single-use enrollment code")

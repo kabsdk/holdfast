@@ -34,6 +34,10 @@ lab_rgw_port_suffix: "{{ '' if storage.rgw_port | int == 80 else ':' ~ storage.r
 lab_rgw_url: "http://{{ lab_storage_vm }}.{{ lab_domain }}{{ lab_rgw_port_suffix }}"
 lab_rgw_url_host: "http://{{ vms[lab_storage_vm].addresses[0] }}{{ lab_rgw_port_suffix }}"
 lab_restic_cache: "{{ lookup('ansible.builtin.env', 'HOLDFAST_CACHE', default=lab_home ~ '/.cache/holdfast') }}/restic-{{ restic.version }}"
+# The Holdfast server's name, which its certificate carries and agents enroll against, and the lab's own CA, kept in
+# the lab's state (ca/: ca.key and the server's key 0600; ca.sha256 is the pin agents check).
+lab_server_fqdn: "{{ lab_server_vm }}.{{ lab_domain }}"
+lab_ca: "{{ lab_state }}/ca"
 
 # The x86-64 levels by the flags /proc/cpuinfo shows for them (pni is SSE3, abm LZCNT), and those this host has.
 lab_cpu_levels:

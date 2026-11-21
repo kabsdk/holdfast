@@ -191,6 +191,32 @@ func TestEventsAreStoredOnce(t *testing.T) {
 	}
 }
 
+// TestRepositoryKeys (decision 032): the keys of a repository Holdfast made are known; a later one is
+// foreign until acknowledged; a repository made again after the old one was lost starts over, so its new
+// key is not flagged.
+func TestRepositoryKeys(t *testing.T) {
+	s, ctx := testStore(t), context.Background()
+	q := s.Q()
+	now := time.Date(2026, 11, 21, 12, 0, 0, 0, time.UTC)
+	r, _ := q.SaveRevision(ctx, SaveRevision{Base: 0, Actor: "local:root", Source: "cli", Message: "add", Config: docWith("web01.example.com")})
+	must(t, q.CreateHost(ctx, "web01.example.com", r.Number, now))
+	if again, err := q.ResetRepositoryKeys(ctx, "web01.example.com", []string{"k1"}); err != nil || again {
+		t.Fatalf("first init: again=%v %v", again, err)
+	}
+	if foreign, fresh, _ := q.RecordRepositoryKeys(ctx, "web01.example.com", []string{"k1", "k2"}); len(foreign) != 1 || len(fresh) != 1 {
+		t.Fatalf("a key added outside: foreign %v, fresh %v", foreign, fresh)
+	}
+	if _, fresh, _ := q.RecordRepositoryKeys(ctx, "web01.example.com", []string{"k1", "k2"}); len(fresh) != 0 {
+		t.Fatalf("the same foreign key is reported as new twice: %v", fresh)
+	}
+	if again, err := q.ResetRepositoryKeys(ctx, "web01.example.com", []string{"k9"}); err != nil || !again {
+		t.Fatalf("init again: again=%v %v", again, err)
+	}
+	if foreign, _, _ := q.RecordRepositoryKeys(ctx, "web01.example.com", []string{"k9"}); len(foreign) != 0 {
+		t.Fatalf("the key of a repository Holdfast made again is flagged: %v", foreign)
+	}
+}
+
 func TestAuditIsAppendOnly(t *testing.T) {
 	s, ctx := testStore(t), context.Background()
 	q := s.Q()

@@ -28,6 +28,10 @@ import (
 // RESTIC_VERSION in the Makefile.
 const PinnedVersion = "0.19.1"
 
+// DefaultBin is where the agent's and the server's packages put that restic (decision 032). It is the
+// default of restic_bin in agent.yaml and server.yaml.
+const DefaultBin = "/usr/libexec/holdfast/restic"
+
 // Exit codes documented by restic.
 const (
 	ExitOK         = 0
@@ -136,13 +140,15 @@ func (r Runner) Version(ctx context.Context) (string, error) {
 	return f[1], nil
 }
 
-// Init creates the repository unless it exists already.
-func (r Runner) Init(ctx context.Context) error {
+// Init creates the repository unless it exists already, and says whether it created it.
+func (r Runner) Init(ctx context.Context) (created bool, err error) {
 	if _, err := r.run(ctx, "cat", "config"); err == nil {
-		return nil
+		return false, nil
 	}
-	_, err := r.run(ctx, "init")
-	return err
+	if _, err := r.run(ctx, "init"); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // BackupOptions describes one backup run.

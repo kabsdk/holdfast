@@ -10,6 +10,7 @@ import (
 	"go.yaml.in/yaml/v3"
 
 	"github.com/kabsdk/holdfast/internal/proto"
+	"github.com/kabsdk/holdfast/internal/restic"
 )
 
 // Config is /etc/holdfast/agent.yaml, written by `holdfast-agent enroll`.
@@ -47,6 +48,9 @@ func (c *Config) Defaults() {
 	}
 	if c.Restore.Root == "" {
 		c.Restore.Root = "/var/restore"
+	}
+	if c.ResticBin == "" {
+		c.ResticBin = restic.DefaultBin // where the agent's package puts the pinned restic (decision 032)
 	}
 }
 

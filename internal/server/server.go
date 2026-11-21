@@ -446,21 +446,36 @@ func (s *Server) initRepository(ctx context.Context, fqdn string) error {
 		return err
 	}
 	defer cleanup()
-	if err := r.Init(ctx); err != nil {
+	created, err := r.Init(ctx)
+	if err != nil {
 		return fmt.Errorf("initialising the repository of %s: %w", fqdn, err)
 	}
-	// The keys the repository has now are Holdfast's own: any later one was added outside it (decision 032).
+	if !created {
+		return nil
+	}
+	// Holdfast made this repository, so its keys are Holdfast's own; a later one was added outside it
+	// (decision 032). A repository made again, after the old one was lost, starts over in the same way, and
+	// the audit log says so.
 	r.NoLock = true
+	var ids []string
 	if keys, err := r.Keys(ctx); err == nil {
-		ids := make([]string, 0, len(keys))
 		for _, k := range keys {
 			ids = append(ids, k.ID)
 		}
-		if _, _, err := s.st.Q().RecordRepositoryKeys(ctx, fqdn, ids); err != nil {
-			s.log.Warn("recording the repository's keys", "host", fqdn, "err", err)
-		}
+	} else {
+		s.log.Warn("listing the new repository's keys", "host", fqdn, "err", err)
 	}
-	return nil
+	return s.st.InTx(ctx, func(q *store.Q) error {
+		again, err := q.ResetRepositoryKeys(ctx, fqdn, ids)
+		if err != nil {
+			return err
+		}
+		detail := map[string]any{"repository": r.Repo, "again": again}
+		if again {
+			s.log.Warn("the repository was gone, so Holdfast initialised it again", "host", fqdn)
+		}
+		return q.Audit(ctx, store.AuditEntry{Actor: systemActor.Name, Source: systemActor.Source, Action: "repository.initialised", FQDN: fqdn, Detail: detail})
+	})
 }
 
 // SetS3KeyInput replaces a host's S3 key.

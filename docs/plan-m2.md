@@ -14,9 +14,16 @@ should change.
 
 | Search: hosts, jobs, and snapshot IDs including tombstones (spec §5.6) | e2e, in `TestSnapshotCatalogueAndReads` |
 
-**Remaining for M2**
-- The lab VM run (Q9), which is M2's "done when": the lab server, enrolling the three VMs, and the
-  fidelity test on each (`lab/fidelity`).
+| **M2's "done when", on the lab VMs** (Q9). `lab/lab test m1`: a backup and a restore through Holdfast keep all 13 metadata properties on Ubuntu 24.04, AlmaLinux 9.8 and Oracle Linux 9.8 (UEK), against Ceph RGW 19.2.3, with SELinux enforcing on the last two and no AVC denials: 39 of 39 | `lab/test-fidelity.sh`, with `lab/fidelity` |
+
+**M2 is complete.** The lab run found two product bugs, both fixed:
+- The printed install command did not give the agent restic's path, and the agent had no default. The
+  agent and the server now default `restic_bin` to `/usr/libexec/holdfast/restic`, where the package puts
+  the pinned restic (decision 032).
+- A repository that Holdfast initialised again, after the old one was lost, had its new key flagged as
+  added outside Holdfast, and the re-initialisation was not audited. Initialising a repository now makes
+  its keys the known ones, and it is audited as `repository.initialised`, with `again` set the second
+  time. Covered by `TestRepositoryKeys`.
 
 **Left for M4.** Spec §5.4's "Restore both versions to diff on the host" is two restores of one path,
 each with `--include`, into new directories. The UI makes them with two API calls and shows the `diff -u`

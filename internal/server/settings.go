@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"go.yaml.in/yaml/v3"
+
+	"github.com/kabsdk/holdfast/internal/restic"
 )
 
 // Settings is /etc/holdfast/server.yaml. Changing it needs root on the server; a reload is audited.
@@ -97,6 +99,9 @@ func (s *Settings) defaults() {
 	}
 	if s.DefaultZone == "" {
 		s.DefaultZone = "UTC"
+	}
+	if s.ResticBin == "" {
+		s.ResticBin = restic.DefaultBin // where the server's package puts the pinned restic (decision 032)
 	}
 	if s.Maintenance.Check == "" {
 		s.Maintenance.Check = CheckDaily

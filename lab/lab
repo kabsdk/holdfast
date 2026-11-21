@@ -5,11 +5,17 @@
 # Usage: lab/lab <command> <lab> [arguments]
 #   doctor <lab>             check this host for what the lab needs, and say how to get what lacks
 #   up <lab>                 make the lab ready: its VMs made or started (lab/ansible/vms.yml), this checkout built
-#                            (CGO_ENABLED=0 make build), every VM provisioned (lab/ansible/site.yml: MicroCeph and RGW
-#                            on s3a, PostgreSQL on hfsrv, Holdfast's binaries and restic on hfsrv and the agents), then
-#                            checked. Run it again after a failure: it resumes; on a ready lab it changes nothing
-#   deploy <lab>             build this checkout (CGO_ENABLED=0 make build) and install its binaries on hfsrv and the
-#                            agents, restarting the Holdfast services that run there
+#                            (CGO_ENABLED=0 make build, and lab/fidelity as bin/hf-fidelity), every VM provisioned
+#                            (lab/ansible/site.yml: MicroCeph and RGW on s3a, PostgreSQL on hfsrv, Holdfast's binaries
+#                            and restic on hfsrv and the agents, holdfast-server configured with the lab's CA and
+#                            running), then checked. Run it again after a failure: it resumes; on a ready lab it changes
+#                            nothing
+#   deploy <lab>             build this checkout (as up does) and install its binaries on hfsrv and the agents
+#                            (hf-fidelity in /usr/local/bin on the agents), restarting the Holdfast services that run there
+#   test <lab> [<vm>...]     M2's "done when", the fidelity test (lab/test-fidelity.sh): build and deploy this checkout,
+#                            provision the server (site.yml --tags binaries,hfserver), then on each agent VM (or those
+#                            named) back up the metadata fixture and restore it through Holdfast, enrolling the agent
+#                            first, and compare the 13 properties; the table is in <state>/test-fidelity.txt
 #   status <lab> [--json]    the lab's state: absent, off, ready or broken, with its VMs, what each answered, the RGW
 #                            endpoint, the credentials' files and why it is not ready
 #   ssh <lab> <vm> [command] SSH to a VM as root with the lab's key
@@ -25,11 +31,11 @@
 # The lab's state (its key, credentials, lab.env, inventory, lock and runs) is in
 # ${XDG_STATE_HOME:-~/.local/state}/holdfast/labs/<lab>/, outside the checkout, so every checkout sees the same lab;
 # the images are cached in ~/.cache/holdfast-lab. Every libvirt object the lab makes is named hf-<lab>-*.
-# up, deploy, isolation, stop and destroy hold the lab's lock, and exit 75 at once, naming the holder, when another
-# command holds it; --wait [<seconds>] right after the lab's name waits instead. They print a line per step and write
-# everything to <state>/runs/<UTC time>-<command>/log (destroy's beside the state, which it removes).
-# Exit codes: 0 done (status: ready); 1 a step failed (the log says which); 2 refused or misused; 3 the lab is not
-# there, off or broken; 75 busy.
+# up, deploy, test, isolation, stop and destroy hold the lab's lock, and exit 75 at once, naming the holder, when
+# another command holds it; --wait [<seconds>] right after the lab's name waits instead. They print a line per step and
+# write everything to <state>/runs/<UTC time>-<command>/log (destroy's beside the state, which it removes).
+# Exit codes: 0 done (status: ready; test: every property kept on every VM); 1 a step failed (the log says which), or
+# test found a property lost; 2 refused or misused; 3 the lab is not there, off or broken; 75 busy.
 set -euo pipefail
 self=$(cd "$(dirname "$0")" && pwd)/$(basename "$0")
 cd "$(dirname "$self")/.."
@@ -46,7 +52,7 @@ v() { virsh -c qemu:///system "$@"; }
 doms() { v list --all --name | grep "^$net-" || true; }
 ssh_opts() { echo -i "$state/id_ed25519" -o IdentitiesOnly=yes -o "UserKnownHostsFile=$state/known_hosts" -o StrictHostKeyChecking=accept-new -o LogLevel=ERROR; }
 
-case $cmd in up | deploy | isolation | stop | destroy)
+case $cmd in up | deploy | test | isolation | stop | destroy)
 	if [[ ${HF_LAB_LOCK_HELD:-} != "$lock" ]]; then
 		[[ $cmd == up || -d $state ]] || { echo "lab: the lab $lab is not there (lab/lab up $lab)" >&2; exit 3; }
 		wait=(-n) && hint=" (lab/lab $cmd $lab --wait [<seconds>] waits for it)"
@@ -70,6 +76,10 @@ case $cmd in up | deploy | isolation | stop | destroy)
 		isolation)
 			[[ ($# == 1 && $1 == account) || (($# == 1 || ($# == 2 && $2 == --maint-policy)) && ($1 == user-policy || $1 == bucket-policy)) ]] ||
 				{ echo "lab: isolation $lab takes account, or user-policy or bucket-policy and --maint-policy, not '$*'" >&2; exit 2; } ;;
+		test)
+			for a in "$@"; do
+				[[ $a =~ ^[a-z0-9]+$ ]] || { echo "lab: test $lab takes --wait [<seconds>] and agent VMs' names, not '$*'" >&2; exit 2; }
+			done ;;
 		*) (($# == 0)) || { echo "lab: $cmd $lab takes --wait [<seconds>], not '$*'" >&2; exit 2; } ;;
 		esac
 		mkdir -p "$state" && chmod 0700 "$state"
@@ -113,8 +123,9 @@ play() {
 	((rc == 0)) || exit 1
 }
 build() {
-	step "this checkout's binaries (CGO_ENABLED=0 make build: static, for every VM's libc)"
+	step "this checkout's binaries (CGO_ENABLED=0 make build: static, for every VM's libc), and the lab's bin/hf-fidelity"
 	CGO_ENABLED=0 make -s build || exit 1
+	CGO_ENABLED=0 go build -o bin/hf-fidelity ./lab/fidelity || exit 1
 }
 
 # probe prints the lab's state, as status reports it and up checks it: "state <absent|off|ready|broken>", then
@@ -145,9 +156,11 @@ probe() {
 			c+="; echo postgresql \$(systemctl is-active postgresql)"
 			for bin in holdfast-server holdfast holdfast-freshness; do c+="; echo bin-$bin \$(sha256sum /usr/bin/$bin 2>/dev/null | cut -c1-64)"; done
 			for u in holdfast-server holdfast-freshness; do c+="; echo unit-$u \$(systemctl is-enabled $u 2>/dev/null)"; done
+			c+="; echo holdfast-server \$(systemctl is-active holdfast-server 2>/dev/null)"
 		elif [[ $vm != "$HF_STORAGE_VM" ]]; then
 			c+="; echo bin-holdfast-agent \$(sha256sum /usr/bin/holdfast-agent 2>/dev/null | cut -c1-64)"
 			c+="; echo unit-holdfast-agent \$(systemctl is-enabled holdfast-agent 2>/dev/null)"
+			c+="; echo holdfast-agent \$(systemctl is-active holdfast-agent 2>/dev/null)"
 		fi
 		ip=HF_VM_IP_$vm
 		# shellcheck disable=SC2046
@@ -167,6 +180,8 @@ probe() {
 		fi
 		[[ ${got[$vm.restic]:-} == "$HF_RESTIC_VERSION" ]] || reasons+=("$vm has restic '${got[$vm.restic]:-}', not $HF_RESTIC_VERSION")
 		[[ $vm != "$HF_SERVER_VM" || ${got[$vm.postgresql]:-} == active ]] || reasons+=("PostgreSQL on $vm is ${got[$vm.postgresql]:-unknown}")
+		[[ $vm != "$HF_SERVER_VM" || ${got[$vm.holdfast-server]:-} == active ]] ||
+			notes+=("holdfast-server on $vm is ${got[$vm.holdfast-server]:-unknown}, not active (lab/lab up $lab configures and starts it)")
 		for k in "${!got[@]}"; do
 			[[ $k == "$vm".bin-* ]] || continue
 			bin=${k#"$vm".bin-}
@@ -233,6 +248,17 @@ deploy)
 	play site.yml "$state/inventory.yml" --tags binaries -e lab_deploy=true
 	resume="lab/lab deploy $lab again"
 	check ;;
+test)
+	out=$(probe)
+	st=$(sed -n 's/^state //p' <<<"$out")
+	[[ $st == ready ]] || { echo "lab: the lab $lab is $st, not ready: lab/lab up $lab first (lab/lab status $lab says why)" >&3; exit 3; }
+	resume="lab/lab test $lab $* runs it again"
+	build
+	step "installing the binaries, and the Holdfast server's TLS, settings and service (site.yml --tags binaries,hfserver)"
+	play site.yml "$state/inventory.yml" --tags binaries,hfserver -e lab_deploy=true
+	step "the fidelity test through Holdfast: lab/test-fidelity.sh $lab $*"
+	shown=1
+	bash lab/test-fidelity.sh "$lab" "$@" ;;
 isolation)
 	out=$(probe)
 	st=$(sed -n 's/^state //p' <<<"$out")

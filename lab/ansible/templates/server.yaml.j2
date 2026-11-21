@@ -1,0 +1,28 @@
+# /etc/holdfast/server.yaml on {{ inventory_hostname }}, the lab {{ lab }}'s Holdfast server: written by lab/ansible/site.yml
+# (do not edit here; a change is made there and lab/lab up applies it). No secret is in this file, only the files that
+# hold them, each root-only. deploy/examples/server.yaml explains every setting.
+listen: ":8443"
+public_url: https://{{ lab_server_fqdn }}:8443
+tls:
+  cert_file: /etc/holdfast/tls/server.crt   # the server's certificate, then the lab CA's (lab_state/ca/)
+  key_file: /etc/holdfast/tls/server.key
+ca_sha256: "{{ hf_ca_sha256 }}"   # the lab CA's certificate (DER), which agents pin
+api_socket: /run/holdfast/api.sock
+
+database_dsn_file: /etc/holdfast/db.dsn
+credentials_key_file: /etc/holdfast/credentials.key   # holdfast-server keygen, once
+state_dir: /var/lib/holdfast-server
+restic_bin: /usr/libexec/holdfast/restic
+default_zone: UTC
+
+storage:
+  endpoint: {{ lab_rgw_url }}
+  bucket: {{ storage.bucket }}
+  region: {{ storage.region }}
+  maintenance_credentials_file: /etc/holdfast/maintenance.env   # holdfast-maint's key
+  # No provisioner_command: each host's RGW key is the lab's (lab/rgw-documented-layout.sh), given with
+  # holdfast host add --s3-key-file (decision 029).
+
+maintenance:
+  check: daily
+  check_cycle_days: 30

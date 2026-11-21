@@ -190,6 +190,18 @@ func (q *Q) RecordRepositoryKeys(ctx context.Context, fqdn string, ids []string)
 	return foreign, fresh, err
 }
 
+// ResetRepositoryKeys makes ids the known keys of a repository that Holdfast has just initialised. It
+// reports whether the host had known keys before, which means the repository was initialised again after
+// the old one was lost.
+func (q *Q) ResetRepositoryKeys(ctx context.Context, fqdn string, ids []string) (again bool, err error) {
+	var known []string
+	if err := q.db.QueryRow(ctx, `SELECT repo_keys_known FROM hosts WHERE fqdn = $1`, fqdn).Scan(&known); err != nil {
+		return false, notFound(err)
+	}
+	_, err = q.db.Exec(ctx, `UPDATE hosts SET repo_keys_known = $2, repo_keys_foreign = '{}' WHERE fqdn = $1`, fqdn, nonNil(ids))
+	return len(known) > 0, err
+}
+
 // AcknowledgeRepositoryKeys accepts a host's foreign keys as known, which clears that banner. It returns
 // how many it accepted.
 func (q *Q) AcknowledgeRepositoryKeys(ctx context.Context, fqdn string) (int, error) {
