@@ -33,7 +33,29 @@ proposal. Each sits behind an interface where that matters, so it can change. **
 | Q12 (tags and job IDs) | Tags are `job=<id>` only. The job ID is an immutable slug. |
 | Q13 (built-in excludes) | The restic cache and the agent's state directory are always excluded. Database directories are handled in profiles (M5). |
 | Q14 (stack) | Go 1.26, module `github.com/kabsdk/holdfast`, `pgx/v5`, `go.yaml.in/yaml/v3`, `minio-go/v7`, `cobra`. |
-| Q15 (CI S3) | MinIO pinned by digest for e2e. The RGW storage-isolation test runs in the lab. |
+| Q15 (CI S3) | MinIO pinned by digest for e2e. The RGW storage-isolation test runs in the lab. **Update:** MinIO's images have left Docker Hub and quay.io entirely, so `make e2e` uses Chainguard's from-source rebuilds (`cgr.dev/chainguard/minio` and `minio-client`), pinned by digest. |
+
+### Progress (2026-11-21, branch `m1`)
+
+| Done and tested | Tests |
+| --- | --- |
+| Schedule evaluator, including time zones and daylight saving; config document; structural validation | unit |
+| restic wrapper (no forget or prune), agent protocol types | unit, with a fake restic |
+| PostgreSQL store: append-only revisions, `host_desired`, enrollment codes, events stored once, audit | integration, real PostgreSQL 17 |
+| Server: API-first `/api/v1` on a root-only socket, agent protocol, enrollment, long-poll wake-up through LISTEN/NOTIFY, drift, metrics, check-only maintenance | integration |
+| Agent: schedule and spread, catch-up once, skip when overlapping, spool, interrupted runs, commands run once | in-process against the server |
+| CLI (`holdfast`) as a thin API client; storage witness; alert rules | promtool |
+| e2e: fidelity with escrow, server outage, storage isolation, witness | real restic 0.19.1, MinIO, PostgreSQL |
+
+**Found and fixed along the way**
+- The metric label `job` collides with Prometheus's own scrape label, so it is now `job_id`. The PoC had the same bug.
+- `--retry-lock` must come before the restic subcommand. Placed after `--`, restic would have backed it up as a path.
+- An agent killed during its very first backup would never have run that job again.
+
+**Remaining for M1**
+- e2e: killed backup with an S3 throttling proxy (PoC test 3); exactly-once delivery with a proxy that drops responses; revisions, diffs and drift; enrollment expiry and refusals; schedule slot alignment; no credential leaks in logs, CLI output or metrics; `holdfast check`.
+- TLS on the agent listener, and a test of certificate pinning.
+- An RGW provisioner, and a lab in the style of Clusterlane: S3 in dc-a and dc-b, holdfast-server, a vault host and agents. The storage-isolation test also runs there against real RGW.
 
 Spec: [spec.md](spec.md). Working rules: [../CLAUDE.md](../CLAUDE.md). Undecided topics:
 [open-questions.md](open-questions.md).
