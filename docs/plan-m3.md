@@ -1,6 +1,7 @@
 # Plan for M3: checks, retention, the 7-day protection, Prune now, Delete snapshot
 
-Status: proposed, 2026-11-21. **No M3 code is written until the questions in §6 are answered.**
+Status: accepted, 2026-11-21. You left the questions in §6 to me ("You decide, continue"), so every proposal
+stands as written. That includes Q3, which decides OQ2: there is a list of past prunes per host.
 
 ## 1. Goal and done when
 

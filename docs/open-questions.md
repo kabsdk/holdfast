@@ -49,6 +49,10 @@ decisions D1–D10 for you to make. Nothing is decided.
 
 ## OQ2. A "Prunes" history list
 
+> **Decided on 2026-11-21 (plan-m3 Q3; you left it to me):** yes. Each host has a list of its prunes, both
+> scheduled ones and Prune now. Each entry shows when, which kind, who, how many snapshots were forgotten and
+> the bytes freed.
+
 A list of prunes, both manual (Prune now) and scheduled, under Config history.
 
 **Touches:** M3, the Prune now records.

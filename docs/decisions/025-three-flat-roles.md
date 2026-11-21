@@ -1,6 +1,8 @@
 # 025: Three roles with flat permission sets
 
-Status: accepted, 2026-11-21
+Status: accepted, 2026-11-21. Refined by [decision 033](033-what-each-role-sees.md): `view` is split into
+`view` (existence and status) and `browse` (file names, for editors and admins), and a host without a
+binding is invisible.
 
 ## Decision
 

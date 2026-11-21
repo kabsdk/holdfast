@@ -409,7 +409,8 @@ There are three roles. Each has a flat set of permissions, and roles do not inhe
 
 | Permission | viewer | editor | admin |
 | --- | :-: | :-: | :-: |
-| `view` | ✓ | ✓ | ✓ |
+| `view`: hosts, jobs, schedule, retention, status, history, alerts | ✓ | ✓ | ✓ |
+| `browse`: file names and metadata (Files, Changes, Find, restore targets) | | ✓ | ✓ |
 | `backup.run` | | ✓ | ✓ |
 | `restore.new_dir` | | ✓ | ✓ |
 | `config.jobs` | | ✓ | ✓ |
@@ -420,7 +421,8 @@ There are three roles. Each has a flat set of permissions, and roles do not inhe
 | `config.storage` | | | ✓ |
 | remove host / job | | | ✓ |
 
-A user can have several bindings. They combine per host.
+A user can have several bindings. They combine per host. **A host you have no binding for does not exist
+for you:** it is not listed, not searchable and not counted (decision 033). Nobody sees file contents.
 
 ### 6.3 Default bindings
 
