@@ -133,6 +133,34 @@ func (q *Q) ListMaintenanceRuns(ctx context.Context, fqdn string, limit int) ([]
 	return out, rows.Err()
 }
 
+// RunHealth is, for one host, how its forgets and prunes have gone: for the metrics.
+type RunHealth struct {
+	FQDN        string
+	LastFailed  bool       // the newest finished run failed
+	LastSuccess *time.Time // when a run last finished well
+}
+
+// RetentionHealth returns RunHealth for every host that has had a run.
+func (q *Q) RetentionHealth(ctx context.Context) ([]RunHealth, error) {
+	rows, err := q.db.Query(ctx, `SELECT l.fqdn, l.status = 'failed',
+		(SELECT max(finished_at) FROM maintenance_runs s WHERE s.fqdn = l.fqdn AND s.status = 'success')
+		FROM (SELECT DISTINCT ON (fqdn) fqdn, status FROM maintenance_runs WHERE status <> 'running' ORDER BY fqdn, started_at DESC, id DESC) l
+		ORDER BY l.fqdn`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []RunHealth
+	for rows.Next() {
+		var h RunHealth
+		if err := rows.Scan(&h.FQDN, &h.LastFailed, &h.LastSuccess); err != nil {
+			return nil, err
+		}
+		out = append(out, h)
+	}
+	return out, rows.Err()
+}
+
 // LastScheduledRun returns when the host's last daily run started, or nil.
 func (q *Q) LastScheduledRun(ctx context.Context, fqdn string) (*time.Time, error) {
 	var t *time.Time

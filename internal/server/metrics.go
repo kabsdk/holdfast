@@ -125,6 +125,18 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 			fmt.Fprintf(&b, "holdfast_maintenance_last_success_timestamp_seconds{host=%q,kind=\"check\"} %s\n", f, ts(&t))
 		}
 	}
+	if runs, err := q.RetentionHealth(ctx); err == nil {
+		gauge("holdfast_retention_last_run_failed", "1 if the host's newest finished forget-and-prune failed, such as a repository check that blocked the prune.")
+		gauge("holdfast_retention_last_success_timestamp_seconds", "When a forget-and-prune on the host last finished well.")
+		for _, h := range runs {
+			failed := 0
+			if h.LastFailed {
+				failed = 1
+			}
+			fmt.Fprintf(&b, "holdfast_retention_last_run_failed{host=%q} %d\n", h.FQDN, failed)
+			fmt.Fprintf(&b, "holdfast_retention_last_success_timestamp_seconds{host=%q} %s\n", h.FQDN, ts(h.LastSuccess))
+		}
+	}
 	gauge("holdfast_snapshots", "Snapshots in the host's repository, from the catalogue.")
 	gauge("holdfast_snapshots_not_made_by_holdfast", "Snapshots in the repository that no agent reported (decision 032).")
 	gauge("holdfast_snapshots_disappeared", "Snapshots gone from the repository without Holdfast deleting them, not yet acknowledged.")

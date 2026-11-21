@@ -128,6 +128,14 @@ groups:
         annotations:
           summary: "{{ $labels.host }}: a restic password was added to its repository outside Holdfast (holdfast host show {{ $labels.host }})"
 
+      - alert: HoldfastRetentionFailing
+        # The host's last forget-and-prune failed. A repository check that fails before the prune blocks it
+        # (plan-m3 Q2), which can mean damage in the repository. The daily run tries again the next day.
+        expr: holdfast_retention_last_run_failed == 1
+        labels: {severity: ticket}
+        annotations:
+          summary: "{{ $labels.host }}: its last forget-and-prune failed (holdfast prunes {{ $labels.host }} says why)"
+
       - alert: HoldfastSnapshotsNotMadeByHoldfast
         # Someone ran restic backup by hand. Holdfast leaves those snapshots alone, and never cleans them up.
         expr: holdfast_snapshots_not_made_by_holdfast > 0

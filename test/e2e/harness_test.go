@@ -270,8 +270,17 @@ func (e *env) logFile(name string) string {
 	return p
 }
 
-func (e *env) startServer() {
-	e.srv = start(e.t, e.logFile("server"), e.srvEnv, "holdfast-server", "-config", e.cfgPath)
+func (e *env) startServer() { e.startServerWith(nil) }
+
+// restartServer stops the server and starts it again, with extra environment variables and flags.
+func (e *env) restartServer(extraEnv []string, flags ...string) {
+	e.t.Helper()
+	e.srv.kill(syscall.SIGTERM)
+	e.startServerWith(extraEnv, flags...)
+}
+
+func (e *env) startServerWith(extraEnv []string, flags ...string) {
+	e.srv = start(e.t, e.logFile("server"), append(slices.Clone(e.srvEnv), extraEnv...), "holdfast-server", append(flags, "-config", e.cfgPath)...)
 	waitFor(e.t, "server healthz", 20*time.Second, func() bool {
 		r, err := e.client.Get(e.url + "/healthz")
 		if err != nil {

@@ -21,6 +21,21 @@ tests:
             exp_annotations:
               summary: "web01: a restic password was added to its repository outside Holdfast (holdfast host show web01)"
 
+  # A failed forget-and-prune raises a ticket; a host whose last run went well does not.
+  - interval: 1m
+    input_series:
+      - series: 'holdfast_retention_last_run_failed{host="web01"}'
+        values: '1x10'
+      - series: 'holdfast_retention_last_run_failed{host="db01"}'
+        values: '0x10'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: HoldfastRetentionFailing
+        exp_alerts:
+          - exp_labels: {severity: ticket, host: web01}
+            exp_annotations:
+              summary: "web01: its last forget-and-prune failed (holdfast prunes web01 says why)"
+
   # Snapshots that disappeared page at once; snapshots Holdfast did not make raise a ticket after an hour.
   - interval: 1m
     input_series:
