@@ -53,9 +53,17 @@ type StorageSettings struct {
 
 // MaintenanceSettings control the server's own restic runs. M1 runs check only (plan-m1 Q1).
 type MaintenanceSettings struct {
-	CheckEvery     time.Duration `yaml:"check_every"`      // 0 turns the periodic check off
-	CheckCycleDays int           `yaml:"check_cycle_days"` // read-data-subset cycle, default 30
+	// Check is "daily" (the default): each host is checked once a day, in the middle of the day's
+	// longest quiet stretch (plan-m1 §10). "off" leaves only `holdfast check`.
+	Check          string `yaml:"check"`
+	CheckCycleDays int    `yaml:"check_cycle_days"` // read-data-subset cycle, default 30
 }
+
+// Values of MaintenanceSettings.Check.
+const (
+	CheckDaily = "daily"
+	CheckOff   = "off"
+)
 
 // LoadSettings reads and validates the settings file. Unknown keys are refused, so a typo is an
 // error rather than a silently ignored setting.
@@ -91,6 +99,9 @@ func (s *Settings) defaults() {
 	if s.DefaultZone == "" {
 		s.DefaultZone = "UTC"
 	}
+	if s.Maintenance.Check == "" {
+		s.Maintenance.Check = CheckDaily
+	}
 	if s.Maintenance.CheckCycleDays <= 0 {
 		s.Maintenance.CheckCycleDays = 30
 	}
@@ -114,6 +125,9 @@ func (s Settings) validate() error {
 	need(s.Storage.MaintenanceCredentialsFile, "storage.maintenance_credentials_file")
 	if _, err := time.LoadLocation(s.DefaultZone); err != nil {
 		errs = append(errs, fmt.Errorf("default_zone: %w", err))
+	}
+	if c := s.Maintenance.Check; c != CheckDaily && c != CheckOff {
+		errs = append(errs, fmt.Errorf("maintenance.check is %q; it must be %q or %q", c, CheckDaily, CheckOff))
 	}
 	return errors.Join(errs...)
 }

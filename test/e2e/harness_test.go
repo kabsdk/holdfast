@@ -210,7 +210,8 @@ func newEnvWith(t *testing.T, o envOpts) *env {
 		"restic_bin": resticBin, "default_zone": "UTC", "node_name": "e2e",
 		"storage": map[string]any{"endpoint": endpoint, "bucket": e.bucket, "region": "us-east-1", "maintenance_credentials_file": maint,
 			"provisioner_command": []string{"bash", filepath.Join(repoRoot, "test", "e2e", "provision-minio.sh")}},
-		"maintenance": map[string]any{"check_cycle_days": 30},
+		// Tests run `holdfast check` themselves; a background check would race their lock counts.
+		"maintenance": map[string]any{"check": "off", "check_cycle_days": 30},
 	}
 	if o.TLS != nil {
 		set["tls"] = map[string]any{"cert_file": o.TLS.cert, "key_file": o.TLS.key}

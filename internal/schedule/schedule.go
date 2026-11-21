@@ -273,6 +273,72 @@ func (s Schedule) WorstCaseLoss() time.Duration { return s.LongestGap() + s.Spre
 // StaleAfter is the stale-alert threshold: 2 × the longest gap (spec §4.1).
 func (s Schedule) StaleAfter() time.Duration { return 2 * s.LongestGap() }
 
+// Placed is a schedule together with the zone its runs are in.
+type Placed struct {
+	Schedule Schedule
+	Loc      *time.Location
+}
+
+// Day returns the start of the calendar day that contains t in loc, and the start of the next day.
+// A day can be 23 or 25 hours long.
+func Day(t time.Time, loc *time.Location) (start, end time.Time) {
+	if loc == nil {
+		loc = time.UTC
+	}
+	d := t.In(loc)
+	return WallTime(d.Year(), d.Month(), d.Day(), 0, 0, loc), WallTime(d.Year(), d.Month(), d.Day()+1, 0, 0, loc)
+}
+
+// QuietWindow returns the longest quiet stretch of the calendar day that contains t, in loc. A stretch
+// is quiet when no run of any of the schedules can start in it: it runs from the end of one run's
+// spread to the next run's nominal start, and is cut off at the day's bounds. Ties go to the earliest
+// stretch. A day without runs is quiet all day. ok is false when runs and their spreads leave no quiet
+// time at all; start and end are then the day's bounds.
+//
+// The server places each host's daily restic check in the middle of this stretch (plan-m1 §10): check
+// takes an exclusive lock, and a backup that meets it waits or fails.
+func QuietWindow(t time.Time, loc *time.Location, runs []Placed) (start, end time.Time, ok bool) {
+	dayStart, dayEnd := Day(t, loc)
+	type span struct{ from, to time.Time }
+	var busy []span
+	for _, p := range runs {
+		spread := p.Schedule.SpreadDuration()
+		// A run that started before the day can still be inside its spread when the day begins.
+		for _, s := range p.Schedule.Slots(dayStart.Add(-spread-time.Nanosecond), dayEnd, p.Loc) {
+			from, to := s, s.Add(spread)
+			if from.Before(dayStart) {
+				from = dayStart
+			}
+			if to.After(dayEnd) {
+				to = dayEnd
+			}
+			busy = append(busy, span{from, to})
+		}
+	}
+	slices.SortFunc(busy, func(a, b span) int { return a.from.Compare(b.from) })
+	cursor := dayStart
+	consider := func(from, to time.Time) {
+		if to.Sub(from) > end.Sub(start) {
+			start, end, ok = from, to, true
+		}
+	}
+	for _, b := range busy {
+		if b.from.After(cursor) {
+			consider(cursor, b.from)
+		}
+		if b.to.After(cursor) {
+			cursor = b.to
+		}
+	}
+	if dayEnd.After(cursor) {
+		consider(cursor, dayEnd)
+	}
+	if !ok {
+		return dayStart, dayEnd, false
+	}
+	return start, end, true
+}
+
 // WallTime returns the instant of a wall-clock time in loc. A time that does not exist that day
 // (spring forward) becomes the next valid minute. A time that occurs twice (fall back) is the first
 // occurrence.

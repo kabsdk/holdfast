@@ -149,6 +149,7 @@ type hostView struct {
 	InSync          bool       `json:"in_sync"`
 	DesiredRevision int64      `json:"desired_revision"`
 	FirstBackupAt   *time.Time `json:"first_backup_at"`
+	NextCheck       *time.Time `json:"next_check"`
 	Agent           *struct {
 		LastSeenAt      *time.Time `json:"last_seen_at"`
 		AgentVersion    string     `json:"agent_version"`
@@ -216,6 +217,9 @@ func hostCmd() *cobra.Command {
 		if h.Agent != nil {
 			fmt.Printf("agent %s · restic %s · %s %s · last seen %s · runs revision %d (current for this host: %d)\n",
 				h.Agent.AgentVersion, h.Agent.ResticVersion, h.Agent.OSID, h.Agent.OSVersion, ago(h.Agent.LastSeenAt), h.Agent.AppliedRevision, h.DesiredRevision)
+		}
+		if h.NextCheck != nil {
+			fmt.Printf("next restic check %s, in the middle of the day's longest quiet stretch\n", h.NextCheck.Local().Format("2006-01-02 15:04"))
 		}
 		w := table()
 		fmt.Fprintln(w, "\nJOB\tLAST STATUS\tLAST SUCCESS\tNEXT RUN\tLONGEST GAP\tWORST-CASE LOSS")

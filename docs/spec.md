@@ -68,6 +68,12 @@ supports.
 **Server** (`holdfast-server`)
 - The configurator.
 - The maintenance leader: it runs forget, prune and check.
+  - `restic check` takes an exclusive lock, and a backup that meets it waits or fails. So the server
+    checks each host once a day, at the middle of that day's longest quiet stretch, between the end of one
+    run's spread and the start of the next.
+  - A host's view shows when its next check is.
+  - A check that was interrupted is marked so when the server starts again. Its stale lock is then
+    removed, and only that lock.
 - Keeps its state in PostgreSQL.
 
 **Storage witness** (`holdfast-freshness`)

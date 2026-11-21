@@ -740,9 +740,48 @@ func (q *Q) FinishMaintenance(ctx context.Context, id int64, status, errText str
 	return err
 }
 
+// MaintenanceRun is one maintenance run that has not finished.
+type MaintenanceRun struct {
+	ID        int64
+	FQDN      string
+	Kind      string
+	Subset    string
+	StartedAt time.Time
+}
+
+// UnfinishedMaintenance returns the runs this node started before the given time that never recorded
+// an end: the server stopped while they ran.
+func (q *Q) UnfinishedMaintenance(ctx context.Context, node string, before time.Time) ([]MaintenanceRun, error) {
+	rows, err := q.db.Query(ctx, `SELECT id, fqdn, kind, subset, started_at FROM maintenance_runs
+		WHERE finished_at IS NULL AND node = $1 AND started_at < $2 ORDER BY id`, node, before)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []MaintenanceRun
+	for rows.Next() {
+		var m MaintenanceRun
+		if err := rows.Scan(&m.ID, &m.FQDN, &m.Kind, &m.Subset, &m.StartedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
 // LastMaintenanceSuccess returns, per host, when the given kind of maintenance last succeeded.
 func (q *Q) LastMaintenanceSuccess(ctx context.Context, kind string) (map[string]time.Time, error) {
-	rows, err := q.db.Query(ctx, `SELECT fqdn, max(finished_at) FROM maintenance_runs WHERE kind = $1 AND status = 'success' GROUP BY fqdn`, kind)
+	return q.timesByHost(ctx, `SELECT fqdn, max(finished_at) FROM maintenance_runs WHERE kind = $1 AND status = 'success' GROUP BY fqdn`, kind)
+}
+
+// LastMaintenanceStart returns, per host, when the given kind of maintenance last started, whatever
+// its outcome.
+func (q *Q) LastMaintenanceStart(ctx context.Context, kind string) (map[string]time.Time, error) {
+	return q.timesByHost(ctx, `SELECT fqdn, max(started_at) FROM maintenance_runs WHERE kind = $1 GROUP BY fqdn`, kind)
+}
+
+func (q *Q) timesByHost(ctx context.Context, sql string, args ...any) (map[string]time.Time, error) {
+	rows, err := q.db.Query(ctx, sql, args...)
 	if err != nil {
 		return nil, err
 	}

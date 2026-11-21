@@ -35,13 +35,18 @@ func fakeRestic(t *testing.T) string {
 	return p
 }
 
-func newTestServer(t *testing.T) *Server {
+// newTestServer builds a server on a fresh database. now, if given, is its clock.
+func newTestServer(t *testing.T, now ...func() time.Time) *Server {
 	t.Helper()
 	sealer, _ := creds.NewSealer(creds.Random(creds.KeySize))
 	set := Settings{PublicURL: "https://holdfast.example.test", StateDir: t.TempDir(), ResticBin: fakeRestic(t), DefaultZone: "Europe/Copenhagen", NodeName: "test",
-		Storage: StorageSettings{Endpoint: "http://127.0.0.1:9000", Bucket: "holdfast"}, Maintenance: MaintenanceSettings{CheckCycleDays: 30}}
-	s, err := New(set, Deps{Store: testpg.Store(t), Sealer: sealer, Provisioner: storage.NoopProvisioner{},
-		Maintenance: storage.Key{AccessKeyID: "MAINT", SecretAccessKey: "maint-secret"}, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
+		Storage: StorageSettings{Endpoint: "http://127.0.0.1:9000", Bucket: "holdfast"}, Maintenance: MaintenanceSettings{Check: CheckDaily, CheckCycleDays: 30}}
+	d := Deps{Store: testpg.Store(t), Sealer: sealer, Provisioner: storage.NoopProvisioner{},
+		Maintenance: storage.Key{AccessKeyID: "MAINT", SecretAccessKey: "maint-secret"}, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	if len(now) > 0 {
+		d.Now = now[0]
+	}
+	s, err := New(set, d)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -22,7 +22,10 @@ storage:
   provisioner_command: [/usr/libexec/holdfast/provision-host]   # makes each host's S3 identity (see storage package)
 
 maintenance:
-  check_every: 24h                   # restic check with a rotating read-data subset (M1 runs check only)
+  # restic check with a rotating read-data subset (M1 runs check only). It takes an exclusive lock,
+  # so each host is checked once a day in the middle of the day's longest quiet stretch, away from its
+  # backups. "off" leaves only `holdfast check`.
+  check: daily
   check_cycle_days: 30
 
 # Spec §6.4. Acted on from M4.

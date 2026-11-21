@@ -46,12 +46,15 @@ proposal. Each sits behind an interface where that matters, so it can change. **
 | Agent: schedule and spread, catch-up once, skip when overlapping, spool, interrupted runs, commands run once | in-process against the server |
 | CLI (`holdfast`) as a thin API client; storage witness; alert rules | promtool |
 | e2e: fidelity with escrow, server outage, storage isolation, witness | real restic 0.19.1, MinIO, PostgreSQL |
-| e2e: backup killed mid-upload and recovered (the PoC's test 3, using an S3 throttling proxy); exactly-once delivery with dropped answers, and runs on their schedule slots; history, diff, stale base, drift, `holdfast check`, audit, no credential leaks; enrollment refusals and expiry; TLS with certificate pinning | same: **all 9 e2e tests pass** |
+| e2e: backup killed mid-upload and recovered (the PoC's test 3, using an S3 throttling proxy); exactly-once delivery with dropped answers, and runs on their schedule slots; history, diff, stale base, drift, `holdfast check`, audit, no credential leaks; enrollment refusals and expiry; TLS with certificate pinning | same |
+| The daily check: once a day per host, in the middle of the day's longest quiet stretch, never after it; an interrupted check recovered at start-up (§10). e2e: restic's check lock is exclusive, as the placement assumes | unit, integration with a controlled clock, e2e: **all 10 e2e tests pass** |
 
 **Found and fixed along the way**
 - The metric label `job` collides with Prometheus's own scrape label, so it is now `job_id`. The PoC had the same bug.
 - `--retry-lock` must come before the restic subcommand. Placed after `--`, restic would have backed it up as a path.
 - An agent killed during its very first backup would never have run that job again.
+- The daily check ran every host on one fixed timer, not in each host's quiet stretch as §10 promised.
+  Because check's lock is exclusive, it could have made scheduled backups fail.
 
 **Remaining for M1**
 - An RGW provisioner, and a lab in the style of Clusterlane: S3 in dc-a and dc-b, holdfast-server, a vault host and agents. The storage-isolation test also runs there against real RGW.
@@ -75,7 +78,7 @@ Spec: [spec.md](spec.md). Working rules: [../CLAUDE.md](../CLAUDE.md). Undecided
 - the storage witness;
 - Prometheus metrics and alert rules.
 
-**Done when** the PoC's e2e tests pass on the real codebase. Every test runs against real restic 0.18.1,
+**Done when** the PoC's e2e tests pass on the real codebase. Every test runs against real restic 0.19.1 (Q10),
 real PostgreSQL and a real S3 server (MinIO in CI).
 
 > **Q1 (blocking)** asks how to read "the PoC's e2e tests pass". Three of the five PoC tests exercise
@@ -505,7 +508,7 @@ that host. This replaces the PoC's 200 ms polling loop, which held a mutex while
 ```json
 {"fqdn": "web01.example.com", "code": "…",
  "facts": {"hostname_fqdn": "web01.example.com", "os_id": "rhel", "os_version": "9.6",
-           "agent_version": "0.1.0", "restic_version": "0.18.1", "timezone": "Europe/Copenhagen"},
+           "agent_version": "0.1.0", "restic_version": "0.19.1", "timezone": "Europe/Copenhagen"},
  "csr": "…only if Q3 = certificate…"}
 ```
 
@@ -650,6 +653,7 @@ storage:
 credentials:
   key_file: /etc/holdfast/credentials.key   # Q5
 maintenance:
+  check: daily             # or off; see §10
   check_cycle_days: 30
 ```
 
@@ -660,9 +664,42 @@ maintenance:
 - **No forget and no prune code path exists in M1.** The 7-day protection lands in M3, and CLAUDE.md
   forbids any destructive path that bypasses it.
 - **`check` only, if Q1 keeps it.** Once a day per host, the server runs `restic check
-  --read-data-subset n/30`, with n rotating (as in the PoC). It is scheduled inside the host's longest gap,
-  because `check` reportedly takes an exclusive lock. I will verify that on 0.18.1, and the test asserts it.
+  --read-data-subset n/30`, with n rotating (as in the PoC).
+- **`check` takes an exclusive lock. This is now measured on 0.19.1, not "reported".**
+  `TestCheckLockIsExclusive` asserts it against MinIO with Holdfast's own identities. While check holds
+  its lock:
+  - the lock file says `"exclusive": true`;
+  - a backup without `--retry-lock` fails at once with exit 11;
+  - `snapshots` fails the same way, and `snapshots --no-lock` works;
+  - `restic unlock` leaves the live lock alone;
+  - a backup with `--retry-lock` waits and then succeeds.
+
+  A check that meets a running backup also fails with exit 11. The agent waits 15 minutes for a lock, so
+  a check running longer than that makes a scheduled backup fail.
+- **Where the check goes.** Each host is checked once a day, at the middle of that day's longest quiet
+  stretch.
+  - A quiet stretch runs from the end of one run's spread to the next run's start, over all the host's
+    jobs. Days are counted in the fleet's zone.
+  - The middle is as far as possible from the runs on either side.
+  - Examples:
+    - runs at 01:00 only: the check is at 12:30;
+    - runs at 02:00 and 20:00: the check is at 11:00;
+    - every 4 hours with a 30-minute spread: the check is at 02:15.
+  - A host is checked at most once a day, and a check by hand counts.
+  - If the server is down for the whole stretch, the check waits for the next day rather than run into
+    a backup.
+  - Two checks of different hosts may run at once (a constant for now). A check still waiting for a slot
+    when its stretch ends is recorded as `skipped`.
+  - The host view in the API, and so `holdfast host show`, gives `next_check`.
+  - `maintenance.check` is `daily` (the default) or `off`. It replaces the earlier `check_every`.
+- **An interrupted check is recovered.** A check that was running when the server stopped leaves its
+  exclusive lock behind. The lock names the server's host, so an agent cannot tell that it is stale for 30
+  minutes, and the host's backups fail with exit 11 until then. At start-up the server therefore marks
+  such a check `interrupted` and runs a plain `restic unlock`. Unlock sees that the process is gone and
+  removes only that lock.
 - **The leader gate is a stub.** It always says "leader" in M1. The VIP logic comes in M6.
+- **For M2.** The snapshot catalogue must read with `--no-lock`. Otherwise every listing fails while a
+  check runs, and every listing would also take a lock that delays backups.
 
 ---
 
@@ -751,7 +788,7 @@ final flag names together with the checks.
 The harness is ported from `poc/test/e2e/harness_test.go`.
 - It starts PostgreSQL and MinIO in Docker, one pair per test package, with a fresh database and bucket per
   test.
-- It uses real restic 0.18.1, verified by sha256.
+- It uses real restic 0.19.1, verified by sha256.
 - It builds the real binaries and runs them as processes, so the tests can kill them with real signals.
 - It adds an HTTP fault proxy between the agent and the server, and an S3 throttling proxy between restic
   and MinIO.
@@ -771,6 +808,7 @@ The harness is ported from `poc/test/e2e/harness_test.go`.
 | `TestStorageIsolation` | new | A host key can write its own prefix. It cannot list or read another host's prefix, and it cannot delete outside `locks/`. Versioning is on. The witness key can only list. |
 | `TestCredentialsNeverLeak` | new | The repository password and the S3 secret are absent from revisions, the audit log, CLI output, both logs and both metrics endpoints. |
 | `TestPrometheusRules` | new | `promtool check rules` and `promtool test rules` pass. |
+| `TestCheckLockIsExclusive` | new | The restic behaviour behind §10, with Holdfast's own keys. Check's lock is exclusive. While check holds it, a backup fails with exit 11 at once, or waits with `--retry-lock`. Locking reads fail and `--no-lock` reads work. Unlock leaves the live lock. A check that meets a running backup fails with exit 11. |
 
 ### Moved out of M1
 
@@ -788,7 +826,7 @@ seconds-unit schedule that exists only for tests. This is part of Q1.
 ## 14. CI
 
 - **Runner.** Linux with Docker and root (the fidelity test needs root).
-- **restic.** 0.18.1 from the GitHub release, verified against a pinned sha256.
+- **restic.** 0.19.1 from the GitHub release, verified against a pinned sha256 (Q10).
 - **PostgreSQL.** The production major version (Q14).
 - **MinIO.** Pinned by image digest (Q15).
 - **`promtool`.** The Prometheus release, pinned.
