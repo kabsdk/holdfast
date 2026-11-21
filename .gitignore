@@ -1,0 +1,16 @@
+# Build output
+/bin/
+/dist/
+
+# Local artefacts that are not part of the repository
+/holdfast-poc.zip
+*:Zone.Identifier
+
+# Test output and tool caches
+/test/results/
+/.cache/
+
+# Editor and agent settings that are personal
+.claude/settings.local.json
+.vscode/
+.idea/

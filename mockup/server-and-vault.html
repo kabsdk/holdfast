@@ -1,0 +1,793 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Holdfast Server and Vault</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* One visual language for both programs. Only the chrome differs: body.vault tints it red. */
+:root{
+  --text:#14171C;--muted:#4B5260;--faint:#8A919C;--line:#E3E6EB;--line2:#EEF0F3;--card:#FFFFFF;--link:#1D4ED8;
+  --ok:#15803D;--okbg:#ECFDF3;--okline:#BBF7D0;--warn:#92400E;--warnbg:#FFFBEB;--warnline:#FDE68A;
+  --bad:#B91C1C;--badbg:#FEF2F2;--badline:#FECACA;--info:#1D4ED8;--infobg:#EFF4FF;--infoline:#BFD3FE;
+  --page:#F4F5F7;--side:#14171C;--side2:#1E222A;--sideActive:#2A2F39;--sideText:#E5E8EE;--sideMuted:#9AA3B2;
+  --logo:#93C5FD;--chrome:#FFFFFF;--chromeLine:#E3E6EB;--siteBadge:#334155;
+}
+body.vault{
+  --page:#F7E8E8;--side:#2B1013;--side2:#3B171B;--sideActive:#56222A;--sideMuted:#E3B4B8;
+  --logo:#FCA5A5;--chrome:#FFF5F5;--chromeLine:#F0C7CA;--siteBadge:#B91C1C;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--page);font-family:Inter,system-ui,sans-serif;color:var(--text)}
+code,.mono,pre{font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:13px}
+
+.mockbar{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:6px 16px;background:#0B0D10;color:#C9CED6;font-size:12px}
+.mockbar .tag{font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:#FDE68A}
+.mockbar button{min-height:28px;padding:0 10px;border-radius:6px;border:1px solid #3A3F48;background:#1A1D22;color:#E5E8EE;font:inherit;cursor:pointer}
+.mockbar button[aria-pressed=true]{background:#E5E8EE;color:#0B0D10;border-color:#E5E8EE;font-weight:700}
+.mockbar .url{font-family:'IBM Plex Mono',monospace;color:#9AA3B2;margin-left:4px}
+.mockbar .grow{flex:1}
+.notes{background:#111418;color:#E5E8EE;padding:12px 20px 16px;font-size:13px;line-height:1.55;display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:8px 32px}
+.notes ul{margin:6px 0 0;padding-left:18px}
+.notes b{color:#fff}
+
+.shell{display:flex;flex-wrap:wrap;min-height:calc(100vh - 40px)}
+.side{flex:1 1 248px;max-width:100%;background:var(--side);color:#fff;padding:20px 14px;display:flex;flex-direction:column;gap:22px}
+@media (min-width:900px){.side{flex:0 0 248px}}
+.brand{display:flex;align-items:center;gap:10px;padding:0 8px;font-weight:700;font-size:18px}
+.brand small{display:block;font-size:11px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:var(--sideMuted)}
+.nav{display:flex;flex-direction:column;gap:2px}
+.nav button{display:flex;justify-content:space-between;align-items:center;gap:8px;min-height:42px;padding:0 12px;border:0;border-radius:8px;background:transparent;color:var(--sideText);font:inherit;font-size:14px;text-align:left;cursor:pointer}
+.nav button[aria-current=page]{background:var(--sideActive);color:#fff;font-weight:600}
+.count{min-width:22px;padding:1px 7px;border-radius:10px;font-size:12px;font-weight:700;text-align:center}
+.count.bad{background:#B91C1C;color:#fff} .count.warn{background:#F59E0B;color:#1F1300}
+.sidestat{margin-top:auto;display:flex;flex-direction:column;gap:8px;padding:12px;border-radius:10px;background:var(--side2);font-size:12px;color:#D6DAE0}
+.sidestat span{display:flex;align-items:center}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:8px;flex:0 0 8px;background:#4ADE80}
+
+.mainwrap{flex:999 1 640px;min-width:0;display:flex;flex-direction:column}
+.top{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;min-height:64px;padding:0 32px;background:var(--chrome);border-bottom:1px solid var(--chromeLine);border-top:4px solid var(--siteBadge)}
+.crumbs{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:14px;color:var(--muted)}
+.crumbs button{border:0;background:none;padding:0;font:inherit;color:var(--link);cursor:pointer}
+.crumbs strong{color:var(--text)}
+.sitebadge{display:inline-flex;align-items:center;padding:3px 10px;border-radius:999px;background:var(--siteBadge);color:#fff;font-size:12px;font-weight:700;letter-spacing:.5px}
+.user{font-size:13px;color:var(--muted)}
+main{width:100%;max-width:1240px;padding:24px 32px 48px;display:flex;flex-direction:column;gap:20px}
+h1{margin:0;font-size:26px;font-weight:700}
+h2{margin:0;font-size:16px;font-weight:600}
+h3{margin:0 0 8px;font-size:14px;font-weight:600}
+.sub{margin:6px 0 0;font-size:14px;color:var(--muted)}
+.head{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-end;gap:16px;min-height:62px}
+
+.kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+@media (max-width:900px){.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.kpi{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px;box-shadow:inset 0 3px 0 var(--bar,transparent)}
+.kpi .l{font-size:13px;color:var(--muted)} .kpi b{font-size:26px;line-height:1.2} .kpi .s{font-size:12px;color:var(--faint);min-height:16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px}
+.ch{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:12px;padding:14px 16px;border-bottom:1px solid var(--line);min-height:56px}
+.cb{padding:16px;display:flex;flex-direction:column;gap:12px;font-size:14px}
+.grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+@media (max-width:1000px){.grid2{grid-template-columns:1fr}}
+.kv{display:grid;grid-template-columns:150px 1fr;gap:8px 16px;margin:0}
+.kv dt{color:var(--muted)} .kv dd{margin:0;overflow-wrap:anywhere}
+.card.locked .kv dd{color:var(--muted)}
+
+.tw{overflow-x:auto}
+table{border-collapse:collapse;width:100%}
+table.fixed{table-layout:fixed}
+table.wide{min-width:860px}
+table.fixed td{overflow-wrap:anywhere}
+th{font-size:12px;font-weight:600;color:var(--muted);text-align:left;padding:10px 12px;border-bottom:1px solid var(--line);white-space:nowrap}
+td{font-size:14px;padding:11px 12px;border-bottom:1px solid var(--line2);vertical-align:top}
+tr:last-child td{border-bottom:0}
+td.locked,th.locked{color:var(--faint)}
+.idlink{border:0;background:none;padding:0;font-family:'IBM Plex Mono',monospace;font-size:13px;color:var(--link);cursor:pointer;text-decoration:underline}
+.textlink{border:0;background:none;padding:0;font:inherit;color:var(--link);cursor:pointer;text-align:left;font-weight:600}
+
+.pill{display:inline-flex;align-items:center;padding:2px 9px;border-radius:999px;font-size:12px;font-weight:700;white-space:nowrap;border:1px solid transparent}
+.pill.ok{background:var(--okbg);color:var(--ok);border-color:var(--okline)}
+.pill.warn{background:var(--warnbg);color:var(--warn);border-color:var(--warnline)}
+.pill.bad{background:var(--badbg);color:var(--bad);border-color:var(--badline)}
+.pill.info{background:var(--infobg);color:var(--info);border-color:var(--infoline)}
+.pill.mute{background:#F1F3F5;color:var(--muted);border-color:#E3E6EB}
+.jd{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;flex:0 0 8px}
+.jd.ok{background:#22C55E} .jd.bad{background:#DC2626} .jd.warn{background:#F59E0B} .jd.info{background:#3B82F6} .jd.mute{background:#9AA3B2}
+.joblist{display:flex;flex-direction:column;gap:3px;font-size:13px}
+.joblist span{display:flex;align-items:center}
+.muted{color:var(--muted)} .faint{color:var(--faint)} .small{font-size:12px;margin-top:3px}
+
+.btn{min-height:38px;padding:0 14px;border-radius:8px;border:1px solid #CDD2DA;background:#fff;color:var(--text);font:inherit;font-size:14px;font-weight:600;cursor:pointer;white-space:nowrap}
+.btn.primary{background:#1D4ED8;border-color:#1D4ED8;color:#fff}
+.btn.danger{background:#B91C1C;border-color:#B91C1C;color:#fff}
+.btn.sm{min-height:32px;padding:0 10px;font-size:13px}
+/* Disabled buttons are neutral grey whatever their kind, so a disabled "Prune now" never looks like an alarm. */
+.btn:disabled,.btn.primary:disabled,.btn.danger:disabled{background:#F1F3F5;border-color:#E3E6EB;color:#9AA3B2;cursor:not-allowed}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{min-height:32px;padding:0 12px;border-radius:999px;border:1px solid #CDD2DA;background:#fff;color:var(--text);font:inherit;font-size:13px;cursor:pointer}
+.chip[aria-pressed=true]{background:#14171C;color:#fff;border-color:#14171C}
+
+.banner{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;padding:12px 16px;border-radius:10px;font-size:14px;border:1px solid var(--line);background:#F8FAFC;color:var(--text)}
+.banner.ok{background:var(--okbg);border-color:var(--okline)}
+.banner.warn{background:var(--warnbg);border-color:var(--warnline)}
+.banner.bad{background:var(--badbg);border-color:var(--badline)}
+.banner.info{background:var(--infobg);border-color:var(--infoline)}
+.banner.mute{background:#F8FAFC}
+.lockline{font-size:13px;color:var(--faint);margin:0}
+.toast{display:flex;flex-wrap:wrap;justify-content:space-between;gap:12px;align-items:center;padding:12px 16px;border-radius:10px;background:var(--infobg);border:1px solid var(--infoline);font-size:14px}
+
+.tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px;padding:16px}
+.tile{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:#fff;font:inherit;text-align:left;cursor:pointer;color:var(--text)}
+.tile:hover{border-color:#9AA3B2}
+.tile .jd{margin-top:6px}
+.tile b{font-size:14px} .tile small{display:block;font-size:12px;color:var(--faint);margin-top:2px}
+.steps{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.step{display:inline-flex;align-items:center;gap:8px;padding:6px 12px;border-radius:999px;border:1px solid var(--line);background:#fff;font-size:13px;color:var(--faint)}
+.step.done{border-color:var(--okline);background:var(--okbg);color:var(--ok);font-weight:600}
+.step.now{border-color:var(--infoline);background:var(--infobg);color:var(--info);font-weight:600}
+
+.editor td{vertical-align:middle}
+.editor input[type=number]{width:76px;min-height:34px;padding:0 8px;border:1px solid #CDD2DA;border-radius:8px;font:inherit}
+.editor select{min-height:34px;padding:0 6px;border:1px solid #CDD2DA;border-radius:8px;font:inherit;background:#fff}
+.check{display:flex;flex-direction:column;gap:6px;padding:12px 14px;border-radius:10px;border:1px solid var(--line);font-size:14px}
+.check.warn{background:var(--warnbg);border-color:var(--warnline)}
+.check.error{background:var(--badbg);border-color:var(--badline)}
+.check.info{background:#F8FAFC}
+.check .code{font-family:'IBM Plex Mono',monospace;font-weight:600}
+.check label{display:flex;gap:8px;align-items:center;font-weight:600}
+
+.overlay{position:fixed;inset:0;background:rgba(20,23,28,.45);display:flex;align-items:flex-start;justify-content:center;padding:40px 16px;overflow-y:auto;z-index:50}
+.overlay[hidden]{display:none}
+.modal{width:min(780px,100%);background:#fff;border-radius:14px;box-shadow:0 20px 50px rgba(0,0,0,.25);display:flex;flex-direction:column;border-top:4px solid var(--siteBadge)}
+.mh{padding:16px 20px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;gap:12px}
+.mb{padding:16px 20px;display:flex;flex-direction:column;gap:14px;font-size:14px}
+.mf{padding:14px 20px;border-top:1px solid var(--line);display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px}
+.opts{display:flex;flex-direction:column;gap:8px}
+.opt{display:flex;gap:10px;align-items:flex-start;text-align:left;padding:10px 12px;border:1px solid #CDD2DA;border-radius:10px;background:#fff;font:inherit;font-size:14px;cursor:pointer;color:var(--text)}
+.opt[aria-checked=true]{border-color:#1D4ED8;box-shadow:inset 0 0 0 1px #1D4ED8;background:#F5F8FF}
+.opt:disabled{opacity:.5;cursor:not-allowed}
+.opt .r{flex:0 0 16px;height:16px;border-radius:50%;border:2px solid #9AA3B2;margin-top:2px}
+.opt[aria-checked=true] .r{border:5px solid #1D4ED8}
+pre.cmd{margin:0;padding:12px;border-radius:8px;background:#14171C;color:#E5E8EE;white-space:pre-wrap;word-break:break-all}
+input.confirm{min-height:38px;padding:0 10px;border:1px solid #CDD2DA;border-radius:8px;font:inherit;width:280px;max-width:100%}
+@media (max-width:700px){main{padding:16px} .top{padding:0 16px}}
+</style>
+</head>
+<body>
+<div id="mockbar"></div>
+<div class="shell">
+  <aside class="side" id="side" aria-label="Navigation"></aside>
+  <div class="mainwrap">
+    <div class="top" id="top"></div>
+    <main id="content"></main>
+  </div>
+</div>
+<div class="overlay" id="overlay" hidden></div>
+
+<script>
+/* ============ helpers ============ */
+const el = (id) => document.getElementById(id);
+const clone = (o) => JSON.parse(JSON.stringify(o));
+const short = (h) => h.split('.')[0];
+function hid(s){ let h = 2166136261; for (const c of s){ h ^= c.charCodeAt(0); h = Math.imul(h, 16777619) >>> 0; } return h.toString(16).padStart(8, '0').slice(0, 8); }
+const pill = (cls, text) => `<span class="pill ${cls}">${text}</span>`;
+const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+const snapCount = (n) => n ? plural(n, 'snapshot', 'snapshots') : 'no snapshots yet';
+
+const TK = ['within','hourly','daily','weekly','monthly','yearly'];
+const TL = {within:'Keep every backup', hourly:'One per hour', daily:'One per day', weekly:'One per week', monthly:'One per month', yearly:'One per year'};
+const TS = {within:'all', hourly:'hourly', daily:'daily', weekly:'weekly', monthly:'monthly', yearly:'yearly'};
+const UD = {hours:1/24, days:1, weeks:7, months:30.44, years:365.25};
+const UA = {hours:'h', days:'d', weeks:'w', months:'mo', years:'y'};
+const DEFU = {within:'days', hourly:'hours', daily:'days', weekly:'weeks', monthly:'months', yearly:'years'};
+const days = (t) => t ? t[0] * UD[t[1]] : 0;
+const fmt = (t) => t ? `${t[0]} ${UA[t[1]]}` : '—';
+const shortRet = (r) => TK.filter(k => r[k]).map(k => `${TS[k]} ${fmt(r[k])}`).concat(r.last ? [`newest ${r.last}`] : []).join(' · ');
+const same = (a, b) => TK.every(k => days(a[k]) === days(b[k])) && (a.last||0) === (b.last||0);
+const diffText = (a, b) => TK.filter(k => days(a[k]) !== days(b[k])).map(k => `${TS[k]} ${fmt(a[k])} → ${fmt(b[k])}`)
+  .concat((a.last||0) !== (b.last||0) ? [`newest ${a.last} → ${b.last}`] : []).join(', ') || 'no change';
+const shortfall = (p, o) => TK.filter(k => days(o[k]) < days(p[k]));          // tiers where off-site keeps less than primary
+const R = (base, patch) => Object.assign(clone(base), patch || {});
+
+/* ============ the two programs ============ */
+const APPS = {
+  server: {name:'Holdfast Server', site:'Site A', badge:'SERVER · SITE A', url:'https://holdfast.dc1.example.com', side:'primary', lastCol:'Last backup', otherName:'Holdfast Vault',
+           repo:(h) => `s3:https://rgw.dc1.example.com/holdfast/repos/${h}`},
+  vault:  {name:'Holdfast Vault', site:'Site B', badge:'VAULT · SITE B', url:'https://vault.dc2.example.com', side:'off', lastCol:'Last copy', otherName:'Holdfast Server',
+           repo:(h) => `s3:https://rgw.dc2.example.com/holdfast-offsite/repos/${h}`},
+};
+
+/* ============ mock data (now = 21 Nov 2026 12:30) ============ */
+const HOSTS = [
+  {fqdn:'web01.dc1.example.com', os:'Ubuntu 24.04', enrolled:'3 Mar 2026', agent:{s:'online', seen:'40 s ago'}, rev:{applied:117, current:117},
+   sw:'holdfast-agent 0.4.2 · restic 0.19.1', a:{last:'today 08:04', size:'412 GiB', snaps:128}, b:{last:'today 08:10', size:'431 GiB', snaps:131}},
+  {fqdn:'db01.dc1.example.com', os:'RHEL 9.6', enrolled:'3 Mar 2026', agent:{s:'online', seen:'12 s ago'}, rev:{applied:109, current:109},
+   sw:'holdfast-agent 0.4.2 · restic 0.19.1', a:{last:'today 02:11', size:'96 GiB', snaps:31}, b:{last:'today 02:19', size:'118 GiB', snaps:44}},
+  {fqdn:'app01.dc1.example.com', os:'Oracle Linux 9.5', enrolled:'14 Apr 2026', agent:{s:'offline', seen:'19 Nov 01:31'}, rev:{applied:104, current:104},
+   sw:'holdfast-agent 0.4.2 · restic 0.19.1', a:{last:'19 Nov 01:31', size:'38 GiB', snaps:29}, b:{last:'19 Nov 01:40', size:'38 GiB', snaps:29}},
+  {fqdn:'file01.dc1.example.com', os:'RHEL 9.6', enrolled:'3 Mar 2026', agent:{s:'online', seen:'5 s ago'}, rev:{applied:111, current:111},
+   sw:'holdfast-agent 0.4.2 · restic 0.19.1', a:{last:'today 12:02', size:'1.8 TiB', snaps:212}, b:{last:'today 12:09', size:'1.7 TiB', snaps:187}},
+  {fqdn:'mon01.dc1.example.com', os:'Ubuntu 22.04', enrolled:'2 May 2026', agent:{s:'online', seen:'21 s ago'}, rev:{applied:112, current:118, since:'today 11:40'},
+   sw:'holdfast-agent 0.4.1 · restic 0.19.1', a:{last:'today 03:09', size:'22 GiB', snaps:30}, b:{last:'1 Nov 03:15', size:'19 GiB', snaps:24}},
+  {fqdn:'log02.dc1.example.com', os:'Ubuntu 24.04', enrolled:'today 11:46', agent:{s:'online', seen:'9 s ago'}, rev:{applied:118, current:118},
+   sw:'holdfast-agent 0.4.2 · restic 0.19.1', a:{last:'today 11:52', size:'7 GiB', snaps:1}, b:{last:'—', size:'3 GiB so far', snaps:0}},
+  {fqdn:'ci04.dc1.example.com', os:'—', enrolled:'—', agent:{s:'waiting', seen:'—', code:'7KQ2-M9TX', expires:'12:35'}, rev:{applied:null, current:119},
+   sw:'—', a:{last:'—', size:'—', snaps:0}, b:{last:'—', size:'—', snaps:0}},
+];
+const H = (f) => HOSTS.find(h => h.fqdn === f);
+
+const STD  = {within:[7,'days'], hourly:null, daily:[14,'days'], weekly:[8,'weeks'], monthly:[12,'months'], yearly:[3,'years'], last:3};
+const FREQ = {within:[2,'days'], hourly:[48,'hours'], daily:[14,'days'], weekly:[8,'weeks'], monthly:[6,'months'], yearly:null, last:3};
+const JOBS = [
+  {key:'web01/system', host:'web01.dc1.example.com', id:'system', sched:'Daily 01:00, spread 20 min', primary:R(STD), off:R(STD,{yearly:[7,'years']}),
+   backup:{s:'ok', last:'today 01:13', text:'Last backup today 01:13. Next backup 22 Nov between 01:00 and 01:20.'},
+   copy:{s:'ok', last:'today 01:22', text:'Last copy today 01:22, 9 minutes after the backup.'}},
+  {key:'web01/www', host:'web01.dc1.example.com', id:'www', sched:'Every 4 h from 00:00', primary:R(FREQ), off:R(FREQ,{daily:[30,'days']}),
+   backup:{s:'failed', last:'today 12:04', short:'cannot reach storage', text:'Last backup failed today 12:04: cannot reach storage (restic exit 1). Last good backup today 08:04. Next try 16:00.'},
+   copy:{s:'ok', last:'today 08:10', text:'Last copy today 08:10. Nothing newer to copy.'}},
+  {key:'db01/system', host:'db01.dc1.example.com', id:'system', sched:'Daily 02:00, spread 20 min', primary:R(STD), off:R(STD,{monthly:[24,'months'], yearly:[5,'years']}),
+   backup:{s:'ok', last:'today 02:11', text:'Last backup today 02:11. Next backup 22 Nov between 02:00 and 02:20.'},
+   copy:{s:'ok', last:'today 02:19', text:'Last copy today 02:19, 8 minutes after the backup.'}},
+  {key:'app01/system', host:'app01.dc1.example.com', id:'system', sched:'Daily 01:30, spread 20 min', primary:R(STD), off:R(STD),
+   backup:{s:'late', last:'19 Nov 01:31', short:'agent offline', text:'No backup for 2 days, because the agent on app01 is offline (last seen 19 Nov 01:31). Expected daily.'},
+   copy:{s:'ok', last:'19 Nov 01:40', text:'Up to date. There are no new backups in site A to copy since 19 Nov.'}},
+  {key:'file01/home', host:'file01.dc1.example.com', id:'home', sched:'Every 4 h from 00:00', primary:R(FREQ,{monthly:[12,'months']}), off:R(FREQ),
+   backup:{s:'ok', last:'today 12:02', text:'Last backup today 12:02. Next backup today 16:00.'},
+   copy:{s:'ok', last:'today 12:09', text:'Last copy today 12:09, 7 minutes after the backup.'}},
+  {key:'file01/system', host:'file01.dc1.example.com', id:'system', sched:'Daily 01:00, spread 20 min', primary:R(STD), off:R(STD),
+   backup:{s:'ok', last:'today 01:07', text:'Last backup today 01:07. Next backup 22 Nov between 01:00 and 01:20.'},
+   copy:{s:'failed', last:'20 Nov 01:16', short:'cannot read site A storage', text:'Copying has failed since today 01:15 (4 tries): timeout reading from site A storage. Last good copy 20 Nov 01:16. Next try 12:45.'}},
+  {key:'mon01/system', host:'mon01.dc1.example.com', id:'system', sched:'Daily 03:00, spread 20 min', primary:R(STD), off:R(STD),
+   backup:{s:'ok', last:'today 03:09', text:'Last backup today 03:09, with revision 112 (see the host: config drift). Next backup 22 Nov between 03:00 and 03:20.'},
+   copy:{s:'excluded', last:'1 Nov 03:15', short:'excluded by k.lund', text:'Not copied since 1 Nov: excluded by k.lund. The off-site data is kept.'}},
+  {key:'log02/system', host:'log02.dc1.example.com', id:'system', sched:'Daily 03:00, spread 20 min', primary:R(STD), off:R(STD), isNew:true,
+   backup:{s:'ok', last:'today 11:52', text:'First backup today 11:52. Next backup 22 Nov between 03:00 and 03:20.'},
+   copy:{s:'copying', last:'—', short:'first copy · 42 %', text:'First copy running: 42 %. Off-site retention starts as a copy of primary.'}},
+  {key:'ci04/system', host:'ci04.dc1.example.com', id:'system', sched:'Daily 02:30, spread 20 min', primary:R(STD), off:R(STD), isNew:true,
+   backup:{s:'waiting', last:'—', short:'no backup yet', text:'Waiting for the agent. The first backup starts as soon as it connects.'},
+   copy:{s:'waiting', last:'—', short:'nothing to copy yet', text:'Nothing to copy yet. Copying starts after the first backup in site A.'}},
+];
+const J = (k) => JOBS.find(j => j.key === k);
+const jobsOf = (h) => JOBS.filter(j => j.host === h.fqdn);
+
+// Snapshot ages relative to now. `tier` is the coarsest bucket a snapshot represents; any tier up to it can keep it.
+const ROWS = [
+  {date:'today 01:13', age:0, tier:'daily'}, {date:'20 Nov 01:09', age:1, tier:'daily'}, {date:'18 Nov 01:16', age:3, tier:'daily'},
+  {date:'13 Nov 01:05', age:8, tier:'daily'}, {date:'2 Nov 01:11', age:19, tier:'weekly'}, {date:'31 Oct 01:08', age:21, tier:'monthly'},
+  {date:'30 Apr 2026 01:10', age:205, tier:'monthly'}, {date:'31 Dec 2025 01:14', age:325, tier:'yearly'}, {date:'31 Dec 2021 01:02', age:1786, tier:'yearly'},
+];
+const covers = (r, row) => TK.slice(1, TK.indexOf(row.tier) + 1).find(k => days(r[k]) >= row.age);
+const keeps = (r, row) => row.age === 0 || days(r.within) >= row.age || !!covers(r, row);
+const keptBy = (r, row) => { if (row.age === 0) return 'newest'; if (days(r.within) >= row.age) return `all ${fmt(r.within)}`; const k = covers(r, row); return k ? `${TS[k]} ${fmt(r[k])}` : '—'; };
+const rowsFor = (j) => j.backup.s === 'waiting' ? [] : j.isNew ? [ROWS[0]] : ROWS;
+const pid = (j, row) => hid(j.key + row.date);          // primary snapshot ID
+const oid = (j, row) => hid('B' + j.key + row.date);    // off-site snapshot ID
+
+function genIds(seed, dates){ return dates.map(d => ({id:hid(seed + d), date:d})); }
+const PEND = {
+  server: [{key:'web01/www', change:'daily 30 d → 14 d', range:'22 Oct – 6 Nov', on:'24 Nov', by:'k.lund', at:'17 Nov', revert:R(FREQ,{daily:[30,'days']}),
+            ids:genIds('www', ['6 Nov 20:04','5 Nov 20:04','4 Nov 20:04','3 Nov 20:04','2 Nov 20:04','1 Nov 20:04','31 Oct 20:04','30 Oct 20:04','29 Oct 20:04','28 Oct 20:04','27 Oct 20:04','26 Oct 20:04','25 Oct 20:04','24 Oct 20:04','23 Oct 20:04','22 Oct 20:04'])}],
+  vault:  [{key:'db01/system', change:'monthly 36 mo → 24 mo', range:'Nov 2023 – Oct 2024', on:'25 Nov', by:'m.jensen', at:'18 Nov', revert:R(STD,{monthly:[36,'months'], yearly:[5,'years']}),
+            ids:genIds('db01', ['30 Oct 2024 02:10','30 Sep 2024 02:11','30 Aug 2024 02:12','30 Jul 2024 02:13','30 Jun 2024 02:14','30 May 2024 02:15','30 Apr 2024 02:16','30 Mar 2024 02:17','28 Feb 2024 02:18','30 Jan 2024 02:19','30 Dec 2023 02:10','30 Nov 2023 02:11'])}],
+};
+const RETIRED = {
+  server: [{host:'build03.dc1.example.com', jobs:'system', removed:'3 Nov by a.berg', snaps:39, size:'198 GiB', ret:R(STD), decom:null}],
+  vault:  [{host:'build03.dc1.example.com', jobs:'system', removed:'3 Nov by a.berg, in Holdfast Server', snaps:41, size:'212 GiB', ret:R(STD), decom:null}],
+};
+const RESTORES = [
+  {at:'today 09:12', who:'m.jensen', job:'web01/system', snap:'7d3e91aa', from:'off', grant:'b7c2e91f', to:'/var/restore/2026-11-21-m.jensen-7d3e91aa', res:'ok'},
+  {at:'19 Nov 14:03', who:'k.lund', job:'db01/system', snap:'a41f0c9e', from:'primary', to:'/var/restore/2026-11-19-k.lund-a41f0c9e', res:'ok'},
+  {at:'12 Nov 15:40', who:'a.berg', job:'file01/home', snap:'c19a77b0', from:'off', grant:'0e4fa2d1', to:'/var/restore/2026-11-12-a.berg-c19a77b0', res:'ok'},
+];
+const REVS = {
+  server: [{n:119, at:'today 12:20', who:'m.jensen', msg:'Add host ci04', changes:'+ ci04.dc1.example.com, job system (profile Standard)'},
+           {n:118, at:'today 11:40', who:'m.jensen', msg:'Add host log02; exclude /var/cache on mon01', changes:'+ log02.dc1.example.com, job system · mon01/system: + exclude /var/cache'},
+           {n:117, at:'17 Nov 09:30', who:'k.lund', msg:'Shorter daily retention for www', changes:'web01/www: daily 30 d → 14 d · R104 accepted'},
+           {n:116, at:'3 Nov 14:20', who:'a.berg', msg:'Remove host build03', changes:'− build03.dc1.example.com (retired, data kept)'}],
+  vault:  [{n:25, at:'today 12:20', who:'Holdfast Vault (automatic)', msg:'New job ci04 / system', changes:'+ ci04/system: off-site retention = copy of primary'},
+           {n:24, at:'today 11:41', who:'Holdfast Vault (automatic)', msg:'New job log02 / system', changes:'+ log02/system: off-site retention = copy of primary'},
+           {n:23, at:'18 Nov 10:02', who:'m.jensen', msg:'Shorter monthly retention for db01', changes:'db01/system: monthly 36 mo → 24 mo · R104 accepted'},
+           {n:22, at:'1 Nov 08:00', who:'k.lund', msg:'Exclude mon01', changes:'mon01/system: excluded'}],
+};
+const AUDIT = {
+  server: [{at:'today 12:20', who:'m.jensen', what:'Host added', target:'ci04', detail:'revision 119 · enrollment code issued, expires 12:35'},
+           {at:'today 12:04', who:'web01 agent', what:'Backup failed', target:'web01/www', detail:'restic exit 1 · cannot reach storage'},
+           {at:'today 11:46', who:'log02 agent', what:'Agent enrolled', target:'log02', detail:'first backup 11:52'},
+           {at:'today 11:40', who:'m.jensen', what:'Revision saved', target:'revision 118 (log02, mon01)', detail:'Add host log02; exclude /var/cache on mon01'},
+           {at:'today 09:12', who:'m.jensen', what:'Restore from off-site', target:'web01/system 7d3e91aa', detail:'to /var/restore/2026-11-21-m.jensen-7d3e91aa'},
+           {at:'19 Nov 01:31', who:'app01 agent', what:'Agent stopped reporting', target:'app01', detail:'last poll 19 Nov 01:31'},
+           {at:'17 Nov 09:30', who:'k.lund', what:'Retention cut', target:'web01/www', detail:'daily 30 d → 14 d · R104 accepted · pending until 24 Nov'}],
+  vault:  [{at:'today 12:20', who:'Holdfast Vault', what:'New job seen', target:'ci04/system', detail:'revision 25 · nothing to copy yet'},
+           {at:'today 11:41', who:'Holdfast Vault', what:'New job seen', target:'log02/system', detail:'copying started · revision 24'},
+           {at:'today 01:15', who:'Holdfast Vault', what:'Copy failed', target:'file01/system', detail:'timeout reading from site A storage · retrying'},
+           {at:'today 09:12', who:'m.jensen, via Holdfast Server', what:'Restore access granted (automatic)', target:'web01/system b7c2e91f', detail:'read-only · 4 h'},
+           {at:'18 Nov 10:02', who:'m.jensen', what:'Retention cut', target:'db01/system', detail:'monthly 36 mo → 24 mo · R104 accepted · pending until 25 Nov'},
+           {at:'1 Nov 08:00', who:'k.lund', what:'Job excluded', target:'mon01/system', detail:'copying stopped · data kept'}],
+};
+
+/* ============ state ============ */
+const S = {app:'server', page:'overview', host:null, job:null, filter:'all', draft:null, units:{}, acc:{}, modal:null, toast:null, notes:false};
+const A = () => APPS[S.app];
+const own = (j) => S.app === 'server' ? j.backup : j.copy;
+const nextRev = () => REVS[S.app][0].n + 1;
+function openJob(k){
+  const j = J(k), side = A().side; S.page = 'job'; S.job = k; S.host = j.host; S.draft = clone(j[side]); S.acc = {}; S.units = {};
+  TK.forEach(t => { S.units[t] = (j[side][t] || j.primary[t] || [0, DEFU[t]])[1]; });
+}
+const audit = (what, target, detail) => AUDIT[S.app].unshift({at:'just now', who:'m.jensen', what, target, detail});
+const addRev = (msg, changes) => { const n = nextRev(); REVS[S.app].unshift({n, at:'just now', who:'m.jensen', msg, changes}); return n; };
+
+/* ============ status model: the same words and colours in both programs ============ */
+const STATE = {ok:['ok','OK'], failed:['bad','Failed'], late:['bad','Late'], running:['info','Running'], copying:['info','Copying'], waiting:['info','Waiting'], excluded:['mute','Excluded']};
+const statusCell = (st) => pill(...STATE[st.s]) + (st.s === 'ok' ? '' : `<div class="faint small">${st.short}</div>`);
+function vsCell(j){
+  if (j.copy.s === 'excluded') return pill('mute', 'Not copied');
+  const s = shortfall(j.primary, j.off);
+  if (s.length) return pill('warn', 'Shorter') + `<div class="faint small">${s.map(k => `${TS[k]} ${fmt(j.off[k])} vs ${fmt(j.primary[k])}`).join(', ')}</div>`;
+  const longer = TK.some(k => days(j.off[k]) > days(j.primary[k])) || (j.off.last || 0) > (j.primary.last || 0);
+  return pill('ok', longer ? 'Longer' : 'Same');
+}
+const hostBtn = (h) => `<button class="btn sm" data-act="host" data-h="${h.fqdn}">Open host</button>`;
+const jobBtn = (j) => `<button class="btn sm" data-act="job" data-k="${j.key}">Open job</button>`;
+const inOther = (j) => `<button class="btn sm" data-act="openIn" data-k="${j.key}">Open in ${A().otherName} ↗</button>`;
+// Everything that needs a person, worst first. Host problems are reported once, on the host, not on each job.
+function attention(app){
+  const out = [];
+  if (app === 'server') HOSTS.forEach(h => {
+    const n = jobsOf(h).length;
+    if (h.agent.s === 'offline') out.push({sev:'bad', h, short:'agent offline', text:`Agent offline since ${h.agent.seen} (2 days). ${plural(n, 'job is', 'jobs are')} not being backed up.`, btn:hostBtn(h)});
+    if (h.rev.applied !== null && h.rev.applied !== h.rev.current) out.push({sev:'warn', h, short:`config drift (revision ${h.rev.applied})`, text:`Config drift: the agent runs revision ${h.rev.applied}, but this host's config changed in revision ${h.rev.current} (${h.rev.since}). The agent is online but has not applied it.`, btn:hostBtn(h)});
+  });
+  JOBS.forEach(j => {
+    const h = H(j.host), s = shortfall(j.primary, j.off), detail = s.map(k => `${TS[k]} ${fmt(j.off[k])} vs ${fmt(j.primary[k])}`).join(', ');
+    if (app === 'server'){
+      if (j.backup.s === 'failed' || (j.backup.s === 'late' && h.agent.s !== 'offline')) out.push({sev:'bad', h, j, short:`${j.id}: ${j.backup.short}`, text:j.backup.text, btn:jobBtn(j)});
+      if (j.copy.s === 'failed') out.push({sev:'bad', h, j, short:`${j.id}: off-site copy failing`, text:`Off-site copy is failing. Reported by Holdfast Vault: ${j.copy.text}`, btn:inOther(j)});
+      if (s.length && j.copy.s !== 'excluded') out.push({sev:'warn', h, j, short:`${j.id}: off-site shorter`, text:`Off-site keeps less than primary (${detail}). Off-site retention is set in Holdfast Vault.`, btn:inOther(j)});
+    } else {
+      if (['failed','late'].includes(j.copy.s)) out.push({sev:'bad', h, j, short:`${j.id}: copying failing`, text:j.copy.text, btn:jobBtn(j)});
+      if (s.length && j.copy.s !== 'excluded') out.push({sev:'warn', h, j, short:`${j.id}: off-site shorter`, text:`Off-site keeps less than primary (${detail}).`, btn:`<button class="btn sm" data-act="match" data-k="${j.key}">Match primary</button>`});
+    }
+  });
+  PEND[app].forEach((p, i) => { const j = J(p.key); out.push({sev:'warn', h:H(j.host), j, short:`${j.id}: retention cut waiting`, text:`Retention cut waiting: ${p.change}. ${p.ids.length} snapshots will be deleted ${app === 'vault' ? 'from site B ' : ''}on ${p.on}.`, btn:`<button class="btn sm" data-act="keep" data-i="${i}">Keep the longer retention</button>`}); });
+  return out.sort((a, b) => (a.sev === 'bad' ? 0 : 1) - (b.sev === 'bad' ? 0 : 1));
+}
+// One status per host, in the same four words as the Overview: Problem, To check, In progress, OK.
+function hostStatus(app, h){
+  const items = attention(app).filter(x => x.h.fqdn === h.fqdn), jobs = jobsOf(h);
+  const bad = items.filter(x => x.sev === 'bad'), warn = items.filter(x => x.sev === 'warn');
+  if (bad.length) return ['bad', 'Problem', bad.map(x => x.short).join(' · ')];
+  if (warn.length) return ['warn', 'To check', warn.map(x => x.short).join(' · ')];
+  if (app === 'server' && h.agent.s === 'waiting') return ['info', 'In progress', `waiting for agent · code expires ${h.agent.expires}`];
+  if (app === 'vault' && jobs.some(j => j.copy.s === 'copying')) return ['info', 'In progress', 'first copy · 42 %'];
+  if (app === 'vault' && jobs.every(j => j.copy.s === 'waiting')) return ['info', 'In progress', 'nothing to copy yet'];
+  const ex = jobs.filter(j => j.copy.s === 'excluded').length;
+  if (app === 'vault' && h.agent.s === 'offline') return ['ok', 'OK', `up to date · nothing new in site A since ${h.a.last}`];
+  return ['ok', 'OK', app === 'vault' && ex ? `${plural(ex, 'job', 'jobs')} excluded` : app === 'server' ? `agent online · ${h.agent.seen}` : `last copy ${h.b.last}`];
+}
+
+/* ============ shared components ============ */
+const kpi = (label, value, sub, bar, color) => `<div class="kpi" style="--bar:${bar || 'transparent'}"><span class="l">${label}</span><b${color ? ` style="color:${color}"` : ''}>${value}</b><span class="s">${sub}</span></div>`;
+const head = (title, sub, actions) => `<div class="head"><div><h1>${title}</h1><p class="sub">${sub}</p></div><div class="row">${actions || ''}</div></div>`;
+const banner = (cls, html) => `<div class="banner ${cls}">${html}</div>`;
+const card = (title, right, body, pad, cls) => `<section class="card ${cls || ''}"><div class="ch"><h2>${title}</h2>${right || ''}</div>${pad === false ? body : `<div class="cb">${body}</div>`}</section>`;
+// Fixed column widths: the same table looks identical in both programs, so nothing shifts when you switch.
+const table = (cols, rows, empty, widths) => `<div class="tw"><table class="${widths ? 'fixed wide' : ''}">${widths ? `<colgroup>${widths.map(w => `<col style="width:${w}">`).join('')}</colgroup>` : ''}<thead><tr>${cols.map(c => typeof c === 'string' ? `<th>${c}</th>` : `<th class="${c.cls}">${c.t}</th>`).join('')}</tr></thead><tbody>${rows.length ? rows.join('') : `<tr><td colspan="${cols.length}" class="muted">${empty}</td></tr>`}</tbody></table></div>`;
+const hostName = (h) => `<button class="textlink" data-act="host" data-h="${h.fqdn}">${short(h.fqdn)}</button>`;
+const jobName = (j) => `<button class="textlink" data-act="job" data-k="${j.key}">${short(j.host)} / ${j.id}</button>`;
+const lockNote = () => `<p class="lockline">🔒 = read-only here. ${S.app === 'server' ? 'Off-site settings are made in Holdfast Vault.' : 'Primary settings are made in Holdfast Server.'}</p>`;
+const stub = (label, msg, cls) => `<button class="btn ${cls || ''}" data-act="stub" data-msg="${msg}">${label}</button>`;
+const kv = (pairs) => `<dl class="kv">${pairs.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl>`;
+
+/* ============ chrome ============ */
+function mockbar(){
+  return `<div class="mockbar"><span class="tag">Mockup</span><span>Two separate programs, shown together for review:</span>
+    <button data-act="app" data-v="server" aria-pressed="${S.app === 'server'}">Holdfast Server · site A</button>
+    <button data-act="app" data-v="vault" aria-pressed="${S.app === 'vault'}">Holdfast Vault · site B</button>
+    <span class="url">${A().url}</span><span class="grow"></span>
+    <button data-act="notes" aria-pressed="${S.notes}">Design notes</button></div>
+  ${S.notes ? `<div class="notes">
+    <div><b>Structure (the same in both programs)</b><ul>
+      <li><b>Overview</b> is the quick glance: a one-line summary, four cards, what needs attention, and a tile for every host.</li>
+      <li><b>Hosts → host → job → snapshots</b> is the path to everything else. A host is where the agent runs and where its repository lives.</li>
+      <li>Agent problems (offline, config drift) are reported once, on the host. They are not repeated on each of its jobs.</li>
+      <li>Switching programs keeps you on the same page, host or job. A 🔒 column or card is read-only in that program.</li></ul></div>
+    <div><b>Status words (the same in both)</b><ul>
+      <li>${pill('bad','Problem')}, or on jobs ${pill('bad','Failed')} ${pill('bad','Late')}: something is wrong now.</li>
+      <li>${pill('warn','To check')}, or ${pill('warn','Shorter')}: needs a decision. Covers config drift and pending retention cuts.</li>
+      <li>${pill('info','In progress')}, or ${pill('info','Copying')} ${pill('info','Waiting')}: happening now. ${pill('mute','Excluded')}: off on purpose. ${pill('ok','OK')}: nothing to do.</li></ul></div>
+    <div><b>Telling the programs apart, and terms</b><ul>
+      <li>Holdfast Vault has red-tinted chrome and a red "VAULT · SITE B" badge. Holdfast Server has a slate "SERVER · SITE A" badge.</li>
+      <li><b>Primary</b> is the copy in site A. <b>Off-site</b> is the copy in site B. <b>Pending prune</b>: a retention cut that waits 7 days. <b>Retired</b>: removed, data kept.</li>
+      <li><code>O101</code> (off-site keeps less than primary) is a proposed new code. Pages that are not shown are as in App.dc.html.</li></ul></div>
+  </div>` : ''}`;
+}
+const LOGO = `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--logo)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v18"/><path d="M5 21c0-4 3-7 7-7s7 3 7 7"/><path d="M8 7c1.5-1 2.5-2.5 4-4 1.5 1.5 2.5 3 4 4"/></svg>`;
+const NAV = [['overview','Overview'],['hosts','Hosts'],['restores','Restores'],['pending','Pending prunes'],['retired','Retired'],['history','Config history'],['audit','Audit'],['settings','Settings']];
+const TITLES = Object.fromEntries(NAV);
+function sidebar(){
+  const bad = attention(S.app).filter(x => x.sev === 'bad').length, cur = ['host','job'].includes(S.page) ? 'hosts' : S.page;
+  const items = NAV.map(([p, l]) => {
+    const badge = p === 'overview' && bad ? `<span class="count bad" title="Problems">${bad}</span>` : p === 'pending' && PEND[S.app].length ? `<span class="count warn" title="Pending prunes">${PEND[S.app].length}</span>` : '';
+    return `<button data-act="go" data-v="${p}" ${cur === p ? 'aria-current="page"' : ''}><span>${l}</span>${badge}</button>`;
+  }).join('');
+  const stat = S.app === 'server'
+    ? ['Holdfast Server: active in site A', 'Standby in site B: in sync', 'Holdfast Vault: reported 40 s ago', 'Storage, site A: OK, versioning on']
+    : ['Holdfast Vault: active in site B', 'Holdfast Server: pulled 40 s ago', 'Storage, site A: readable (read-only key)', 'Storage, site B: OK, versioning on'];
+  return `<div class="brand">${LOGO}<span>${A().name}<small>${A().site}</small></span></div>
+    <nav class="nav" aria-label="Sections">${items}</nav>
+    <div class="sidestat">${stat.map(s => `<span><i class="dot"></i>${s}</span>`).join('')}</div>`;
+}
+function topbar(){
+  let crumbs = `<button data-act="go" data-v="overview">${A().name}</button><span aria-hidden="true">/</span>`;
+  if (S.page === 'host' || S.page === 'job'){
+    crumbs += `<button data-act="go" data-v="hosts">Hosts</button><span aria-hidden="true">/</span>`;
+    crumbs += S.page === 'host' ? `<strong>${short(S.host)}</strong>` : `<button data-act="host" data-h="${S.host}">${short(S.host)}</button><span aria-hidden="true">/</span><strong>${J(S.job).id}</strong>`;
+  } else crumbs += `<strong>${TITLES[S.page]}</strong>`;
+  return `<nav class="crumbs" aria-label="Breadcrumb">${crumbs}</nav><div class="row"><span class="sitebadge">${A().badge}</span><span class="user">m.jensen · admin · via OIDC</span></div>`;
+}
+
+/* ============ pages (each page exists in both programs) ============ */
+function pOverview(){
+  const att = attention(S.app), bad = att.filter(x => x.sev === 'bad').length, warn = att.length - bad;
+  const clean = HOSTS.filter(h => !att.some(x => x.h.fqdn === h.fqdn)).length;
+  const summary = bad ? banner('bad', `<span><b>${plural(bad, 'problem needs', 'problems need')} attention</b>${warn ? `, and ${plural(warn, 'thing', 'things')} to check.` : '.'}</span>`)
+    : warn ? banner('warn', `<span><b>No problems.</b> ${plural(warn, 'thing', 'things')} to check.</span>`) : banner('ok', '<span><b>Everything is OK.</b> Nothing needs attention.</span>');
+  const tiles = HOSTS.map(h => { const [c, , why] = hostStatus(S.app, h); return `<button class="tile" data-act="host" data-h="${h.fqdn}"><i class="jd ${c}"></i><span><b>${short(h.fqdn)}</b><small>${why}</small></span></button>`; }).join('');
+  return head('Overview', S.app === 'server' ? 'Quick glance at backups in site A. Off-site status is reported by Holdfast Vault.' : 'Quick glance at off-site copies in site B. Hosts, jobs and primary retention come from Holdfast Server.')
+  + summary
+  + `<section class="kpis">
+      ${kpi('Problems', bad, 'Failed, late or offline', bad ? 'var(--bad)' : '', bad ? 'var(--bad)' : '')}
+      ${kpi('To check', warn, 'Needs a decision', warn ? '#F59E0B' : '', warn ? 'var(--warn)' : '')}
+      ${kpi('Hosts without issues', `${clean} of ${HOSTS.length}`, 'No problems, nothing to check')}
+      ${kpi('Connection', '40 s ago', S.app === 'server' ? 'Last report from Holdfast Vault' : 'Last pull from Holdfast Server')}
+    </section>`
+  + card('Needs attention', '', att.length ? `<div class="tw"><table class="fixed wide"><colgroup><col style="width:10%"><col style="width:15%"><col style="width:53%"><col style="width:22%"></colgroup><tbody>${att.map(x => `<tr>
+      <td>${x.sev === 'bad' ? pill('bad','Problem') : pill('warn','To check')}</td>
+      <td>${x.j ? jobName(x.j) : hostName(x.h)}</td><td>${x.text}</td><td style="text-align:right">${x.btn}</td></tr>`).join('')}</tbody></table></div>`
+      : `<div class="cb"><span class="muted">Nothing needs attention.</span></div>`, false)
+  + card('All hosts', `<span class="faint" style="font-size:13px">${HOSTS.length} hosts · select one to open it</span>`, `<div class="tiles">${tiles}</div>`, false);
+}
+function jobsCell(h){
+  return `<div class="joblist">${jobsOf(h).map(j => { const st = own(j), [c] = STATE[st.s]; return `<span><i class="jd ${c}"></i>${j.id}${st.s === 'ok' ? '' : `<span class="faint">&nbsp;· ${STATE[st.s][1].toLowerCase()}</span>`}</span>`; }).join('')}</div>`;
+}
+function pHosts(){
+  const srv = S.app === 'server', att = attention(S.app);
+  const sets = {all:HOSTS, attention:HOSTS.filter(h => att.some(x => x.h.fqdn === h.fqdn)), shorter:HOSTS.filter(h => jobsOf(h).some(j => j.copy.s !== 'excluded' && shortfall(j.primary, j.off).length))};
+  const chip = (k, label) => `<button class="chip" data-act="filter" data-v="${k}" aria-pressed="${S.filter === k}">${label} (${sets[k].length})</button>`;
+  const rows = sets[S.filter].map(h => { const [c, l, why] = hostStatus(S.app, h), side = srv ? h.a : h.b;
+    return `<tr><td>${hostName(h)}<div class="faint small">${h.fqdn}</div></td><td>${pill(c, l)}<div class="faint small">${why}</div></td><td>${jobsCell(h)}</td>
+      <td>${side.last}</td><td>${side.size}<div class="faint small">${snapCount(side.snaps)}</div></td></tr>`; });
+  return head('Hosts', srv ? 'Every host with an agent. Open a host for its agent, repository and jobs.' : 'Every host that Holdfast Server reports. Open a host for its off-site repository and jobs.',
+      srv ? stub('Add host', 'Add host works as in App.dc.html: FQDN, profile, a 15-minute single-use code and the install command.') : '')
+    + `<div class="chips">${chip('all', 'All hosts')}${chip('attention', 'Needs attention')}${chip('shorter', 'Off-site shorter than primary')}</div>`
+    + card(`${sets[S.filter].length} hosts`, '', table(['Host','Status','Jobs', A().lastCol, srv ? 'Repository (site A)' : 'Repository (site B)'], rows, 'No hosts match this filter.', ['20%','28%','20%','14%','18%']), false);
+}
+function jobRows(list){
+  const srv = S.app === 'server';
+  return list.map(j => `<tr><td>${jobName(j)}<div class="faint small">${j.sched}</div></td><td>${statusCell(own(j))}</td><td>${own(j).last}</td>
+    <td class="${srv ? '' : 'locked'}">${shortRet(j.primary)}</td><td class="${srv ? 'locked' : ''}">${shortRet(j.off)}${j.copy.s === 'excluded' ? '<div class="faint small">not copied · applies to the data already kept</div>' : ''}</td>
+    <td>${vsCell(j)}</td>
+    <td><div class="row">${srv ? (j.backup.s === 'waiting' ? '' : stub('Back up now', `Backup of ${j.key} queued. It starts within a minute.`, 'sm'))
+      : (shortfall(j.primary, j.off).length && j.copy.s !== 'excluded' ? `<button class="btn sm" data-act="match" data-k="${j.key}">Match primary</button>` : '')}</div></td></tr>`);
+}
+const jobCols = () => { const srv = S.app === 'server'; return ['Job','Status', A().lastCol, srv ? 'Primary retention' : {t:'Primary retention 🔒', cls:'locked'}, srv ? {t:'Off-site retention 🔒', cls:'locked'} : 'Off-site retention', 'Off-site vs primary', '']; };
+function pHost(){
+  const h = H(S.host), srv = S.app === 'server', [c, l, why] = hostStatus(S.app, h), jobs = jobsOf(h);
+  const hist = AUDIT[S.app].filter(a => a.target.includes(short(h.fqdn))).slice(0, 5).map(a => `<tr><td>${a.at}</td><td>${a.who}</td><td>${a.what}</td><td class="muted">${a.target} · ${a.detail}</td></tr>`);
+  const agentLine = h.agent.s === 'online' ? `${pill('ok','Online')} last seen ${h.agent.seen}` : h.agent.s === 'offline' ? `${pill('bad','Offline')} last seen ${h.agent.seen}` : `${pill('info','Waiting')} not connected yet`;
+  const revLine = h.rev.applied === null ? '—' : h.rev.applied === h.rev.current ? `${pill('ok','In sync')} revision ${h.rev.applied}` : `${pill('warn','Drift')} runs revision ${h.rev.applied}, expected ${h.rev.current} (${h.rev.since})`;
+  const pend = PEND.vault.filter(p => J(p.key).host === h.fqdn).length, ex = jobs.filter(j => j.copy.s === 'excluded').length;
+  const primaryCard = card('Primary (site A)', srv ? '' : '<span class="faint" style="font-size:13px">🔒 reported by Holdfast Server</span>', kv([
+      ['Agent', agentLine], ['Config', revLine], ['Software', h.sw], ['OS', h.os], ['Enrolled', h.enrolled],
+      ['Repository', `<code>${APPS.server.repo(h.fqdn)}</code>`], ['Size', h.a.snaps ? `${h.a.size} · ${snapCount(h.a.snaps)}` : snapCount(0)]]), true, srv ? '' : 'locked');
+  const offCard = card('Off-site (site B)', srv ? '<span class="faint" style="font-size:13px">🔒 reported by Holdfast Vault</span>' : '', kv([
+      ['Copies', jobs.some(j => j.copy.s === 'failed') ? `${pill('bad','Failing')} see the jobs below` : jobs.every(j => j.copy.s === 'waiting') ? `${pill('info','Waiting')} nothing to copy yet` : jobs.some(j => j.copy.s === 'copying') ? `${pill('info','Copying')} first copy · 42 %` : `${pill('ok','OK')} last copy ${h.b.last}`],
+      ['Repository', `<code>${APPS.vault.repo(h.fqdn)}</code>`], ['Size', h.b.snaps ? `${h.b.size} · ${snapCount(h.b.snaps)}` : h.b.size === '—' ? snapCount(0) : `${h.b.size} · first copy running`],
+      ['Excluded jobs', ex ? `${ex}` : 'none'], ['Pending prunes', pend ? `${pend}` : 'none'], ['Storage floor', 'versioning on · deleted versions kept 30 days']]), true, srv ? 'locked' : '');
+  const statusText = srv ? (h.agent.s === 'waiting' ? `Waiting for the agent. The enrollment code expires at ${h.agent.expires}.`
+      : h.agent.s === 'offline' ? `The agent has been offline since ${h.agent.seen}. None of this host's jobs are being backed up.`
+      : h.rev.applied !== h.rev.current ? `The agent is online but runs revision ${h.rev.applied}. This host's config changed in revision ${h.rev.current} (${h.rev.since}).`
+      : `The agent is online (last seen ${h.agent.seen}) and runs the current config (revision ${h.rev.applied}).`) : `${why.charAt(0).toUpperCase() + why.slice(1)}.`;
+  const enroll = srv && h.agent.s === 'waiting' ? card('Enrollment', '<span class="faint" style="font-size:13px">Single-use code, valid 15 minutes</span>', `
+      <div class="steps"><span class="step done">✓ Host added (revision 119)</span><span class="step now">● Waiting for agent</span><span class="step">○ Agent connected</span><span class="step">○ First backup done</span></div>
+      <div><h3>Run on ${short(h.fqdn)} as root</h3><pre class="cmd">holdfast-agent enroll --server https://holdfast.dc1.example.com \\\n  --fqdn ${h.fqdn} --code ${h.agent.code} --ca-sha256 3f9a…c21e</pre></div>
+      <div class="row"><span class="muted">The code expires at ${h.agent.expires}.</span>${stub('New code', 'A new code was issued. The old one no longer works.', 'sm')}</div>`) : '';
+  return head(short(h.fqdn), `${h.fqdn} · ${h.os === '—' ? 'OS not known yet' : h.os}`, srv ? stub('Add job', 'Add job works as in App.dc.html (paths, protection, checks).') + stub('Remove host…', 'Removing a host retires its repository in site A. No data is deleted; decommission is a separate action.') : '')
+  + banner(c, `${pill(c, l)}<span>${statusText}</span>`)
+  + enroll
+  + `<div class="grid2">${primaryCard}${offCard}</div>`
+  + lockNote()
+  + card(`Jobs on ${short(h.fqdn)}`, '', table(jobCols(), jobRows(jobs), 'No jobs.', ['15%','12%','10%','18%','18%','12%','15%']), false)
+  + card('Host history', `<span class="faint" style="font-size:13px">From the audit log of ${A().name}</span>`, table(['When','Who','What','Detail'], hist, 'Nothing yet.', ['14%','18%','22%','46%']), false);
+}
+function snapRows(j){
+  return rowsFor(j).map(row => {
+    const p = keeps(j.primary, row);
+    let os = j.copy.s !== 'excluded' && keeps(j.off, row) ? 'copied' : 'notkept';
+    if (j.copy.s === 'excluded') os = row.age >= 21 && keeps(j.off, row) ? 'copied' : 'excluded';
+    if (j.copy.s === 'copying' && row.age === 0) os = 'copying';
+    if (j.copy.s === 'failed' && row.age === 0) os = 'pending';
+    return {row, p, o:os === 'copied', os, id:pid(j, row), oid:oid(j, row)};
+  }).filter(r => r.p || r.os !== 'notkept');
+}
+function snapCell(j, r, which){
+  if (which === 'primary') return r.p
+    ? (S.app === 'server' ? `<button class="idlink" data-act="stub" data-msg="The snapshot page (Files, Changes, Restore) is as in App.dc.html.">${r.id}</button>` : `<span class="mono">${r.id}</span>`) + `<div class="faint small">kept by ${keptBy(j.primary, r.row)}</div>`
+    : `<span class="faint">—</span><div class="faint small">Pruned</div>`;
+  if (r.os === 'copied') return `<span class="mono">${r.oid}</span><div class="faint small">kept by ${keptBy(j.off, r.row)}</div>`;
+  if (r.os === 'copying') return pill('info', 'Copying · 42 %');
+  if (r.os === 'pending') return pill('bad', 'Not copied yet') + '<div class="faint small">copying is failing</div>';
+  if (r.os === 'excluded') return `<span class="faint">—</span><div class="faint small">Not copied (excluded)</div>`;
+  return `<span class="faint">—</span><div class="faint small">Not kept off-site</div>`;
+}
+function pJob(){
+  const j = J(S.job), srv = S.app === 'server', st = own(j), side = A().side;
+  const pendHere = PEND[S.app].map((p, i) => [p, i]).filter(([p]) => p.key === j.key);
+  const pendThere = PEND[srv ? 'vault' : 'server'].filter(p => p.key === j.key);
+  const units = ['hours','days','weeks','months','years'];
+  const cell = (col, k) => {
+    if (col !== side) return `<td class="locked">${k === 'last' ? j[col].last : fmt(j[col][k])}</td>`;
+    if (k === 'last') return `<td><input type="number" min="0" data-tier="last" value="${S.draft.last || 0}" aria-label="Always keep the newest"></td>`;
+    return `<td><div class="row" style="flex-wrap:nowrap"><input type="number" min="0" data-tier="${k}" value="${S.draft[k] ? S.draft[k][0] : ''}" placeholder="—" aria-label="${TL[k]} for, number">
+      <select data-tier="${k}" data-part="u" aria-label="${TL[k]} for, unit">${units.map(u => `<option value="${u}" ${S.units[k] === u ? 'selected' : ''}>${u}</option>`).join('')}</select></div></td>`;
+  };
+  const pCol = srv ? 'Primary (site A)' : {t:'Primary (site A) 🔒', cls:'locked'}, oCol = srv ? {t:'Off-site (site B) 🔒', cls:'locked'} : 'Off-site (site B)';
+  const editRows = TK.map(k => `<tr><td>${TL[k]} for</td>${cell('primary', k)}${cell('off', k)}</tr>`).concat([`<tr><td>Always keep the newest</td>${cell('primary', 'last')}${cell('off', 'last')}</tr>`]);
+  const pendRows = pendHere.map(([p, i]) => `<tr><td>${srv ? 'Primary (site A)' : 'Off-site (site B)'}</td><td>${p.change}</td><td>${p.ids.length} · ${p.range}</td><td><b>${p.on}</b></td>
+      <td><div class="row"><button class="btn sm" data-act="keep" data-i="${i}">Keep the longer retention</button><button class="btn sm danger" data-act="prune" data-i="${i}">Prune now…</button></div></td></tr>`)
+    .concat(pendThere.map(p => `<tr><td class="locked">${srv ? 'Off-site (site B)' : 'Primary (site A)'} 🔒</td><td class="locked">${p.change}</td><td class="locked">${p.ids.length} · ${p.range}</td><td class="locked">${p.on}</td><td class="faint">Managed in ${A().otherName}</td></tr>`));
+  const snaps = snapRows(j).map(r => `<tr><td>${r.row.date}</td><td>${snapCell(j, r, 'primary')}</td><td>${snapCell(j, r, 'off')}</td>
+    <td>${srv ? `<button class="btn sm" data-act="restore" data-k="${j.key}" data-s="${r.id}" data-of="${r.oid}" data-p="${r.p ? 1 : 0}" data-o="${r.o ? 1 : 0}">Restore…</button>` : ''}</td></tr>`);
+  const acts = (srv ? (j.backup.s === 'waiting' ? '' : stub('Back up now', `Backup of ${j.key} queued. It starts within a minute.`)) : `<button class="btn" data-act="excl" data-k="${j.key}">${j.copy.s === 'excluded' ? 'Include' : 'Exclude'}</button>`)
+    + `<button class="btn danger" data-act="prune" data-i="${pendHere.length ? pendHere[0][1] : ''}" ${pendHere.length ? '' : 'disabled title="Nothing is pending"'}>Prune now…</button>`;
+  const hostLink = `<button class="textlink" data-act="host" data-h="${j.host}" style="font-weight:500">${j.host}</button>`;
+  return head(`${short(j.host)} / ${j.id}`, `${hostLink} · ${j.sched}`, acts)
+  + banner(STATE[st.s][0], `${pill(...STATE[st.s])}<span>${st.text}</span>${j.backup.s === 'late' && H(j.host).agent.s === 'offline' && srv ? `<button class="btn sm" data-act="host" data-h="${j.host}">Open host</button>` : ''}`)
+  + card('Retention', `<span class="faint" style="font-size:13px">${srv ? 'Primary' : 'Off-site'} is editable here</span>`,
+      `${lockNote()}<div class="tw"><table class="editor fixed"><colgroup><col style="width:30%"><col style="width:35%"><col style="width:35%"></colgroup><thead><tr><th>Rule</th>${[pCol, oCol].map(c => typeof c === 'string' ? `<th>${c}</th>` : `<th class="${c.cls}">${c.t}</th>`).join('')}</tr></thead><tbody>${editRows.join('')}</tbody></table></div>
+       <p class="muted" id="derived" style="margin:0;font-size:13px"></p><div id="checks" style="display:flex;flex-direction:column;gap:8px"></div>
+       <div class="row">${srv ? '' : `<button class="btn" data-act="matchDraft">Match primary</button>`}<button class="btn" data-act="undo">Undo changes</button><button class="btn primary" id="saveBtn" data-act="save" disabled>Save as revision ${nextRev()}</button></div>`)
+  + card('Pending prunes', '', table(['Where','Change','Snapshots','Deleted on',''], pendRows, 'Nothing is pending for this job.', ['17%','20%','21%','12%','30%']), false)
+  + card('Snapshots', '<span class="faint" style="font-size:13px">Every snapshot, in both sites</span>', table(['Taken','Primary (site A)','Off-site (site B)',''], snaps, 'No snapshots yet.', ['22%','30%','30%','18%']), false);
+}
+function pRestores(){
+  const srv = S.app === 'server', list = srv ? RESTORES : RESTORES.filter(r => r.from === 'off');
+  const rows = list.map(r => `<tr><td>${r.at}</td><td>${r.who}</td><td>${jobName(J(r.job))}</td><td><span class="mono">${r.snap}</span></td>
+    <td>${r.from === 'off' ? `Off-site (site B)<div class="faint small">read-only access ${r.grant}, 4 h, automatic</div>` : 'Primary (site A)'}</td><td><code>${r.to}</code></td>
+    <td>${r.res === 'ok' ? pill('ok', 'OK') : pill('info', 'Running')}</td></tr>`);
+  return head('Restores', srv ? 'Every restore, from either site.' : 'Restores from site B. Each one gets read-only access for 4 hours, granted automatically.',
+      srv ? `<button class="btn" data-act="newRestore">New restore…</button>` : '')
+    + card(`${list.length} restores`, '', table(['When','Who','Job','Snapshot','From','To','Result'], rows, 'No restores yet.', ['11%','9%','13%','10%','20%','28%','9%']), false);
+}
+function pPending(){
+  const srv = S.app === 'server', other = PEND[srv ? 'vault' : 'server'].length;
+  const rows = PEND[S.app].map((p, i) => `<tr><td>${jobName(J(p.key))}</td><td>${p.change}</td><td>${p.ids.length} · ${p.range}</td><td><b>${p.on}</b></td><td>${p.by} · ${p.at}</td>
+    <td><div class="row"><button class="btn sm" data-act="keep" data-i="${i}">Keep the longer retention</button><button class="btn sm danger" data-act="prune" data-i="${i}">Prune now…</button></div></td></tr>`);
+  return head('Pending prunes', `Retention cuts wait 7 days before anything is deleted from ${srv ? 'site A' : 'site B'}.`)
+    + card(`${PEND[S.app].length} pending`, '', table(['Job','Change','Snapshots','Deleted on','Requested',''], rows, 'Nothing is pending.', ['14%','18%','19%','10%','12%','27%']), false)
+    + `<p class="lockline">🔒 ${srv ? 'Off-site' : 'Primary'} pending prunes (${other}) are managed in ${A().otherName}.</p>`;
+}
+function pRetired(){
+  const srv = S.app === 'server';
+  const rows = RETIRED[S.app].map((r, i) => `<tr><td><b>${short(r.host)}</b><div class="faint small">${r.host} · job ${r.jobs}</div></td><td>${r.removed}</td><td>${r.snaps} snapshots · ${r.size}</td><td>${shortRet(r.ret)}</td>
+    <td>${r.decom ? pill('warn', r.decom) : `<button class="btn sm danger" data-act="decom" data-i="${i}">Decommission…</button>`}</td></tr>`);
+  return head('Retired', `Hosts and jobs removed from the config. The data in ${srv ? 'site A' : 'site B'} is kept under its last retention until you decommission it.`)
+    + card(`${RETIRED[S.app].length} retired`, '', table(['Host','Removed','Data in this site','Retention still applied',''], rows, 'Nothing is retired.', ['20%','20%','16%','26%','18%']), false);
+}
+function pHistory(){
+  const rows = REVS[S.app].map(r => `<tr><td><b>${r.n}</b></td><td>${r.at}</td><td>${r.who}</td><td>${r.msg}</td><td class="muted">${r.changes}</td>
+    <td>${stub('Diff', `Diff of revision ${r.n} against ${r.n - 1}: works as in App.dc.html.`, 'sm')}</td></tr>`);
+  return head('Config history', `Every saved change in ${A().name} is a revision. Any two can be diffed. There is no rollback: undo by editing and saving.`)
+    + card(`${REVS[S.app].length} latest revisions`, '', table(['Revision','When','Who','Message','Changes',''], rows, 'No revisions.', ['9%','12%','16%','22%','33%','8%']), false);
+}
+function pAudit(){
+  const rows = AUDIT[S.app].map(a => `<tr><td>${a.at}</td><td>${a.who}</td><td>${a.what}</td><td>${a.target}</td><td class="muted">${a.detail}</td></tr>`);
+  return head('Audit', `Everything that happened in ${A().name}, append-only.`) + card(`${AUDIT[S.app].length} latest entries`, '', table(['When','Who','Action','Target','Detail'], rows, 'Nothing yet.', ['12%','18%','18%','18%','34%']), false);
+}
+function pSettings(){
+  const srv = S.app === 'server';
+  return head('Settings', srv ? 'Server settings. Changing them needs root on the server (server.yaml).' : 'Vault settings. Changing them needs root on the vault.')
+  + `<div class="grid2">
+    ${card('Login', '', kv([['Method','OIDC · https://auth.example.com (LDAP also supported)'],['Groups claim','<code>groups</code>'],
+      ['Bindings', srv ? '<code>holdfast-admins</code> → admin<br><code>holdfast-editors</code> → editor<br><code>holdfast-viewers</code> → viewer' : '<code>holdfast-vault-admins</code> → admin<br><code>holdfast-vault-viewers</code> → viewer']]) + '<p class="lockline">The second factor is the OIDC provider\'s job.</p>')}
+    ${card('Storage', '', kv([['Endpoint', srv ? 'https://rgw.dc1.example.com' : 'https://rgw.dc2.example.com'],['Bucket', srv ? '<code>holdfast</code>' : '<code>holdfast-offsite</code>'],['Versioning', pill('ok','On')],['Deleted versions kept','30 days, set by the storage owners']]))}
+    ${card('Connection', '', kv(srv ? [['Holdfast Vault','vault.dc2.example.com · last report 40 s ago'],['Direction','The vault connects to this server. This server never connects to the vault.']]
+                                    : [['Holdfast Server','holdfast.dc1.example.com · pulled every 30 s · last pull 40 s ago'],['Direction','This vault opens every connection. Nothing in site A can connect to it.']]))}
+    ${card('Defaults', '', kv(srv ? [['New hosts','Profile Standard'],['Retention cuts','Wait 7 days (pending prune)']]
+                                  : [['New jobs','Copied automatically'],['Off-site retention','Starts as a copy of primary. It is never linked.'],['Retention cuts','Wait 7 days (pending prune)']]))}
+  </div>`;
+}
+
+/* ============ checks (same engine in both programs) ============ */
+function checksFor(j, d){
+  const side = A().side, cur = j[side], out = [];
+  const cut = TK.filter(k => days(d[k]) < days(cur[k])), lastCut = (d.last || 0) < (cur.last || 0);
+  if (cut.length || lastCut){
+    const lost = rowsFor(j).filter(r => keeps(cur, r) && !keeps(d, r)).length;
+    out.push({code:'R104', sev:'warn', text:`<b>Retention cut</b> (${cut.map(k => TS[k]).concat(lastCut ? ['newest N'] : []).join(', ')}). ${plural(lost, 'snapshot', 'snapshots')} in ${side === 'primary' ? 'site A' : 'site B'} would no longer be kept. They become a pending prune and are deleted after 7 days, on 28 Nov. Until then, "Keep the longer retention" undoes it in one click.`});
+  }
+  const p = side === 'primary' ? d : j.primary, o = side === 'off' ? d : j.off;
+  const before = shortfall(j.primary, j.off), after = shortfall(p, o).filter(k => !before.includes(k));
+  if (after.length) out.push({code:'O101', sev:'warn', text:`<b>Off-site would keep less than primary</b>: ${after.map(k => `${TS[k]} ${fmt(o[k])} vs ${fmt(p[k])}`).join(', ')}.${side === 'primary' ? ' Off-site retention is set in Holdfast Vault.' : ''} <span class="faint">(Proposed code.)</span>`});
+  if (!TK.some(k => d[k]) && !(d.last > 0)) out.push({code:'R004', sev:'error', text:'<b>Nothing is kept.</b>'});
+  if (!d.yearly) out.push({code:'I001', sev:'info', text:'No yearly tier.'});
+  return out;
+}
+function derived(d){
+  const max = Math.max(...TK.map(k => days(d[k])));
+  const where = A().side === 'primary' ? 'site A' : 'site B';
+  if (!max) return `Oldest restore point in ${where}: only the newest snapshots.`;
+  return `Oldest restore point in ${where}: about ${max >= 365 ? Math.round(max / 365.25) + ' years' : max >= 60 ? Math.round(max / 30.44) + ' months' : Math.round(max) + ' days'}.`;
+}
+function updateChecks(full){
+  const j = J(S.job); if (!j || !el('checks')) return;
+  const cs = checksFor(j, S.draft);
+  if (full !== false){
+    el('checks').innerHTML = cs.length ? cs.map(c => `<div class="check ${c.sev}"><span><span class="code">${c.code}</span> · ${c.text}</span>${c.sev === 'warn' ? `<label><input type="checkbox" data-accept="${c.code}" ${S.acc[c.code] ? 'checked' : ''}> Accept ${c.code}</label>` : ''}</div>`).join('') : '<p class="muted" style="margin:0;font-size:13px">No warnings.</p>';
+    el('derived').textContent = derived(S.draft);
+  }
+  const blocked = cs.some(c => c.sev === 'error') || cs.some(c => c.sev === 'warn' && !S.acc[c.code]);
+  el('saveBtn').disabled = same(S.draft, j[A().side]) || blocked;
+}
+
+/* ============ modals ============ */
+const shell = (title, body, foot) => `<div class="modal" role="dialog" aria-modal="true" aria-label="${title}"><div class="mh"><h2>${title}</h2><button class="btn sm" data-act="close">Close</button></div><div class="mb">${body}</div><div class="mf">${foot}</div></div>`;
+const opt = (act, v, cur, label, desc, ok) => `<button class="opt" role="radio" aria-checked="${cur === v}" data-act="${act}" data-v="${v}" ${ok === false ? 'disabled' : ''}><span class="r"></span><span><b>${label}</b><br><span class="muted">${desc}</span></span></button>`;
+function mRestore(){
+  const m = S.modal, j = J(m.k);
+  return shell(`Restore ${m.s} · ${short(j.host)} / ${j.id}`, `
+    <div><h3>Restore from</h3><div class="opts" role="radiogroup">
+      ${opt('msrc', 'primary', m.src, 'Primary (site A)', m.p ? `Snapshot ${m.s}` : 'Not available: pruned in site A', m.p)}
+      ${opt('msrc', 'off', m.src, 'Off-site (site B)', m.o ? `Off-site copy ${m.of}` : 'Not available off-site', m.o)}</div></div>
+    ${m.src === 'off' ? banner('mute', `<span>Holdfast Vault gives <b>${short(j.host)}</b> read-only access to <code>${m.of}</code> for 4 hours. No approval is needed. Both programs log it.</span>`) : ''}
+    <div><h3>Restore to</h3><div class="opts" role="radiogroup">
+      ${opt('mtgt', 'new', m.tgt, 'New directory', `/var/restore/2026-11-21-m.jensen-${m.s} · root only (0700) · files keep owner, mode and ACLs`)}
+      ${opt('mtgt', 'orig', m.tgt, 'Original location', 'Admin only. Backs up what it will replace first, then restores in overwrite mode.')}
+      ${opt('mtgt', 'other', m.tgt, 'Another directory', 'Choose a path on the host')}</div></div>
+    <p class="muted" style="margin:0">Everything in the snapshot is selected. Left out: none.</p>`,
+    `<button class="btn" data-act="close">Cancel</button><button class="btn" data-act="doRestore" data-dry="1">Dry run</button><button class="btn primary" data-act="doRestore">Restore</button>`);
+}
+function mPrune(){
+  const p = PEND[S.app][S.modal.i], j = J(p.key), where = S.app === 'server' ? 'site A' : 'site B';
+  const cmd = `restic -r ${A().repo(j.host)} \\\n  forget ${p.ids.map(x => x.id).join(' ')} \\\n  --prune`;
+  return shell(`Prune now · ${short(j.host)} / ${j.id} · ${where}`, `
+    ${banner('bad', `<span>Deletes <b>${p.ids.length}</b> snapshots from ${where} <b>now</b>, instead of on ${p.on}. Date range: ${p.range}.</span>`)}
+    ${table(['Snapshot','Taken'], p.ids.slice(0, 6).map(x => `<tr><td><span class="mono">${x.id}</span></td><td>${x.date}</td></tr>`).concat(p.ids.length > 6 ? [`<tr><td colspan="2" class="muted">… and ${p.ids.length - 6} more (the full list is paginated and filterable by month)</td></tr>`] : []), '')}
+    <div><h3>Exact command</h3><pre class="cmd">${cmd}</pre></div>
+    <p class="lockline">Holdfast cannot undo this. The bucket keeps deleted versions for 30 days, and only the storage owners can recover them. Deleted IDs stay findable in search as Deleted.</p>
+    <label class="row"><span>Type <b>${short(j.host)}</b> to confirm</span><input class="confirm" data-confirm="${short(j.host)}" autocomplete="off"></label>`,
+    `<button class="btn" data-act="close">Cancel</button><button class="btn danger" id="confirmBtn" data-act="doPrune" disabled>Delete ${p.ids.length} snapshots from ${where}</button>`);
+}
+function mDecom(){
+  const r = RETIRED[S.app][S.modal.i], where = S.app === 'server' ? 'site A' : 'site B';
+  return shell(`Decommission · ${short(r.host)} · ${where}`, `
+    ${banner('bad', `<span>Deletes <b>all</b> data for this host in ${where}: ${r.snaps} snapshots, ${r.size}. A <b>14-day</b> grace period applies, during which it can be cancelled. (The grace period's length is still open.)</span>`)}
+    <label class="row"><span>Type the FQDN <b>${r.host}</b> to confirm</span><input class="confirm" data-confirm="${r.host}" autocomplete="off"></label>`,
+    `<button class="btn" data-act="close">Cancel</button><button class="btn danger" id="confirmBtn" data-act="doDecom" disabled>Schedule decommission</button>`);
+}
+
+/* ============ actions ============ */
+const act = {
+  // Both programs have the same pages, so switching keeps you on the same page, host or job.
+  app(d){ S.app = d.v; S.modal = null; S.toast = null; if (S.page === 'job') openJob(S.job); },
+  go(d){ S.page = d.v; S.modal = null; S.toast = null; },
+  host(d){ S.page = 'host'; S.host = d.h; S.toast = null; },
+  job(d){ openJob(d.k); S.toast = null; },
+  openIn(d){ S.app = S.app === 'server' ? 'vault' : 'server'; openJob(d.k); S.toast = null; },
+  filter(d){ S.filter = d.v; },
+  newRestore(){ S.page = 'hosts'; S.toast = 'Choose a host, then a job, then a snapshot to restore.'; },
+  notes(){ S.notes = !S.notes; },
+  dismiss(){ S.toast = null; },
+  stub(d){ S.toast = d.msg; },
+  close(){ S.modal = null; },
+  restore(d){ S.modal = {type:'restore', k:d.k, s:d.s, of:d.of, p:d.p === '1', o:d.o === '1', src:d.p === '1' ? 'primary' : 'off', tgt:'new'}; },
+  msrc(d){ S.modal.src = d.v; },
+  mtgt(d){ S.modal.tgt = d.v; },
+  doRestore(d){
+    const m = S.modal, j = J(m.k), off = m.src === 'off'; S.modal = null;
+    if (d.dry){ S.toast = `Dry run queued on ${short(j.host)} from ${off ? 'off-site (site B)' : 'primary (site A)'}. It lists what would be restored and writes nothing.`; return; }
+    const to = m.tgt === 'new' ? `/var/restore/2026-11-21-m.jensen-${m.s}` : m.tgt === 'orig' ? 'original location' : 'another directory';
+    RESTORES.unshift({at:'just now', who:'m.jensen', job:j.key, snap:m.s, from:off ? 'off' : 'primary', grant:off ? m.of : '', to, res:'running'});
+    AUDIT.server.unshift({at:'just now', who:'m.jensen', what:off ? 'Restore from off-site' : 'Restore', target:`${j.key} ${m.s}`, detail:`to ${to}`});
+    if (off) AUDIT.vault.unshift({at:'just now', who:'m.jensen, via Holdfast Server', what:'Restore access granted (automatic)', target:`${j.key} ${m.of}`, detail:'read-only · 4 h'});
+    S.toast = `Restore queued on ${short(j.host)} from ${off ? 'off-site (site B). Holdfast Vault granted read-only access automatically' : 'primary (site A)'}. Follow it under Restores.`;
+  },
+  match(d){
+    const j = J(d.k), t = R(j.primary);
+    const cuts = TK.some(k => days(t[k]) < days(j.off[k])) || (t.last || 0) < (j.off.last || 0);
+    if (!cuts){ const old = clone(j.off); j.off = t; const n = addRev(`Match primary for ${j.key}`, `${j.key}: ${diffText(old, t)}`); audit('Retention changed', j.key, `match primary · ${diffText(old, t)}`);
+      S.toast = `Saved as revision ${n}: ${j.key} now keeps the same as primary.`; return; }
+    openJob(j.key); S.draft = t; TK.forEach(k => { if (t[k]) S.units[k] = t[k][1]; });
+    S.toast = 'Matching primary would cut off-site retention for this job. Review the warning below and save, or undo.';
+  },
+  matchDraft(){ const j = J(S.job); S.draft = R(j.primary); TK.forEach(k => { if (j.primary[k]) S.units[k] = j.primary[k][1]; }); },
+  undo(){ openJob(S.job); },
+  excl(d){
+    const j = J(d.k), on = j.copy.s !== 'excluded';
+    j.copy = on ? {s:'excluded', last:j.copy.last, short:'excluded by m.jensen', text:'Not copied since just now: excluded by m.jensen. The off-site data is kept.'}
+                : {s:'ok', last:j.copy.last, text:'Copying resumes with the next backup.'};
+    const n = addRev(`${on ? 'Exclude' : 'Include'} ${j.key}`, `${j.key}: ${on ? 'excluded' : 'included'}`); audit(on ? 'Job excluded' : 'Job included', j.key, on ? 'copying stopped · data kept' : 'copying resumes');
+    S.toast = on ? `Saved as revision ${n}. Copying stopped for ${j.key}. Its off-site data is kept; deleting it is a separate action.` : `Saved as revision ${n}. Copying resumes for ${j.key}.`;
+    if (S.page === 'job') openJob(j.key);
+  },
+  save(){
+    const j = J(S.job), side = A().side, cs = checksFor(j, S.draft), old = clone(j[side]), next = clone(S.draft);
+    const cut = cs.some(c => c.code === 'R104'), accepted = cs.filter(c => c.sev === 'warn').map(c => c.code);
+    const lost = rowsFor(j).filter(r => keeps(old, r) && !keeps(next, r)).map(r => ({id: side === 'primary' ? pid(j, r) : oid(j, r), date: r.date}));
+    j[side] = next;
+    const n = addRev(`${side === 'primary' ? 'Primary' : 'Off-site'} retention for ${j.key}`, `${j.key}: ${diffText(old, next)}${accepted.length ? ' · ' + accepted.join(', ') + ' accepted' : ''}`);
+    if (cut) PEND[S.app].push({key:j.key, change:diffText(old, next), range: lost.length ? `${lost[lost.length - 1].date} – ${lost[0].date}` : 'none today', on:'28 Nov', by:'m.jensen', at:'today', revert:old, ids:lost});
+    audit(cut ? 'Retention cut' : 'Retention changed', j.key, diffText(old, next) + (accepted.length ? ` · ${accepted.join(', ')} accepted` : ''));
+    S.toast = `Saved as revision ${n}.` + (cut ? ' The cut waits until 28 Nov. See Pending prunes.' : '');
+    openJob(j.key);
+  },
+  keep(d){
+    const i = +d.i, p = PEND[S.app][i], j = J(p.key), side = A().side; j[side] = clone(p.revert); PEND[S.app].splice(i, 1);
+    const n = addRev(`Keep the longer retention for ${p.key}`, `${p.key}: undid ${p.change}`); audit('Kept the longer retention', p.key, `undid ${p.change}`);
+    S.toast = `Saved as revision ${n}. ${p.key} keeps the longer retention. Nothing will be deleted.`;
+    if (S.page === 'job') openJob(S.job);
+  },
+  prune(d){ if (d.i !== '') S.modal = {type:'prune', i:+d.i}; },
+  doPrune(){
+    const i = S.modal.i, p = PEND[S.app][i]; S.modal = null; PEND[S.app].splice(i, 1);
+    audit('Prune now', p.key, `${p.ids.length} snapshots deleted · IDs stay findable as Deleted`);
+    S.toast = `Deleted ${p.ids.length} snapshots of ${p.key} from ${S.app === 'server' ? 'site A' : 'site B'}. Their IDs stay findable in search as Deleted.`;
+  },
+  decom(d){ S.modal = {type:'decom', i:+d.i}; },
+  doDecom(){
+    const r = RETIRED[S.app][S.modal.i]; S.modal = null; r.decom = 'Decommission on 5 Dec';
+    audit('Decommission scheduled', short(r.host), 'all data in this site · 14-day grace period');
+    S.toast = `Decommission of ${short(r.host)} is scheduled for 5 Dec. It can be cancelled until then.`;
+  },
+};
+
+/* ============ render and events ============ */
+const PAGES = {overview:pOverview, hosts:pHosts, host:pHost, job:pJob, restores:pRestores, pending:pPending, retired:pRetired, history:pHistory, audit:pAudit, settings:pSettings};
+function render(){
+  document.body.className = S.app === 'vault' ? 'vault' : '';
+  document.title = A().name;
+  el('mockbar').innerHTML = mockbar();
+  el('side').innerHTML = sidebar();
+  el('top').innerHTML = topbar();
+  el('content').innerHTML = (S.toast ? `<div class="toast" role="status"><span>${S.toast}</span><button class="btn sm" data-act="dismiss">Dismiss</button></div>` : '') + PAGES[S.page]();
+  const ov = el('overlay');
+  ov.innerHTML = S.modal ? ({restore:mRestore, prune:mPrune, decom:mDecom})[S.modal.type]() : '';
+  ov.hidden = !S.modal;
+  if (S.page === 'job') updateChecks();
+}
+document.addEventListener('click', (e) => {
+  const t = e.target.closest('[data-act]');
+  if (!t || t.disabled) return;
+  act[t.dataset.act](t.dataset);
+  render();
+});
+function onField(e){
+  const t = e.target;
+  if (t.dataset.tier){
+    const k = t.dataset.tier;
+    if (k === 'last') S.draft.last = Math.max(0, parseInt(t.value, 10) || 0);
+    else if (t.dataset.part === 'u'){ S.units[k] = t.value; if (S.draft[k]) S.draft[k][1] = t.value; }
+    else { const n = parseInt(t.value, 10); S.draft[k] = n > 0 ? [n, S.units[k]] : null; }
+    S.acc = {}; updateChecks();
+  }
+  if (t.dataset.accept){ S.acc[t.dataset.accept] = t.checked; updateChecks(false); }
+  if (t.dataset.confirm !== undefined){ el('confirmBtn').disabled = t.value.trim() !== t.dataset.confirm; }
+}
+document.addEventListener('input', onField);
+document.addEventListener('change', (e) => { if (e.target.dataset.accept || e.target.tagName === 'SELECT') onField(e); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && S.modal){ S.modal = null; render(); } });
+// Deep links for review: #server/overview, #vault/hosts, #server/host/app01.dc1.example.com, #vault/job/db01/system
+if (typeof location !== 'undefined' && location.hash.length > 1){
+  const [app, page, ...rest] = location.hash.slice(1).split('/');
+  if (APPS[app]) S.app = app;
+  if (page === 'job' && J(rest.join('/'))) openJob(rest.join('/'));
+  else if (page === 'host' && H(rest.join('/'))){ S.page = 'host'; S.host = rest.join('/'); }
+  else if (PAGES[page]) S.page = page;
+}
+render();
+</script>
+</body>
+</html>

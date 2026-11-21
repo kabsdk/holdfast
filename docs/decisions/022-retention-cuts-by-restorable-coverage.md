@@ -1,0 +1,25 @@
+# 022: Retention cuts are detected by what can still be restored
+
+Status: accepted, 2026-11-21
+
+## Decision
+
+A change is a retention cut (R104, which leads to a pending prune) if it reduces **what can still be
+restored**. The names of the tiers do not matter. Removing a tier is not a cut if a finer tier covers its
+window.
+
+## Why
+
+**Comparing tiers by name gives the wrong answer both ways.**
+- **False alarms.** Replacing "one per week for 8 weeks" with "one per day for 60 days" removes a tier but
+  keeps more.
+- **Missed cuts.** Shortening a window without renaming anything is a real cut.
+
+**Coverage is what the operator cares about.** It is the set of restore points that survive.
+
+*The reason is inferred. The rule itself is stated in the brief.*
+
+## Consequences
+
+- Cut detection compares the restore points each policy would keep, using the same model as restic. It does
+  not compare the config fields.
