@@ -182,7 +182,7 @@ func TestHostLifecycle(t *testing.T) {
 	rr := httptest.NewRecorder()
 	s.AgentHandler().ServeHTTP(rr, httptest.NewRequest("GET", "/metrics", nil))
 	for _, want := range []string{"holdfast_config_head_revision 2", `holdfast_agent_config_in_sync{host="web01.example.com"} 0`,
-		`holdfast_runs_total{host="web01.example.com",kind="backup",job="system",status="success"} 1`, `holdfast_job_longest_gap_seconds{host="web01.example.com",job="system"} 86400`} {
+		`holdfast_runs_total{host="web01.example.com",kind="backup",job_id="system",status="success"} 1`, `holdfast_job_longest_gap_seconds{host="web01.example.com",job_id="system"} 86400`} {
 		if !strings.Contains(rr.Body.String(), want) {
 			t.Errorf("metrics lack %q", want)
 		}

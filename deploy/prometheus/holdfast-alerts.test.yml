@@ -1,0 +1,94 @@
+# promtool unit tests for holdfast-alerts.yml (make rules-test). promtool time starts at 0, so a
+# timestamp of 600 means "10 minutes after the test began".
+rule_files:
+  - holdfast-alerts.yml
+
+evaluation_interval: 1m
+
+tests:
+  # A daily job (longest gap 1 day) that last succeeded at t=600 goes stale after 2 days, not before.
+  - interval: 1m
+    input_series:
+      - series: 'holdfast_job_last_success_timestamp_seconds{host="web01",job_id="system"}'
+        values: '600x3000'
+      - series: 'holdfast_job_longest_gap_seconds{host="web01",job_id="system"}'
+        values: '86400x3000'
+    alert_rule_test:
+      - eval_time: 47h
+        alertname: HoldfastBackupStale
+        exp_alerts: []
+      - eval_time: 49h
+        alertname: HoldfastBackupStale
+        exp_alerts:
+          - exp_labels: {severity: page, host: web01, job_id: system}
+            exp_annotations:
+              summary: "web01/system: no successful backup for 2d 0h 50m 0s"
+
+  # A job that has never succeeded is not "stale"; that is HoldfastFirstBackupMissing.
+  - interval: 1m
+    input_series:
+      - series: 'holdfast_job_last_success_timestamp_seconds{host="new01",job_id="system"}'
+        values: '0x200'
+      - series: 'holdfast_job_longest_gap_seconds{host="new01",job_id="system"}'
+        values: '60x200'
+      - series: 'holdfast_host_state{host="new01",state="enrolled"}'
+        values: '1x200'
+      - series: 'holdfast_host_first_backup_timestamp_seconds{host="new01"}'
+        values: '0x200'
+    alert_rule_test:
+      - eval_time: 2h
+        alertname: HoldfastBackupStale
+        exp_alerts: []
+      - eval_time: 2h
+        alertname: HoldfastFirstBackupMissing
+        exp_alerts:
+          - exp_labels: {severity: ticket, host: new01, state: enrolled}
+            exp_annotations:
+              summary: "new01 is enrolled but has no successful backup yet"
+
+  # The server says t=10000; storage's newest is t=5000: more than an hour apart.
+  - interval: 1m
+    input_series:
+      # As Prometheus stores it: the scrape adds job and instance, and Holdfast's own label is job_id.
+      - series: 'holdfast_job_last_success_timestamp_seconds{host="file01",job_id="home",instance="srv",job="holdfast-server"}'
+        values: '10000x60'
+      - series: 'holdfast_storage_newest_snapshot_timestamp_seconds{host="file01",instance="witness"}'
+        values: '5000x60'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: HoldfastWitnessDisagreement
+        exp_alerts:
+          - exp_labels: {severity: page, host: file01}
+            exp_annotations:
+              summary: "file01: the server reports a backup 1h 23m 20s newer than anything in storage"
+
+  # The host has backed up, but the witness sees no snapshot for it.
+  - interval: 1m
+    input_series:
+      - series: 'holdfast_host_first_backup_timestamp_seconds{host="db01"}'
+        values: '100x60'
+      - series: 'holdfast_storage_newest_snapshot_timestamp_seconds{host="other"}'
+        values: '100x60'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: HoldfastStorageMissing
+        exp_alerts:
+          - exp_labels: {severity: page, host: db01}
+            exp_annotations:
+              summary: "db01 has backed up, but storage holds no snapshot for it"
+
+  # Drift for 40 minutes alerts; 20 minutes does not.
+  - interval: 1m
+    input_series:
+      - series: 'holdfast_agent_config_in_sync{host="mon01"}'
+        values: '0x60'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: HoldfastConfigDrift
+        exp_alerts: []
+      - eval_time: 40m
+        alertname: HoldfastConfigDrift
+        exp_alerts:
+          - exp_labels: {severity: ticket, host: mon01}
+            exp_annotations:
+              summary: "The agent on mon01 does not run its current config"

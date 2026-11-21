@@ -1,0 +1,23 @@
+[Unit]
+Description=Holdfast backup agent
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=exec
+ExecStart=/usr/bin/holdfast-agent run --config /etc/holdfast/agent.yaml
+# Runs as root: reading every file and restoring owners, ACLs and SELinux labels needs it.
+# No ProtectHome and no PrivateTmp: a job may back up /home, /root, /tmp or /var/tmp, and an
+# in-place restore (M2) must be able to write there (plan-m1 P15).
+StateDirectory=holdfast-agent
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=true
+Restart=always
+RestartSec=10
+# SIGTERM leaves the run marker; the next start reports the run as "interrupted".
+KillMode=control-group
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

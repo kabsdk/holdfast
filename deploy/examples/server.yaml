@@ -1,0 +1,38 @@
+# /etc/holdfast/server.yaml (root only; a change needs a reload, which is audited)
+
+listen: ":8443"                      # agents, /metrics and /healthz
+public_url: https://holdfast.example.internal:8443
+tls:
+  cert_file: /etc/holdfast/tls/server.crt
+  key_file: /etc/holdfast/tls/server.key
+ca_sha256: ""                        # shown in the install command so agents pin the server
+api_socket: /run/holdfast/api.sock   # /api/v1 for root on this host (M1); HTTPS with OIDC from M4
+
+database_dsn_file: /etc/holdfast/db.dsn
+credentials_key_file: /etc/holdfast/credentials.key   # holdfast-server keygen <path>; keep a copy offline
+state_dir: /var/lib/holdfast-server
+restic_bin: /usr/libexec/holdfast/restic
+default_zone: Europe/Copenhagen      # for schedules without their own zone
+
+storage:
+  endpoint: https://rgw.example.internal
+  bucket: holdfast
+  region: default
+  maintenance_credentials_file: /etc/holdfast/maintenance.env   # AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY, root only
+  provisioner_command: [/usr/libexec/holdfast/provision-host]   # makes each host's S3 identity (see storage package)
+
+maintenance:
+  check_every: 24h                   # restic check with a rotating read-data subset (M1 runs check only)
+  check_cycle_days: 30
+
+# Spec §6.4. Acted on from M4.
+auth:
+  oidc:
+    issuer: https://auth.example.internal
+    groups_claim: groups
+  bootstrap_admins: []
+content_view:
+  enabled: false
+  require_mode_bits: "0004"
+  roles: [admin]
+  max_file_size: 1MiB

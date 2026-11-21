@@ -10,7 +10,8 @@ import (
 
 // handleMetrics exposes Prometheus text format (plan-m1 §11). Ages are left to Prometheus
 // (time() - timestamp), so a frozen server is caught by up == 0, not by stale numbers.
-// Nothing here is a secret.
+// Nothing here is a secret. A backup job is labelled job_id, never job: Prometheus owns the job
+// label (the scrape job) and would rename ours to exported_job.
 func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	q := s.st.Q()
@@ -85,14 +86,14 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 				last, status = j.Status.LastSuccessAt, j.Status.LastStatus
 			}
 			gap, _ := time.ParseDuration(j.LongestGap)
-			fmt.Fprintf(&b, "holdfast_job_last_success_timestamp_seconds{host=%q,job=%q} %s\n", h.FQDN, j.ID, ts(last))
-			fmt.Fprintf(&b, "holdfast_job_longest_gap_seconds{host=%q,job=%q} %.0f\n", h.FQDN, j.ID, gap.Seconds())
+			fmt.Fprintf(&b, "holdfast_job_last_success_timestamp_seconds{host=%q,job_id=%q} %s\n", h.FQDN, j.ID, ts(last))
+			fmt.Fprintf(&b, "holdfast_job_longest_gap_seconds{host=%q,job_id=%q} %.0f\n", h.FQDN, j.ID, gap.Seconds())
 			for _, st := range []string{"success", "warning", "failed", "interrupted"} {
 				v := 0
 				if status == st {
 					v = 1
 				}
-				fmt.Fprintf(&b, "holdfast_job_last_status{host=%q,job=%q,status=%q} %d\n", h.FQDN, j.ID, st, v)
+				fmt.Fprintf(&b, "holdfast_job_last_status{host=%q,job_id=%q,status=%q} %d\n", h.FQDN, j.ID, st, v)
 			}
 		}
 	}
@@ -101,7 +102,7 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		fmt.Fprintf(&b, "# HELP holdfast_runs_total Runs reported by agents.\n# TYPE holdfast_runs_total counter\n")
 		for _, c := range counters {
-			fmt.Fprintf(&b, "holdfast_runs_total{host=%q,kind=%q,job=%q,status=%q} %d\n", c.FQDN, c.Kind, c.JobID, c.Status, c.Count)
+			fmt.Fprintf(&b, "holdfast_runs_total{host=%q,kind=%q,job_id=%q,status=%q} %d\n", c.FQDN, c.Kind, c.JobID, c.Status, c.Count)
 		}
 	}
 	if last, err := q.LastMaintenanceSuccess(ctx, "check"); err == nil {

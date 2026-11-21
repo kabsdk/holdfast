@@ -1,0 +1,21 @@
+[Unit]
+Description=Holdfast storage witness (lists the bucket for Prometheus)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=exec
+# Its key may only list repos/. It holds no repository password.
+# The key file stays root-only in /etc; systemd hands this unprivileged service a private copy.
+ExecStart=/usr/bin/holdfast-freshness -endpoint https://rgw.example.internal -bucket holdfast -credentials-file ${CREDENTIALS_DIRECTORY}/witness.env -listen :9817
+DynamicUser=true
+LoadCredential=witness.env:/etc/holdfast/witness.env
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,23 @@
+[Unit]
+Description=Holdfast server (configurator and maintenance leader)
+Wants=network-online.target postgresql.service
+After=network-online.target postgresql.service
+
+[Service]
+Type=exec
+ExecStart=/usr/bin/holdfast-server -config /etc/holdfast/server.yaml
+# The API socket in /run/holdfast is root-only; the CLI on this host talks to it.
+RuntimeDirectory=holdfast
+RuntimeDirectoryMode=0700
+StateDirectory=holdfast-server
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/holdfast-server /run/holdfast
+PrivateTmp=true
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

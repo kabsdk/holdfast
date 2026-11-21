@@ -1,0 +1,10 @@
+# /etc/holdfast/agent.yaml, written by `holdfast-agent enroll`.
+server: https://holdfast.example.internal:8443
+fqdn: web01.example.com
+ca_sha256: ""
+state_dir: /var/lib/holdfast-agent
+credentials_dir: /etc/holdfast/credentials
+restic_bin: /usr/libexec/holdfast/restic
+poll_timeout: 25s
+tick: 1s
+retry_lock: 15m

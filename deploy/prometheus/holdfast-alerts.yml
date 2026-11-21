@@ -1,0 +1,122 @@
+# Holdfast alert rules (plan-m1 §11). Two witnesses: the server (what agents reported) and the storage
+# witness (what is actually in the bucket). When they disagree, storage wins. Tested by
+# holdfast-alerts.test.yml (make rules-test).
+groups:
+  - name: holdfast
+    rules:
+      - alert: HoldfastServerDown
+        expr: up{job="holdfast-server"} == 0
+        for: 5m
+        labels: {severity: page}
+        annotations:
+          summary: "Holdfast control plane unreachable. Agents keep backing up; watch the storage freshness alerts."
+
+      - alert: HoldfastBackupStale
+        # Catches every way backups stop: agent dead, network, bug, disabled job. A job with no
+        # successful backup yet is covered by HoldfastFirstBackupMissing instead.
+        expr: |
+          (time() - holdfast_job_last_success_timestamp_seconds > 2 * holdfast_job_longest_gap_seconds)
+          and holdfast_job_last_success_timestamp_seconds > 0
+        for: 10m
+        labels: {severity: page}
+        annotations:
+          summary: "{{ $labels.host }}/{{ $labels.job_id }}: no successful backup for {{ $value | humanizeDuration }}"
+
+      - alert: HoldfastFirstBackupMissing
+        expr: holdfast_host_state{state="enrolled"} == 1 and on(host) holdfast_host_first_backup_timestamp_seconds == 0
+        for: 1h
+        labels: {severity: ticket}
+        annotations:
+          summary: "{{ $labels.host }} is enrolled but has no successful backup yet"
+
+      - alert: HoldfastBackupFailed
+        expr: holdfast_job_last_status{status=~"failed|interrupted"} == 1
+        labels: {severity: ticket}
+        annotations:
+          summary: "{{ $labels.host }}/{{ $labels.job_id }}: last run {{ $labels.status }}"
+
+      - alert: HoldfastBackupIncomplete
+        expr: holdfast_job_last_status{status="warning"} == 1
+        for: 24h
+        labels: {severity: ticket}
+        annotations:
+          summary: "{{ $labels.host }}/{{ $labels.job_id }}: snapshots are incomplete (unreadable files) for 24h"
+
+      - alert: HoldfastAgentOffline
+        expr: time() - holdfast_agent_last_seen_timestamp_seconds > 900
+        for: 5m
+        labels: {severity: ticket}
+        annotations:
+          summary: "The agent on {{ $labels.host }} has not contacted the server for {{ $value | humanizeDuration }}"
+
+      - alert: HoldfastConfigDrift
+        expr: holdfast_agent_config_in_sync == 0
+        for: 30m
+        labels: {severity: ticket}
+        annotations:
+          summary: "The agent on {{ $labels.host }} does not run its current config"
+
+      - alert: HoldfastAgentClockSkew
+        expr: abs(holdfast_agent_clock_offset_seconds) > 60
+        for: 15m
+        labels: {severity: ticket}
+        annotations:
+          summary: "The clock on {{ $labels.host }} is {{ $value }}s off the server's: schedules and snapshot times are skewed"
+
+      - alert: HoldfastStorageStale
+        # Independent of the server: read straight from the bucket.
+        expr: |
+          (time() - max by (host) (holdfast_storage_newest_snapshot_timestamp_seconds)
+            > 2 * max by (host) (holdfast_job_longest_gap_seconds))
+          and max by (host) (holdfast_storage_newest_snapshot_timestamp_seconds) > 0
+        for: 15m
+        labels: {severity: page}
+        annotations:
+          summary: "Storage shows no new snapshot for {{ $labels.host }} in {{ $value | humanizeDuration }}"
+
+      - alert: HoldfastStorageMissing
+        # The server knows the host has backed up, but storage has no snapshot for it at all.
+        expr: |
+          max by (host) (holdfast_host_first_backup_timestamp_seconds) > 0
+          unless on(host) max by (host) (holdfast_storage_newest_snapshot_timestamp_seconds) > 0
+        for: 15m
+        labels: {severity: page}
+        annotations:
+          summary: "{{ $labels.host }} has backed up, but storage holds no snapshot for it"
+
+      - alert: HoldfastWitnessDisagreement
+        # The server reports a success that storage does not contain.
+        expr: |
+          max by (host) (holdfast_job_last_success_timestamp_seconds)
+            - on(host) max by (host) (holdfast_storage_newest_snapshot_timestamp_seconds) > 3600
+        for: 15m
+        labels: {severity: page}
+        annotations:
+          summary: "{{ $labels.host }}: the server reports a backup {{ $value | humanizeDuration }} newer than anything in storage"
+
+      - alert: HoldfastStorageScrapeFailed
+        expr: holdfast_storage_scrape_success == 0 or absent(holdfast_storage_scrape_success)
+        for: 10m
+        labels: {severity: page}
+        annotations:
+          summary: "The storage witness cannot list the bucket"
+
+      - alert: HoldfastMaintenanceStale
+        expr: time() - holdfast_maintenance_last_success_timestamp_seconds{kind="check"} > 3 * 86400
+        labels: {severity: ticket}
+        annotations:
+          summary: "{{ $labels.host }}: restic check has not succeeded for 3 days"
+
+      - alert: HoldfastEscrowOutdated
+        expr: holdfast_escrow_missing_hosts > 0
+        for: 24h
+        labels: {severity: ticket}
+        annotations:
+          summary: "{{ $value }} hosts' credentials are in no escrow bundle: export one and store it offline"
+
+      - alert: Watchdog
+        # Always firing; route it to an external dead-man's switch outside both sites.
+        expr: vector(1)
+        labels: {severity: none}
+        annotations:
+          summary: "Holdfast alerting pipeline is alive"
