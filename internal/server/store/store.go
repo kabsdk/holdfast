@@ -22,6 +22,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/kabsdk/holdfast/internal/config"
+	"github.com/kabsdk/holdfast/internal/server/storage"
 )
 
 //go:embed migrations/*.sql
@@ -292,6 +293,8 @@ type Host struct {
 	AddedAt       time.Time  `json:"added_at"`
 	ConnectedAt   *time.Time `json:"connected_at,omitempty"`
 	FirstBackupAt *time.Time `json:"first_backup_at,omitempty"`
+	// Storage is the last storage contract test (decision 029); nil before the first.
+	Storage *storage.Report `json:"storage,omitempty"`
 }
 
 // CreateHost records a new host. A host that exists already (even retired) is refused.
@@ -303,12 +306,34 @@ func (q *Q) CreateHost(ctx context.Context, fqdn string, rev int64, now time.Tim
 	return err
 }
 
-const hostCols = `fqdn, state, added_revision, added_at, connected_at, first_backup_at`
+const hostCols = `fqdn, state, added_revision, added_at, connected_at, first_backup_at, storage_checked_at, storage_findings`
 
 func scanHost(row pgx.Row) (Host, error) {
 	var h Host
-	err := row.Scan(&h.FQDN, &h.State, &h.AddedRevision, &h.AddedAt, &h.ConnectedAt, &h.FirstBackupAt)
+	var checked *time.Time
+	var findings []byte
+	err := row.Scan(&h.FQDN, &h.State, &h.AddedRevision, &h.AddedAt, &h.ConnectedAt, &h.FirstBackupAt, &checked, &findings)
+	if err == nil && checked != nil {
+		h.Storage = &storage.Report{CheckedAt: *checked, Findings: []storage.Finding{}}
+		if len(findings) > 0 {
+			err = json.Unmarshal(findings, &h.Storage.Findings)
+		}
+	}
 	return h, notFound(err)
+}
+
+// RecordStorageCheck keeps a host's latest storage contract test.
+func (q *Q) RecordStorageCheck(ctx context.Context, fqdn string, r storage.Report) error {
+	findings := r.Findings
+	if findings == nil {
+		findings = []storage.Finding{}
+	}
+	b, err := json.Marshal(findings)
+	if err != nil {
+		return err
+	}
+	_, err = q.db.Exec(ctx, `UPDATE hosts SET storage_checked_at = $2, storage_findings = $3 WHERE fqdn = $1`, fqdn, r.CheckedAt, b)
+	return err
 }
 
 // GetHost returns one host.
@@ -479,25 +504,35 @@ type SealedCredentials struct {
 	RepoPassword   []byte
 	S3AccessKeyID  string
 	S3Secret       []byte
+	S3KeySource    string // KeyByAdmin or KeyByHoldfast
 	CreatedAt      time.Time
 	EscrowExportID *int64
 }
 
+// Who made a host's S3 key (decision 029).
+const (
+	KeyByAdmin    = "admin"    // given at host add or set-key
+	KeyByHoldfast = "holdfast" // generated, then made by the provisioner command
+)
+
 // PutCredentials stores a host's credentials, replacing any older version.
 func (q *Q) PutCredentials(ctx context.Context, c SealedCredentials) error {
-	_, err := q.db.Exec(ctx, `INSERT INTO host_credentials (fqdn, version, repository, repo_password, s3_access_key_id, s3_secret, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+	if c.S3KeySource == "" {
+		c.S3KeySource = KeyByHoldfast
+	}
+	_, err := q.db.Exec(ctx, `INSERT INTO host_credentials (fqdn, version, repository, repo_password, s3_access_key_id, s3_secret, s3_key_source, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		ON CONFLICT (fqdn) DO UPDATE SET version = $2, repository = $3, repo_password = $4, s3_access_key_id = $5, s3_secret = $6,
-		created_at = $7, escrow_export_id = NULL`,
-		c.FQDN, c.Version, c.Repository, c.RepoPassword, c.S3AccessKeyID, c.S3Secret, c.CreatedAt)
+		s3_key_source = $7, created_at = $8, escrow_export_id = NULL`,
+		c.FQDN, c.Version, c.Repository, c.RepoPassword, c.S3AccessKeyID, c.S3Secret, c.S3KeySource, c.CreatedAt)
 	return err
 }
 
-const credCols = `fqdn, version, repository, repo_password, s3_access_key_id, s3_secret, created_at, escrow_export_id`
+const credCols = `fqdn, version, repository, repo_password, s3_access_key_id, s3_secret, s3_key_source, created_at, escrow_export_id`
 
 func scanCreds(row pgx.Row) (SealedCredentials, error) {
 	var c SealedCredentials
-	err := row.Scan(&c.FQDN, &c.Version, &c.Repository, &c.RepoPassword, &c.S3AccessKeyID, &c.S3Secret, &c.CreatedAt, &c.EscrowExportID)
+	err := row.Scan(&c.FQDN, &c.Version, &c.Repository, &c.RepoPassword, &c.S3AccessKeyID, &c.S3Secret, &c.S3KeySource, &c.CreatedAt, &c.EscrowExportID)
 	return c, notFound(err)
 }
 

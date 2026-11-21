@@ -107,6 +107,14 @@ groups:
         annotations:
           summary: "{{ $labels.host }}: restic check has not succeeded for 3 days"
 
+      - alert: HoldfastStorageContractBroken
+        # A host key may do more than docs/storage.md allows, or the server can no longer maintain the
+        # host's repository (decision 029). The daily check finds it, so it can be up to a day old.
+        expr: holdfast_storage_contract_failed == 1
+        labels: {severity: page}
+        annotations:
+          summary: "{{ $labels.host }}: storage check {{ $labels.code }} fails (holdfast host show {{ $labels.host }})"
+
       - alert: HoldfastEscrowOutdated
         expr: holdfast_escrow_missing_hosts > 0
         for: 24h

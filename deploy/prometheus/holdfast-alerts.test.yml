@@ -6,6 +6,22 @@ rule_files:
 evaluation_interval: 1m
 
 tests:
+  # A storage check that fails pages at once, naming the host and the check's code (decision 029). A host
+  # whose storage passes does not.
+  - interval: 1m
+    input_series:
+      - series: 'holdfast_storage_contract_failed{host="web01",code="B005"}'
+        values: '1x10'
+      - series: 'holdfast_storage_contract_ok{host="db01"}'
+        values: '1x10'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: HoldfastStorageContractBroken
+        exp_alerts:
+          - exp_labels: {severity: page, host: web01, code: B005}
+            exp_annotations:
+              summary: "web01: storage check B005 fails (holdfast host show web01)"
+
   # A daily job (longest gap 1 day) that last succeeded at t=600 goes stale after 2 days, not before.
   - interval: 1m
     input_series:

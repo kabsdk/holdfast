@@ -76,7 +76,8 @@ func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 	tok, err := s.Enroll(r.Context(), req)
 	if err != nil {
 		// One message for every refusal; the audit log has the reason.
-		writeErr(w, http.StatusForbidden, "enrollment refused: the code is invalid, expired or used, or the host is unknown")
+		writeErr(w, http.StatusForbidden, "enrollment refused: the code is invalid, expired or used, the host is unknown, "+
+			"or its storage does not meet the contract; `holdfast audit --host <fqdn>` on the server says which")
 		return
 	}
 	writeJSON(w, http.StatusOK, proto.EnrollResponse{Token: tok})
@@ -100,9 +101,14 @@ func (s *Server) Enroll(ctx context.Context, req proto.EnrollRequest) (string, e
 	if h.State == "retired" {
 		return refuse(errors.New("host is retired"))
 	}
-	if err := s.ensureStorage(ctx, fqdn); err != nil {
+	rep, err := s.ensureStorage(ctx, fqdn)
+	if err != nil {
 		s.log.Error("storage set-up failed during enrollment", "host", fqdn, "err", err)
 		return refuse(errors.New("storage set-up failed: " + err.Error()))
+	}
+	if !rep.OK() {
+		s.log.Warn("enrollment refused: the host's storage does not meet the contract", "host", fqdn, "codes", rep.Codes())
+		return refuse(errors.New("the host's storage does not meet the contract: " + rep.Summary()))
 	}
 	tok := creds.NewToken()
 	err = s.st.InTx(ctx, func(q *store.Q) error {

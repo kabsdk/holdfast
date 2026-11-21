@@ -57,6 +57,64 @@ type apiError struct {
 		Path    string `json:"path"`
 		Message string `json:"message"`
 	} `json:"problems"`
+	Storage *storageReport `json:"storage"`
+}
+
+// storageReport is the server's storage contract test (decision 029).
+type storageReport struct {
+	CheckedAt time.Time `json:"checked_at"`
+	Findings  []struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	} `json:"findings"`
+}
+
+func (r *storageReport) lines() string {
+	var b strings.Builder
+	for _, f := range r.Findings {
+		b.WriteString("\n  " + f.Code + "  " + f.Message)
+	}
+	return b.String()
+}
+
+// readS3Key reads a key file of AWS_ACCESS_KEY_ID= and AWS_SECRET_ACCESS_KEY= lines, or standard input
+// for "-". The server validates the key and tests it; the secret never goes on a command line.
+func readS3Key(path string) (map[string]string, error) {
+	var r io.Reader = os.Stdin
+	if path != "-" {
+		fi, err := os.Stat(path)
+		if err != nil {
+			return nil, err
+		}
+		if fi.Mode().Perm()&0o077 != 0 {
+			return nil, fmt.Errorf("%s has mode %04o: a key file must be readable by its owner only", path, fi.Mode().Perm())
+		}
+		f, err := os.Open(path)
+		if err != nil {
+			return nil, err
+		}
+		defer f.Close()
+		r = f
+	}
+	key := map[string]string{"access_key_id": "", "secret_access_key": ""}
+	b, err := io.ReadAll(io.LimitReader(r, 1<<16))
+	if err != nil {
+		return nil, err
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		name, value, ok := strings.Cut(strings.TrimSpace(line), "=")
+		if !ok {
+			continue
+		}
+		value = strings.Trim(strings.TrimSpace(value), `"'`)
+		switch strings.TrimSpace(strings.TrimPrefix(name, "export ")) {
+		case "AWS_ACCESS_KEY_ID":
+			key["access_key_id"] = value
+		case "AWS_SECRET_ACCESS_KEY":
+			key["secret_access_key"] = value
+		}
+	}
+	return key, nil
 }
 
 // call sends a request and decodes the answer into out. It returns the raw body for --json.
@@ -86,6 +144,9 @@ func call(method, path string, in, out any) ([]byte, error) {
 			msg := e.Error
 			for _, p := range e.Problems {
 				msg += "\n  " + p.Path + ": " + p.Message
+			}
+			if e.Storage != nil && len(e.Storage.Findings) > 0 {
+				msg = "the S3 key does not meet the storage contract (docs/storage.md):" + e.Storage.lines()
 			}
 			return raw, errors.New(msg)
 		}
@@ -142,14 +203,15 @@ type jobStatus struct {
 }
 
 type hostView struct {
-	FQDN            string     `json:"fqdn"`
-	State           string     `json:"state"`
-	Progress        string     `json:"progress"`
-	Online          bool       `json:"online"`
-	InSync          bool       `json:"in_sync"`
-	DesiredRevision int64      `json:"desired_revision"`
-	FirstBackupAt   *time.Time `json:"first_backup_at"`
-	NextCheck       *time.Time `json:"next_check"`
+	FQDN            string         `json:"fqdn"`
+	State           string         `json:"state"`
+	Progress        string         `json:"progress"`
+	Online          bool           `json:"online"`
+	InSync          bool           `json:"in_sync"`
+	DesiredRevision int64          `json:"desired_revision"`
+	FirstBackupAt   *time.Time     `json:"first_backup_at"`
+	NextCheck       *time.Time     `json:"next_check"`
+	Storage         *storageReport `json:"storage"`
 	Agent           *struct {
 		LastSeenAt      *time.Time `json:"last_seen_at"`
 		AgentVersion    string     `json:"agent_version"`
@@ -174,6 +236,8 @@ func hostStatus(h hostView) string {
 		return "waiting for agent"
 	case !h.Online:
 		return "agent offline"
+	case h.Storage != nil && len(h.Storage.Findings) > 0:
+		return "storage check failed"
 	case !h.InSync:
 		return "config drift"
 	}
@@ -218,6 +282,13 @@ func hostCmd() *cobra.Command {
 			fmt.Printf("agent %s · restic %s · %s %s · last seen %s · runs revision %d (current for this host: %d)\n",
 				h.Agent.AgentVersion, h.Agent.ResticVersion, h.Agent.OSID, h.Agent.OSVersion, ago(h.Agent.LastSeenAt), h.Agent.AppliedRevision, h.DesiredRevision)
 		}
+		if h.Storage != nil {
+			if len(h.Storage.Findings) == 0 {
+				fmt.Printf("storage: every check passed at %s\n", h.Storage.CheckedAt.Local().Format("2006-01-02 15:04"))
+			} else {
+				fmt.Printf("storage: checks failed at %s (docs/storage.md):%s\n", h.Storage.CheckedAt.Local().Format("2006-01-02 15:04"), h.Storage.lines())
+			}
+		}
 		if h.NextCheck != nil {
 			fmt.Printf("next restic check %s, in the middle of the day's longest quiet stretch\n", h.NextCheck.Local().Format("2006-01-02 15:04"))
 		}
@@ -237,9 +308,16 @@ func hostCmd() *cobra.Command {
 		return w.Flush()
 	}})
 	var add jobFlags
-	var msg string
+	var msg, keyFile string
 	addCmd := &cobra.Command{Use: "add <fqdn>", Short: "Add a host (a new revision), and get its 15-minute enrollment code", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, a []string) error {
 		in := map[string]any{"fqdn": a[0], "message": msg}
+		if keyFile != "" {
+			key, err := readS3Key(keyFile)
+			if err != nil {
+				return err
+			}
+			in["s3_key"] = key
+		}
 		if add.id != "" {
 			job, err := add.job()
 			if err != nil {
@@ -264,17 +342,45 @@ func hostCmd() *cobra.Command {
 			printJSON(raw)
 			return nil
 		}
-		fmt.Printf("added %s in revision %d\nenrollment code %s, valid until %s\n\nrun on the host, as root:\n  %s\n",
+		fmt.Printf("added %s in revision %d; its S3 key passed every storage check\nenrollment code %s, valid until %s\n\nrun on the host, as root:\n  %s\n",
 			a[0], res.Revision, res.Enrollment.Code, res.Enrollment.ExpiresAt.Local().Format("15:04"), res.Enrollment.InstallCommand)
 		if res.Warning != "" {
 			fmt.Println("\nwarning:", res.Warning)
 		}
 		return nil
 	}}
+	addCmd.Flags().StringVar(&keyFile, "s3-key-file", "", "the host's S3 key: a root-only file of AWS_ACCESS_KEY_ID= and AWS_SECRET_ACCESS_KEY= lines, or - for stdin (docs/storage.md)")
 	addCmd.Flags().StringVarP(&msg, "message", "m", "", "revision message")
 	addCmd.Flags().StringVar(&add.id, "job", "", "also add this job (then the job flags apply)")
 	add.register(addCmd)
 	c.AddCommand(addCmd)
+	var setKeyFile, setKeyMsg string
+	setKey := &cobra.Command{Use: "set-key <fqdn>", Short: "Replace a host's S3 key; the key is tested first, and a key that fails is refused", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, a []string) error {
+		if setKeyFile == "" {
+			return errors.New("--s3-key-file is required")
+		}
+		key, err := readS3Key(setKeyFile)
+		if err != nil {
+			return err
+		}
+		var res struct {
+			CredentialsVersion int `json:"credentials_version"`
+		}
+		raw, err := call("PUT", "/api/v1/hosts/"+url.PathEscape(a[0])+"/s3-key", map[string]any{"s3_key": key, "message": setKeyMsg}, &res)
+		if err != nil {
+			return err
+		}
+		if asJSON {
+			printJSON(raw)
+			return nil
+		}
+		fmt.Printf("the new S3 key of %s passed every storage check and is credentials version %d; the agent gets it on its next poll\n"+
+			"export a new escrow bundle: the last one has the old key\n", a[0], res.CredentialsVersion)
+		return nil
+	}}
+	setKey.Flags().StringVar(&setKeyFile, "s3-key-file", "", "a root-only file of AWS_ACCESS_KEY_ID= and AWS_SECRET_ACCESS_KEY= lines, or - for stdin")
+	setKey.Flags().StringVarP(&setKeyMsg, "message", "m", "", "why the key is replaced, for the audit log")
+	c.AddCommand(setKey)
 	c.AddCommand(&cobra.Command{Use: "enroll-code <fqdn>", Short: "Issue a new 15-minute enrollment code (revokes the open one)", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, a []string) error {
 		var e struct {
 			Code           string    `json:"code"`

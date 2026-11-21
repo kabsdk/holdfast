@@ -35,17 +35,25 @@ func fakeRestic(t *testing.T) string {
 	return p
 }
 
-// newTestServer builds a server on a fresh database. now, if given, is its clock.
+// newTestServer builds a server on a fresh database. Its keys are generated (the provisioner path) and
+// its storage always passes. now, if given, is its clock.
 func newTestServer(t *testing.T, now ...func() time.Time) *Server {
+	return newTestServerWith(t, func(d *Deps) {
+		if len(now) > 0 {
+			d.Now = now[0]
+		}
+	})
+}
+
+// newTestServerWith builds a server on a fresh database after opt has changed its dependencies.
+func newTestServerWith(t *testing.T, opt func(*Deps)) *Server {
 	t.Helper()
 	sealer, _ := creds.NewSealer(creds.Random(creds.KeySize))
 	set := Settings{PublicURL: "https://holdfast.example.test", StateDir: t.TempDir(), ResticBin: fakeRestic(t), DefaultZone: "Europe/Copenhagen", NodeName: "test",
 		Storage: StorageSettings{Endpoint: "http://127.0.0.1:9000", Bucket: "holdfast"}, Maintenance: MaintenanceSettings{Check: CheckDaily, CheckCycleDays: 30}}
-	d := Deps{Store: testpg.Store(t), Sealer: sealer, Provisioner: storage.NoopProvisioner{},
+	d := Deps{Store: testpg.Store(t), Sealer: sealer, Provisioner: storage.NoopProvisioner{}, Prober: storage.StaticProber{},
 		Maintenance: storage.Key{AccessKeyID: "MAINT", SecretAccessKey: "maint-secret"}, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
-	if len(now) > 0 {
-		d.Now = now[0]
-	}
+	opt(&d)
 	s, err := New(set, d)
 	if err != nil {
 		t.Fatal(err)

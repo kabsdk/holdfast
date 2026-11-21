@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/kabsdk/holdfast/internal/config"
 	"github.com/kabsdk/holdfast/internal/schedule"
+	"github.com/kabsdk/holdfast/internal/server/storage"
 	"github.com/kabsdk/holdfast/internal/server/store"
 )
 
@@ -30,12 +32,13 @@ const (
 
 var systemActor = Actor{Name: "holdfast-server", Source: "system"}
 
-// CheckResult is the outcome of one host's check.
+// CheckResult is the outcome of one host's check: its storage contract test, then restic check.
 type CheckResult struct {
-	FQDN   string `json:"fqdn"`
-	Subset string `json:"subset"`
-	Status string `json:"status"` // success, failed or skipped
-	Error  string `json:"error,omitempty"`
+	FQDN    string   `json:"fqdn"`
+	Subset  string   `json:"subset"`
+	Status  string   `json:"status"` // success, failed or skipped
+	Error   string   `json:"error,omitempty"`
+	Storage []string `json:"storage_codes,omitempty"` // the storage checks that failed (decision 029)
 }
 
 // RunChecks checks every enrolled host's repository now, reading a rotating subset of the data. It is
@@ -77,11 +80,33 @@ func (s *Server) checkHost(ctx context.Context, a Actor, fqdn string) CheckResul
 		res.Status, res.Error = "failed", err.Error()
 		return res
 	}
+	var problems []string
+	if rep, err := s.checkStorage(ctx, fqdn); err != nil {
+		problems = append(problems, "storage contract test: "+err.Error())
+	} else if !rep.OK() {
+		res.Storage = rep.Codes()
+		problems = append(problems, "storage: "+rep.Summary())
+	}
 	if err := s.checkOne(ctx, fqdn, res.Subset); err != nil {
-		res.Status, res.Error = "failed", err.Error()
+		problems = append(problems, err.Error())
+	}
+	if len(problems) > 0 {
+		res.Status, res.Error = "failed", strings.Join(problems, "; ")
 	}
 	s.finishCheck(ctx, a, id, res)
 	return res
+}
+
+// checkStorage tests the host's storage contract again: an S3 policy can change after the key was given.
+func (s *Server) checkStorage(ctx context.Context, fqdn string) (storage.Report, error) {
+	key, _, err := s.hostKey(ctx, fqdn)
+	if err != nil {
+		return storage.Report{}, err
+	}
+	rep := s.prober.Probe(ctx, fqdn, key)
+	rep.CheckedAt = s.now()
+	s.recordStorage(ctx, fqdn, rep)
+	return rep, nil
 }
 
 func (s *Server) finishCheck(ctx context.Context, a Actor, id int64, res CheckResult) {

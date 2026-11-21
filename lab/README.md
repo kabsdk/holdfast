@@ -89,8 +89,22 @@ fails with `Load(<index/...>) failed: Access Denied`. The setup also refuses
 `arn:aws:iam:::user/holdfast-maint` `s3:*` on the bucket and its objects (`--maint-policy`) fixes it, with both
 mechanisms (40 and 38 PASS, 0 FAIL).
 
-The lab's own `holdfast-maint`, `holdfast-provisioner` and bucket `holdfast` are still the plain-user layout. Moving
-them into an account is the decision this result informs, and it is not made here.
+The lab's own `holdfast-maint`, `holdfast-provisioner` and bucket `holdfast` are still the plain-user layout. As of
+the last run (`--maint-policy`), the bucket also carries the grant for `holdfast-maint`.
+
+**Holdfast's own contract test against this RGW** (decision 029, `docs/storage.md`). The test is
+`internal/server/storage/probe_live_test.go`, and it is skipped unless `HOLDFAST_PROBE_ENDPOINT` is set:
+
+```
+C=~/.local/state/holdfast/labs/m1/credentials
+HOLDFAST_PROBE_ENDPOINT=http://10.79.20.10 HOLDFAST_PROBE_BUCKET=holdfast HOLDFAST_PROBE_REGION=default \
+HOLDFAST_PROBE_FQDN=test.example.com HOLDFAST_PROBE_MAINT_KEY=$C/holdfast-maint.env HOLDFAST_PROBE_HOST_KEY=$C/test-host.env \
+HOLDFAST_PROBE_EXPECT=B003 go test ./internal/server/storage/ -run TestS3ProberLive -v
+```
+
+- After `lab/lab isolation m1 user-policy` (plain users, no grant), it reports exactly B003: AccessDenied when the
+  maintenance key reads an object the host key wrote.
+- After `lab/lab isolation m1 user-policy --maint-policy`, every check passes (`HOLDFAST_PROBE_EXPECT=`).
 
 ## Troubleshooting
 

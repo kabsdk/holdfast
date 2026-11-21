@@ -54,7 +54,7 @@ func TestAgentAgainstServer(t *testing.T) {
 	sealer, _ := creds.NewSealer(creds.Random(creds.KeySize))
 	srv, err := server.New(server.Settings{PublicURL: "http://test", StateDir: filepath.Join(dir, "server"), ResticBin: bin, DefaultZone: "UTC", NodeName: "t",
 		Storage: server.StorageSettings{Endpoint: "http://127.0.0.1:1", Bucket: "b"}, Maintenance: server.MaintenanceSettings{CheckCycleDays: 30}},
-		server.Deps{Store: testpg.Store(t), Sealer: sealer, Provisioner: storage.NoopProvisioner{}, Logger: quiet})
+		server.Deps{Store: testpg.Store(t), Sealer: sealer, Provisioner: storage.NoopProvisioner{}, Prober: storage.StaticProber{}, Logger: quiet})
 	if err != nil {
 		t.Fatal(err)
 	}

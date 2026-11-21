@@ -170,12 +170,17 @@ type env struct {
 	srvEnv  []string
 	logs    []string
 	client  *http.Client
+	// provisioner: Holdfast generates host keys and runs provision-minio.sh. Otherwise each test makes
+	// the keys itself, as an admin would (decision 029).
+	provisioner bool
 }
 
 // envOpts change one test environment.
 type envOpts struct {
-	S3Endpoint string    // the endpoint the server and agents use (a proxy in front of MinIO); default: MinIO
-	TLS        *tlsFiles // serve the agent listener over TLS with this certificate
+	S3Endpoint  string    // the endpoint the server and agents use (a proxy in front of MinIO); default: MinIO
+	TLS         *tlsFiles // serve the agent listener over TLS with this certificate
+	Provisioner bool      // configure storage.provisioner_command, and add hosts without a key
+	MaintPolicy string    // give the server a maintenance key with this policy instead of MinIO's root
 }
 
 func newEnv(t *testing.T) *env { return newEnvWith(t, envOpts{}) }
@@ -183,7 +188,8 @@ func newEnv(t *testing.T) *env { return newEnvWith(t, envOpts{}) }
 func newEnvWith(t *testing.T, o envOpts) *env {
 	t.Helper()
 	dir := t.TempDir()
-	e := &env{t: t, dir: dir, port: freePort(t), sock: filepath.Join(dir, "run", "api.sock"), bucket: "hf-" + randHex(6), client: http.DefaultClient}
+	e := &env{t: t, dir: dir, port: freePort(t), sock: filepath.Join(dir, "run", "api.sock"), bucket: "hf-" + randHex(6), client: http.DefaultClient,
+		provisioner: o.Provisioner}
 	scheme := "http"
 	if o.TLS != nil {
 		scheme = "https"
@@ -203,13 +209,20 @@ func newEnvWith(t *testing.T, o envOpts) *env {
 		t.Fatalf("keygen: %v %s", err, out)
 	}
 	maint := filepath.Join(dir, "maintenance.env")
-	must(t, os.WriteFile(maint, []byte("AWS_ACCESS_KEY_ID="+s3User+"\nAWS_SECRET_ACCESS_KEY="+s3Pass+"\n"), 0o600))
+	mak, msk := s3User, s3Pass
+	if o.MaintPolicy != "" {
+		mak, msk = e.makeUser(o.MaintPolicy)
+	}
+	must(t, os.WriteFile(maint, []byte("AWS_ACCESS_KEY_ID="+mak+"\nAWS_SECRET_ACCESS_KEY="+msk+"\n"), 0o600))
+	stor := map[string]any{"endpoint": endpoint, "bucket": e.bucket, "region": "us-east-1", "maintenance_credentials_file": maint}
+	if o.Provisioner {
+		stor["provisioner_command"] = []string{"bash", filepath.Join(repoRoot, "test", "e2e", "provision-minio.sh")}
+	}
 	set := map[string]any{
 		"listen": fmt.Sprintf("127.0.0.1:%d", e.port), "api_socket": e.sock, "public_url": e.url,
 		"database_dsn": dsn, "credentials_key_file": filepath.Join(dir, "credentials.key"), "state_dir": filepath.Join(dir, "server"),
 		"restic_bin": resticBin, "default_zone": "UTC", "node_name": "e2e",
-		"storage": map[string]any{"endpoint": endpoint, "bucket": e.bucket, "region": "us-east-1", "maintenance_credentials_file": maint,
-			"provisioner_command": []string{"bash", filepath.Join(repoRoot, "test", "e2e", "provision-minio.sh")}},
+		"storage": stor,
 		// Tests run `holdfast check` themselves; a background check would race their lock counts.
 		"maintenance": map[string]any{"check": "off", "check_cycle_days": 30},
 	}
@@ -282,14 +295,57 @@ func (e *env) cliErr(args ...string) ([]byte, error) {
 	return out.Bytes(), err
 }
 
-// addHost adds a host with one job through the CLI and returns the enrollment code.
+// hostPolicy is the example host policy of docs/storage.md, for this environment's bucket.
+func (e *env) hostPolicy(fqdn string) string {
+	b, p := e.bucket, "repos/"+fqdn
+	return `{"Version":"2012-10-17","Statement":[
+ {"Effect":"Allow","Action":["s3:GetBucketLocation"],"Resource":["arn:aws:s3:::` + b + `"]},
+ {"Effect":"Allow","Action":["s3:ListBucket"],"Resource":["arn:aws:s3:::` + b + `"],"Condition":{"StringLike":{"s3:prefix":["` + p + `","` + p + `/*"]}}},
+ {"Effect":"Allow","Action":["s3:GetObject","s3:PutObject"],"Resource":["arn:aws:s3:::` + b + `/` + p + `/*"]},
+ {"Effect":"Allow","Action":["s3:DeleteObject"],"Resource":["arn:aws:s3:::` + b + `/` + p + `/locks/*"]}]}`
+}
+
+// makeUser makes a MinIO user with its own policy, as an admin would with the S3 server's own tools.
+// Test-only: mc takes the secret as an argument.
+func (e *env) makeUser(policy string) (accessKey, secret string) {
+	e.t.Helper()
+	accessKey, secret = "HK"+strings.ToUpper(randHex(8)), randHex(20)
+	name := "hf-" + randHex(6)
+	pf := filepath.Join(e.dir, name+".json")
+	must(e.t, os.WriteFile(pf, []byte(policy), 0o600))
+	mc(e.t, "admin", "user", "add", "hf", accessKey, secret)
+	mc(e.t, "admin", "policy", "create", "hf", name, pf)
+	mc(e.t, "admin", "policy", "attach", "hf", name, "--user", accessKey)
+	return accessKey, secret
+}
+
+// makeKey makes a host key with the given policy (docs/storage.md's when empty) and returns a root-only
+// key file for --s3-key-file, and the access key.
+func (e *env) makeKey(fqdn, policy string) (file, accessKey string) {
+	e.t.Helper()
+	if policy == "" {
+		policy = e.hostPolicy(fqdn)
+	}
+	ak, sk := e.makeUser(policy)
+	file = filepath.Join(e.dir, "key-"+randHex(4)+".env")
+	must(e.t, os.WriteFile(file, []byte("AWS_ACCESS_KEY_ID="+ak+"\nAWS_SECRET_ACCESS_KEY="+sk+"\n"), 0o600))
+	return file, ak
+}
+
+// addHost adds a host with one job through the CLI and returns the enrollment code. Unless the
+// environment has a provisioner, it first makes the host's key, as an admin would.
 func (e *env) addHost(fqdn, jobID string, jobArgs ...string) string {
 	e.t.Helper()
 	var res struct {
 		Enrollment struct{ Code string } `json:"enrollment"`
 		Warning    string                `json:"warning"`
 	}
-	out := e.cli(append([]string{"host", "add", fqdn, "--job", jobID}, jobArgs...)...)
+	args := []string{"host", "add", fqdn, "--job", jobID}
+	if !e.provisioner {
+		kf, _ := e.makeKey(fqdn, "")
+		args = append(args, "--s3-key-file", kf)
+	}
+	out := e.cli(append(args, jobArgs...)...)
 	if err := json.Unmarshal(out, &res); err != nil || res.Enrollment.Code == "" {
 		e.t.Fatalf("host add: %v %s", err, out)
 	}
@@ -521,6 +577,11 @@ type hostView struct {
 		AppliedRevision int64  `json:"applied_revision"`
 		ResticVersion   string `json:"restic_version"`
 	} `json:"agent"`
+	Storage *struct {
+		Findings []struct {
+			Code string `json:"code"`
+		} `json:"findings"`
+	} `json:"storage"`
 	Jobs []struct {
 		ID     string     `json:"id"`
 		Status *jobStatus `json:"status"`

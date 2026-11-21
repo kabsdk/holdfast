@@ -117,6 +117,23 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 			fmt.Fprintf(&b, "holdfast_maintenance_last_success_timestamp_seconds{host=%q,kind=\"check\"} %s\n", f, ts(&t))
 		}
 	}
+	gauge("holdfast_storage_contract_ok", "1 if the host's keys passed every storage check at the last test (decision 029).")
+	gauge("holdfast_storage_contract_failed", "1 for each storage check (code) that failed at the last test.")
+	gauge("holdfast_storage_checked_timestamp_seconds", "When the host's storage contract was last tested.")
+	for _, h := range hosts {
+		if h.Storage == nil {
+			continue
+		}
+		ok := 1
+		if !h.Storage.OK() {
+			ok = 0
+		}
+		fmt.Fprintf(&b, "holdfast_storage_contract_ok{host=%q} %d\n", h.FQDN, ok)
+		for _, code := range h.Storage.Codes() {
+			fmt.Fprintf(&b, "holdfast_storage_contract_failed{host=%q,code=%q} 1\n", h.FQDN, code)
+		}
+		fmt.Fprintf(&b, "holdfast_storage_checked_timestamp_seconds{host=%q} %s\n", h.FQDN, ts(&h.Storage.CheckedAt))
+	}
 	if n, err := q.HostsMissingEscrow(ctx); err == nil {
 		gauge("holdfast_escrow_missing_hosts", "Hosts whose current credentials are in no escrow bundle.")
 		fmt.Fprintf(&b, "holdfast_escrow_missing_hosts %d\n", n)

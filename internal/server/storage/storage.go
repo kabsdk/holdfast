@@ -1,12 +1,15 @@
-// Package storage knows where repositories live and how a host's S3 identity is made.
+// Package storage knows where repositories live, what each S3 key must be allowed to do, and how to
+// test that (decision 029, docs/storage.md).
 //
-// Holdfast generates each host's S3 access key and secret itself and stores them sealed, then asks
-// a Provisioner to make that identity exist with the right policy (plan-m1 Q4):
+// Holdfast never creates S3 identities itself: the admin gives it each host's key. A host key may:
 //   - read, write and list under repos/<fqdn>/ only;
 //   - delete only under repos/<fqdn>/locks/ (spec §2.3).
 //
-// Provisioning must be idempotent: calling it again with the same values changes nothing. That is
-// what makes adding a host and enrolling it safe to retry.
+// The maintenance key may do everything under repos/, including read what host keys wrote. S3Prober
+// tests all of it with plain S3 calls.
+//
+// Optionally, a Provisioner (a site-specific command) makes the identity for a key Holdfast generated.
+// It must be idempotent: calling it again with the same values changes nothing.
 package storage
 
 import (
@@ -15,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -79,8 +83,8 @@ func (p ExecProvisioner) EnsureHostKey(ctx context.Context, fqdn string, key Key
 	return nil
 }
 
-// NoopProvisioner is for setups where every host uses identities made outside Holdfast. It is
-// used by unit tests.
+// NoopProvisioner pretends to make the identity. Unit tests use it to exercise the generated-key path
+// without an S3 server.
 type NoopProvisioner struct{}
 
 // EnsureHostKey implements Provisioner.
@@ -96,28 +100,60 @@ func ReadKeyFile(path string) (Key, error) {
 	if fi.Mode().Perm()&0o077 != 0 {
 		return Key{}, fmt.Errorf("%s has mode %04o: it must not be readable by group or others", path, fi.Mode().Perm())
 	}
-	b, err := os.ReadFile(path)
+	f, err := os.Open(path)
 	if err != nil {
 		return Key{}, err
 	}
+	defer f.Close()
+	k, err := ParseKey(f)
+	if err != nil {
+		return Key{}, fmt.Errorf("%s: %w", path, err)
+	}
+	return k, nil
+}
+
+// ParseKey reads AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY from KEY=VALUE lines. Other lines are
+// ignored, so a file made for the AWS CLI's environment works as it is.
+func ParseKey(r io.Reader) (Key, error) {
 	var k Key
-	sc := bufio.NewScanner(bytes.NewReader(b))
+	sc := bufio.NewScanner(r)
 	for sc.Scan() {
 		name, value, ok := strings.Cut(strings.TrimSpace(sc.Text()), "=")
 		if !ok {
 			continue
 		}
-		switch strings.TrimSpace(name) {
+		value = strings.Trim(strings.TrimSpace(value), `"'`)
+		switch strings.TrimSpace(strings.TrimPrefix(name, "export ")) {
 		case "AWS_ACCESS_KEY_ID":
-			k.AccessKeyID = strings.TrimSpace(value)
+			k.AccessKeyID = value
 		case "AWS_SECRET_ACCESS_KEY":
-			k.SecretAccessKey = strings.TrimSpace(value)
+			k.SecretAccessKey = value
 		}
 	}
-	if k.AccessKeyID == "" || k.SecretAccessKey == "" {
-		return Key{}, fmt.Errorf("%s needs AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY", path)
+	if err := sc.Err(); err != nil {
+		return Key{}, err
 	}
-	return k, nil
+	return k, k.Validate()
+}
+
+// Validate checks that both parts are present and look like an S3 key: printable, without spaces,
+// and of a sane length. It never puts the secret in its message.
+func (k Key) Validate() error {
+	check := func(name, v string) error {
+		if v == "" {
+			return fmt.Errorf("%s is missing", name)
+		}
+		if len(v) > 256 {
+			return fmt.Errorf("%s is longer than 256 characters", name)
+		}
+		for _, c := range v {
+			if c <= ' ' || c > '~' {
+				return fmt.Errorf("%s contains a space or a character that is not printable ASCII", name)
+			}
+		}
+		return nil
+	}
+	return errors.Join(check("AWS_ACCESS_KEY_ID", k.AccessKeyID), check("AWS_SECRET_ACCESS_KEY", k.SecretAccessKey))
 }
 
 func tail(s string, n int) string {

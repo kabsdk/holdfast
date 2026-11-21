@@ -239,7 +239,9 @@ func TestConfigHistoryDriftCheckAndNoLeaks(t *testing.T) {
 // (and audited); a new code revokes the open one; a used code is refused.
 func TestEnrollment(t *testing.T) {
 	src := smallSource(t)
-	e := newEnv(t)
+	// The optional provisioner path (decision 029): hosts are added without a key, Holdfast generates
+	// it and runs provision-minio.sh, and the contract test still has to pass.
+	e := newEnvWith(t, envOpts{Provisioner: true})
 	if out, err := e.cliErr("host", "add", "Not_A_Host"); err == nil || !strings.Contains(string(out), "lower case") {
 		t.Fatalf("an invalid FQDN must be refused: %v %s", err, out)
 	}
@@ -297,7 +299,8 @@ func TestTLSPinning(t *testing.T) {
 			InstallCommand string `json:"install_command"`
 		} `json:"enrollment"`
 	}
-	must(t, json.Unmarshal(e.cli("host", "add", fqdn, "--job", "system", "--path", src, "--daily", "02:00"), &res))
+	kf, _ := e.makeKey(fqdn, "")
+	must(t, json.Unmarshal(e.cli("host", "add", fqdn, "--s3-key-file", kf, "--job", "system", "--path", src, "--daily", "02:00"), &res))
 	if !strings.Contains(res.Enrollment.InstallCommand, "--ca-sha256 "+cert.pin) {
 		t.Fatalf("the install command does not pin the server: %s", res.Enrollment.InstallCommand)
 	}

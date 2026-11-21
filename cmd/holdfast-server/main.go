@@ -65,10 +65,11 @@ func run(cfgPath string, log *slog.Logger) error {
 	if err := st.Migrate(ctx); err != nil {
 		return fmt.Errorf("migrations: %w", err)
 	}
-	var prov storage.Provisioner = storage.ExecProvisioner{Command: set.Storage.ProvisionerCommand, Bucket: set.Storage.Bucket}
-	if len(set.Storage.ProvisionerCommand) == 0 {
-		log.Warn("storage.provisioner_command is not set: hosts' S3 identities must be made outside Holdfast")
-		prov = storage.NoopProvisioner{}
+	// Decision 029: the admin gives each host's S3 key. A provisioner command is optional; with one,
+	// a host may be added without a key, and Holdfast generates it and runs the command.
+	var prov storage.Provisioner
+	if len(set.Storage.ProvisionerCommand) > 0 {
+		prov = storage.ExecProvisioner{Command: set.Storage.ProvisionerCommand, Bucket: set.Storage.Bucket}
 	}
 	srv, err := server.New(set, server.Deps{Store: st, Sealer: sealer, Provisioner: prov, Maintenance: maint, Logger: log})
 	if err != nil {

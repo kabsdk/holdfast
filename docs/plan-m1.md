@@ -10,6 +10,12 @@ Status: development started on 2026-11-21, at your instruction ("we can start de
   - M1 serves the same `/api/v1` on a root-only Unix socket on the server, and the actor is
     `local:<unix user>`, taken from the socket's peer credentials.
   - M4 adds the HTTPS listener with OIDC. The CLI talks to either.
+- **Q4, its first question: who makes the hosts' S3 keys.** You chose: the admin, with Holdfast testing
+  the storage contract, and one key per host (decision 029, [storage.md](storage.md)).
+  - `holdfast host add --s3-key-file` takes the key, and `holdfast host set-key` replaces it. Both are
+    API endpoints first.
+  - A key that fails the contract is refused, and a host whose storage fails cannot enroll.
+  - The optional provisioner command stays, for generated keys.
 - **Q16: repository housekeeping.**
   - Git is initialised. There is no remote yet, so nothing is pushed.
   - The mockups are in `mockup/`.
@@ -22,7 +28,7 @@ proposal. Each sits behind an interface where that matters, so it can change. **
 | --- | --- |
 | Q1 (done) | No forget or prune code in M1. Maintenance is `check` only. Fidelity is proven by a plain `restic restore` using the escrow credentials. The retention test moves to M3. |
 | Q3 (agent auth) | **Bearer token, stored as a hash, behind an `agentauth` interface,** so a client certificate from a Holdfast CA (OQ3) can replace it. This is a stand-in. It does not decide OQ3. |
-| Q4 (S3 provisioning) | Holdfast provisions each host's key through a `storage.Provisioner` interface. The MinIO implementation comes first, for CI. The RGW implementation follows in the lab. There is one maintenance identity. |
+| Q4 (the rest) | There is one maintenance key, for the whole fleet. The lifecycle rule for noncurrent versions, and its expiry, are still open. [storage.md](storage.md) asks the admin to set one. |
 | Q5 (credentials) | Encrypted at rest with a root-only key file. Escrow export is CLI-only on the server. The bundle format is still open. |
 | Q6 (time zone) | An IANA zone per schedule, defaulting to the fleet's zone. A time that does not exist runs at the next valid minute. A repeated time runs once. |
 | Q7 (runs) | The first backup runs right after enrollment. A missed slot catches up once. One restic process per host. A slot whose job is still running is skipped and reported. No retry, until you decide. |
@@ -47,7 +53,8 @@ proposal. Each sits behind an interface where that matters, so it can change. **
 | CLI (`holdfast`) as a thin API client; storage witness; alert rules | promtool |
 | e2e: fidelity with escrow, server outage, storage isolation, witness | real restic 0.19.1, MinIO, PostgreSQL |
 | e2e: backup killed mid-upload and recovered (the PoC's test 3, using an S3 throttling proxy); exactly-once delivery with dropped answers, and runs on their schedule slots; history, diff, stale base, drift, `holdfast check`, audit, no credential leaks; enrollment refusals and expiry; TLS with certificate pinning | same |
-| The daily check: once a day per host, in the middle of the day's longest quiet stretch, never after it; an interrupted check recovered at start-up (§10). e2e: restic's check lock is exclusive, as the placement assumes | unit, integration with a controlled clock, e2e: **all 10 e2e tests pass** |
+| The daily check: once a day per host, in the middle of the day's longest quiet stretch, never after it; an interrupted check recovered at start-up (§10). e2e: restic's check lock is exclusive, as the placement assumes | unit, integration with a controlled clock, e2e |
+| The storage contract (decision 029): admin-made keys, at `host add` and `host set-key`; the contract test (B001–B008) at host add, set-key, enrollment and in the daily check; a metric and an alert for a failed check. e2e: refused keys; enrollment refused while the policy is loose; restic ignores the probe objects; set-key reaches the agent; the B003 ownership case | unit, integration, e2e, promtool |
 
 **Found and fixed along the way**
 - The metric label `job` collides with Prometheus's own scrape label, so it is now `job_id`. The PoC had the same bug.
@@ -77,16 +84,14 @@ proposal. Each sits behind an interface where that matters, so it can change. **
   - **Plain users**, plus a bucket-policy statement that gives the maintenance user `s3:*` on the bucket
     and its objects. 40 and 38 PASS, 0 FAIL.
 - The vault's reader key (O10) needs the same treatment.
-- For provisioning:
-  - RGW's Admin Ops API takes a chosen key, which fits `storage.Provisioner` as it is.
-  - IAM's `CreateAccessKey` makes the secret itself. That would mean Holdfast receives the key rather
-    than chooses it.
+- Decision 029 follows from this. Holdfast does not create keys. It tests the contract, and B003 names
+  this case, with the fix, in [storage.md](storage.md).
+- Holdfast's own contract test, run against the lab's RGW (`TestS3ProberLive`, see `lab/README.md`):
+  - plain users: exactly B003, AccessDenied;
+  - plain users plus the bucket-policy grant: every check passes, including B005, B006 and B007.
 
-**Remaining for M1**
-- Q4 again: does Holdfast make each host's key through the provisioner command, or does the admin
-  make it, with Holdfast only documenting the permissions? Either way, the storage requirement above
-  goes into the operator documentation.
-- If the provisioner stays: an RGW example script, and the storage-isolation test run against RGW.
+**What the contract test taught on MinIO.** On MinIO, `s3:DeleteObject` also deletes object versions for
+good. A delete grant broader than `locks/*` therefore fails B006 as well as B005.
 
 **What the e2e tests taught**
 - A SIGKILLed restic leaves its lock behind. `restic unlock` removes it only once the process is gone. On a host, systemd reaps the orphaned process. In a container, PID 1 must do it, so `make e2e` runs the container with `--init`.

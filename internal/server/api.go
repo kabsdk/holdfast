@@ -59,6 +59,7 @@ func (s *Server) APIHandler(local bool) http.Handler {
 	mux.HandleFunc("GET /api/v1/hosts/{fqdn}", s.apiHost)
 	mux.HandleFunc("GET /api/v1/hosts/{fqdn}/events", s.apiHostEvents)
 	mux.HandleFunc("POST /api/v1/hosts/{fqdn}/enrollment-code", s.apiEnrollmentCode)
+	mux.HandleFunc("PUT /api/v1/hosts/{fqdn}/s3-key", s.apiSetS3Key)
 	mux.HandleFunc("PUT /api/v1/hosts/{fqdn}/jobs/{job}", s.apiSetJob)
 	mux.HandleFunc("POST /api/v1/hosts/{fqdn}/jobs/{job}/run", s.apiRunNow)
 	mux.HandleFunc("GET /api/v1/revisions", s.apiRevisions)
@@ -77,9 +78,12 @@ func (s *Server) APIHandler(local bool) http.Handler {
 // apiError maps an error to its status code.
 func apiError(w http.ResponseWriter, err error) {
 	var ve *ValidationError
+	var se *StorageError
 	switch {
 	case errors.As(err, &ve):
 		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": ve.Error(), "problems": ve.Problems})
+	case errors.As(err, &se):
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": se.Error(), "storage": se.Report})
 	case errors.Is(err, store.ErrConflict):
 		writeErr(w, http.StatusConflict, err.Error())
 	case errors.Is(err, store.ErrNotFound):
@@ -159,6 +163,19 @@ func (s *Server) apiEnrollmentCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, e)
+}
+
+func (s *Server) apiSetS3Key(w http.ResponseWriter, r *http.Request) {
+	var in SetS3KeyInput
+	if !decode(w, r, &in) {
+		return
+	}
+	res, err := s.SetS3Key(r.Context(), actorOf(r), r.PathValue("fqdn"), in)
+	if err != nil {
+		apiError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
 }
 
 func (s *Server) apiSetJob(w http.ResponseWriter, r *http.Request) {

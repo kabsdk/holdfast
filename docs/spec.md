@@ -20,8 +20,9 @@ There are no paid tiers and no feature gating.
 ### 1.1 Scope
 
 - **restic only.** Holdfast configures, schedules, monitors and restores restic backups.
-- **Host identity is the FQDN.** Each host has one restic repository on S3 (Ceph RGW) under the prefix
-  `repos/<fqdn>`.
+- **Host identity is the FQDN.** Each host has one restic repository on S3 under the prefix
+  `repos/<fqdn>`. Any S3 server that meets [storage.md](storage.md) will do: Ceph RGW, MinIO, AWS and
+  others.
 - **Jobs share the host's repository.** Every job on a host writes to that host's repository, and each
   snapshot is tagged `job=<id>`.
 - **Only Holdfast's own backups.** The console shows only the backups that Holdfast makes itself. It does
@@ -96,7 +97,19 @@ supports.
 ### 2.3 Credentials and storage protection
 
 - Each host has its own repository password and its own S3 key.
-- The bucket policy allows deletes only under `locks/`. Bucket versioning is on.
+- The admin makes the S3 keys with the S3 server's own tools, and gives Holdfast each host's key when the
+  host is added. Holdfast never creates S3 users, keys or policies, so it works with any S3 server
+  (decision 029).
+- A host key may use only its own prefix, and may delete only under its `locks/`. The maintenance key may
+  do everything under `repos/`. Bucket versioning is on. [storage.md](storage.md) states the full contract.
+- Holdfast tests that contract with plain S3 calls:
+  - when a host is added;
+  - when its key is replaced;
+  - before an enrollment is accepted;
+  - in each host's daily check.
+
+  A key that fails is refused, and a host whose storage fails cannot enroll. The storage checks are in
+  §4.5.
 - Keys are escrowed in an offline escrow bundle.
 - Credentials are never shown in the UI.
 - There is no raw restic console.
@@ -259,6 +272,21 @@ The UI, the API and the CLI use the same checks engine, and every check has a st
 | Code | Condition |
 | --- | --- |
 | I001 | There is no yearly tier. |
+
+**Storage checks** test the S3 server, not the config (decision 029, [storage.md](storage.md)). They are
+errors that cannot be accepted. A key that fails one is refused, and a host whose storage fails one
+cannot enroll.
+
+| Code | Condition |
+| --- | --- |
+| B001 | The host key cannot write under its prefix, or cannot delete under its `locks/`. |
+| B002 | The host key cannot read back or list its prefix. |
+| B003 | The maintenance key cannot read what the host key wrote. |
+| B004 | The maintenance key cannot write, list or delete under `repos/`. |
+| B005 | The host key can delete outside its `locks/`. |
+| B006 | The host key can delete, for good, a version of an object outside its `locks/`. |
+| B007 | The host key can read or write another host's prefix, or list `repos/`. |
+| B008 | Bucket versioning is not enabled. |
 
 - The accepted codes are stored in the revision and in the audit log.
 - The CLI takes them explicitly, for example `holdfast job set … --accept R102,R104`. Without them it

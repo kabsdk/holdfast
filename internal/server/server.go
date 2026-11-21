@@ -34,7 +34,8 @@ type Server struct {
 	set      Settings
 	st       *store.Store
 	seal     *creds.Sealer
-	prov     storage.Provisioner
+	prov     storage.Provisioner // nil: the admin gives every host's key (decision 029)
+	prober   storage.Prober
 	loc      storage.Location
 	maintKey storage.Key
 	zone     *time.Location
@@ -53,7 +54,8 @@ type Server struct {
 type Deps struct {
 	Store       *store.Store
 	Sealer      *creds.Sealer
-	Provisioner storage.Provisioner
+	Provisioner storage.Provisioner // optional: makes the keys Holdfast generates
+	Prober      storage.Prober      // tests the storage contract; S3Prober when nil
 	Maintenance storage.Key
 	Logger      *slog.Logger
 	Now         func() time.Time
@@ -74,9 +76,12 @@ func New(set Settings, d Deps) (*Server, error) {
 	if err := os.MkdirAll(filepath.Join(set.StateDir, "cache"), 0o700); err != nil {
 		return nil, err
 	}
-	return &Server{set: set, st: d.Store, seal: d.Sealer, prov: d.Provisioner, maintKey: d.Maintenance,
-		loc:  storage.Location{Endpoint: set.Storage.Endpoint, Bucket: set.Storage.Bucket, Region: set.Storage.Region},
-		zone: zone, log: d.Logger, hub: newHub(), now: d.Now, started: d.Now(),
+	loc := storage.Location{Endpoint: set.Storage.Endpoint, Bucket: set.Storage.Bucket, Region: set.Storage.Region}
+	if d.Prober == nil {
+		d.Prober = storage.S3Prober{Location: loc, Maint: d.Maintenance}
+	}
+	return &Server{set: set, st: d.Store, seal: d.Sealer, prov: d.Provisioner, prober: d.Prober, maintKey: d.Maintenance,
+		loc: loc, zone: zone, log: d.Logger, hub: newHub(), now: d.Now, started: d.Now(),
 		checking: map[string]bool{}, checkSlots: make(chan struct{}, parallelChecks)}, nil
 }
 
@@ -198,29 +203,86 @@ func (s *Server) maintRunner(ctx context.Context, fqdn string) (restic.Runner, f
 		CacheDir: filepath.Join(s.set.StateDir, "cache"), Env: s.loc.Env(s.maintKey)}, cleanup, nil
 }
 
-// ensureStorage makes the host's S3 identity exist and its repository initialised, from the
-// credentials already stored. It is idempotent.
-func (s *Server) ensureStorage(ctx context.Context, fqdn string) error {
+// hostKey returns a host's current S3 key and who made it.
+func (s *Server) hostKey(ctx context.Context, fqdn string) (storage.Key, string, error) {
 	c, err := s.st.Q().GetCredentials(ctx, fqdn)
 	if err != nil {
-		return err
+		return storage.Key{}, "", err
 	}
 	secret, err := s.seal.Open(c.S3Secret, fqdn)
 	if err != nil {
-		return err
+		return storage.Key{}, "", err
 	}
-	if err := s.prov.EnsureHostKey(ctx, fqdn, storage.Key{AccessKeyID: c.S3AccessKeyID, SecretAccessKey: secret}); err != nil {
-		return err
+	return storage.Key{AccessKeyID: c.S3AccessKeyID, SecretAccessKey: secret}, c.S3KeySource, nil
+}
+
+// prepareKey makes a key that Holdfast generated exist, if a provisioner is configured, and tests the
+// storage contract with it (decision 029).
+func (s *Server) prepareKey(ctx context.Context, fqdn string, key storage.Key, source string) (storage.Report, error) {
+	if source == store.KeyByHoldfast && s.prov != nil {
+		if err := s.prov.EnsureHostKey(ctx, fqdn, key); err != nil {
+			return storage.Report{}, err
+		}
 	}
-	r, cleanup, err := s.maintRunner(ctx, fqdn)
+	rep := s.prober.Probe(ctx, fqdn, key)
+	rep.CheckedAt = s.now()
+	return rep, nil
+}
+
+// recordStorage keeps a host's latest contract test and audits a failure.
+func (s *Server) recordStorage(ctx context.Context, fqdn string, rep storage.Report) {
+	q := s.st.Q()
+	if err := q.RecordStorageCheck(ctx, fqdn, rep); err != nil {
+		s.log.Error("recording a storage check", "host", fqdn, "err", err)
+	}
+	if !rep.OK() {
+		if err := q.Audit(ctx, store.AuditEntry{Actor: systemActor.Name, Source: systemActor.Source, Action: "storage.check_failed", FQDN: fqdn,
+			Detail: map[string]any{"codes": rep.Codes(), "findings": rep.Summary()}}); err != nil {
+			s.log.Error("auditing a storage check", "host", fqdn, "err", err)
+		}
+	}
+}
+
+// ensureStorage makes a stored host's storage ready, idempotently: it tests the contract again (the S3
+// policies may have changed since the key was given), records the result, and initialises the
+// repository once the contract holds.
+func (s *Server) ensureStorage(ctx context.Context, fqdn string) (storage.Report, error) {
+	key, source, err := s.hostKey(ctx, fqdn)
 	if err != nil {
-		return err
+		return storage.Report{}, err
 	}
-	defer cleanup()
-	if err := r.Init(ctx); err != nil {
-		return fmt.Errorf("initialising the repository of %s: %w", fqdn, err)
+	rep, err := s.prepareKey(ctx, fqdn, key, source)
+	if err != nil {
+		return storage.Report{}, err
 	}
-	return nil
+	s.recordStorage(ctx, fqdn, rep)
+	if !rep.OK() {
+		return rep, nil
+	}
+	return rep, s.initRepository(ctx, fqdn)
+}
+
+// StorageError refuses a key that does not meet the storage contract. The API answers 422 with the
+// report, so the UI and the CLI show the same findings.
+type StorageError struct{ Report storage.Report }
+
+func (e *StorageError) Error() string {
+	return "the S3 key does not meet the storage contract (docs/storage.md): " + e.Report.Summary()
+}
+
+// S3KeyInput is a host's S3 key, as the admin made it. It is input only: no response, log, audit
+// entry or revision ever contains it.
+type S3KeyInput struct {
+	AccessKeyID     string `json:"access_key_id"`
+	SecretAccessKey string `json:"secret_access_key"`
+}
+
+func (k *S3KeyInput) key() (storage.Key, error) {
+	key := storage.Key{AccessKeyID: strings.TrimSpace(k.AccessKeyID), SecretAccessKey: strings.TrimSpace(k.SecretAccessKey)}
+	if err := key.Validate(); err != nil {
+		return storage.Key{}, &ValidationError{config.Problems{{Path: "s3_key", Message: err.Error()}}}
+	}
+	return key, nil
 }
 
 func newAccessKeyID() string { return "HF" + strings.ToUpper(hex.EncodeToString(creds.Random(9))) }
@@ -234,6 +296,8 @@ type AddHostInput struct {
 	JobID   string      `json:"job_id,omitempty"`
 	Job     *config.Job `json:"job,omitempty"`
 	Base    *int64      `json:"base_revision,omitempty"` // omitted: the current head
+	// S3Key is the host's key (decision 029). It may be omitted only when a provisioner is configured.
+	S3Key *S3KeyInput `json:"s3_key,omitempty"`
 }
 
 // Enrollment is what a person needs to enroll a host.
@@ -246,9 +310,10 @@ type Enrollment struct {
 
 // AddHostResult is the outcome of AddHost.
 type AddHostResult struct {
-	Revision   int64      `json:"revision"`
-	Enrollment Enrollment `json:"enrollment"`
-	Warning    string     `json:"warning,omitempty"`
+	Revision   int64          `json:"revision"`
+	Enrollment Enrollment     `json:"enrollment"`
+	Storage    storage.Report `json:"storage"`
+	Warning    string         `json:"warning,omitempty"`
 }
 
 func (s *Server) installCommand(fqdn, code string) string {
@@ -259,9 +324,10 @@ func (s *Server) installCommand(fqdn, code string) string {
 	return cmd
 }
 
-// AddHost creates a revision with the host, its credentials and a 15-minute enrollment code, all in
-// one transaction; then sets up its storage. A storage failure is reported but not fatal: enrollment
-// sets the storage up again before it uses the code.
+// AddHost tests the host's S3 key against the storage contract and refuses a key that fails it. It then
+// creates a revision with the host, its credentials and a 15-minute enrollment code, all in one
+// transaction, and initialises the repository. An initialisation failure is reported but not fatal:
+// enrollment does it again before it uses the code.
 func (s *Server) AddHost(ctx context.Context, a Actor, in AddHostInput) (AddHostResult, error) {
 	in.FQDN = strings.TrimSpace(in.FQDN)
 	if err := config.ValidFQDN(in.FQDN); err != nil {
@@ -270,10 +336,35 @@ func (s *Server) AddHost(ctx context.Context, a Actor, in AddHostInput) (AddHost
 	if strings.TrimSpace(in.Message) == "" {
 		in.Message = "Add host " + in.FQDN
 	}
+	var key storage.Key
+	source := store.KeyByAdmin
+	switch {
+	case in.S3Key != nil:
+		k, err := in.S3Key.key()
+		if err != nil {
+			return AddHostResult{}, err
+		}
+		key = k
+	case s.prov != nil:
+		key, source = storage.Key{AccessKeyID: newAccessKeyID(), SecretAccessKey: hex.EncodeToString(creds.Random(20))}, store.KeyByHoldfast
+	default:
+		return AddHostResult{}, &ValidationError{config.Problems{{Path: "s3_key", Message: "the host's S3 key is required: make a key that may use only " +
+			storage.Prefix(in.FQDN) + "/ (docs/storage.md) and give it with --s3-key-file"}}}
+	}
+	if _, err := s.st.Q().GetHost(ctx, in.FQDN); err == nil {
+		return AddHostResult{}, fmt.Errorf("host %s exists already: %w", in.FQDN, ErrConflict)
+	}
+	rep, err := s.prepareKey(ctx, in.FQDN, key, source)
+	if err != nil {
+		return AddHostResult{}, err
+	}
+	if !rep.OK() {
+		return AddHostResult{}, &StorageError{rep}
+	}
 	now := s.now()
 	code := creds.NewEnrollmentCode()
 	var res AddHostResult
-	err := s.st.InTx(ctx, func(q *store.Q) error {
+	err = s.st.InTx(ctx, func(q *store.Q) error {
 		head, err := s.head(ctx, q)
 		if err != nil {
 			return err
@@ -303,16 +394,19 @@ func (s *Server) AddHost(ctx context.Context, a Actor, in AddHostInput) (AddHost
 		if err := q.CreateHost(ctx, in.FQDN, rev.Number, now); err != nil {
 			return err
 		}
-		secret := hex.EncodeToString(creds.Random(20))
 		if err := q.PutCredentials(ctx, store.SealedCredentials{FQDN: in.FQDN, Version: 1, Repository: s.loc.RepoURL(in.FQDN),
-			RepoPassword: s.seal.Seal(creds.NewPassword(), in.FQDN), S3AccessKeyID: newAccessKeyID(), S3Secret: s.seal.Seal(secret, in.FQDN), CreatedAt: now}); err != nil {
+			RepoPassword: s.seal.Seal(creds.NewPassword(), in.FQDN), S3AccessKeyID: key.AccessKeyID, S3Secret: s.seal.Seal(key.SecretAccessKey, in.FQDN),
+			S3KeySource: source, CreatedAt: now}); err != nil {
+			return err
+		}
+		if err := q.RecordStorageCheck(ctx, in.FQDN, rep); err != nil {
 			return err
 		}
 		expires := now.Add(EnrollmentTTL)
 		if err := q.CreateEnrollmentCode(ctx, newID(), in.FQDN, creds.HashToken(creds.NormaliseCode(code)), now, expires, a.Name); err != nil {
 			return err
 		}
-		detail := map[string]any{"message": in.Message}
+		detail := map[string]any{"message": in.Message, "s3_key_by": source}
 		if in.Job != nil {
 			detail["job"] = in.JobID
 		}
@@ -323,18 +417,89 @@ func (s *Server) AddHost(ctx context.Context, a Actor, in AddHostInput) (AddHost
 			Detail: map[string]any{"expires_at": expires}}); err != nil {
 			return err
 		}
-		res = AddHostResult{Revision: rev.Number, Enrollment: Enrollment{FQDN: in.FQDN, Code: code, ExpiresAt: expires, InstallCommand: s.installCommand(in.FQDN, code)}}
+		res = AddHostResult{Revision: rev.Number, Enrollment: Enrollment{FQDN: in.FQDN, Code: code, ExpiresAt: expires, InstallCommand: s.installCommand(in.FQDN, code)},
+			Storage: rep}
 		return nil
 	})
 	if err != nil {
 		return AddHostResult{}, err
 	}
-	if err := s.ensureStorage(ctx, in.FQDN); err != nil {
-		s.log.Warn("storage set-up failed; enrollment will retry it", "host", in.FQDN, "err", err)
-		res.Warning = "the host was added, but its storage could not be set up yet (" + err.Error() + "); enrollment will try again"
-		_ = s.st.Q().Audit(ctx, store.AuditEntry{Actor: "holdfast-server", Source: "system", Action: "storage.setup_failed", FQDN: in.FQDN, Detail: map[string]any{"error": err.Error()}})
+	if err := s.initRepository(ctx, in.FQDN); err != nil {
+		s.log.Warn("repository initialisation failed; enrollment will retry it", "host", in.FQDN, "err", err)
+		res.Warning = "the host was added, but its repository could not be initialised yet (" + err.Error() + "); enrollment will try again"
+		_ = s.st.Q().Audit(ctx, store.AuditEntry{Actor: systemActor.Name, Source: systemActor.Source, Action: "storage.setup_failed", FQDN: in.FQDN, Detail: map[string]any{"error": err.Error()}})
 	}
 	return res, nil
+}
+
+func (s *Server) initRepository(ctx context.Context, fqdn string) error {
+	r, cleanup, err := s.maintRunner(ctx, fqdn)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	if err := r.Init(ctx); err != nil {
+		return fmt.Errorf("initialising the repository of %s: %w", fqdn, err)
+	}
+	return nil
+}
+
+// SetS3KeyInput replaces a host's S3 key.
+type SetS3KeyInput struct {
+	S3Key   S3KeyInput `json:"s3_key"`
+	Message string     `json:"message"`
+}
+
+// SetS3KeyResult is the outcome of SetS3Key.
+type SetS3KeyResult struct {
+	CredentialsVersion int            `json:"credentials_version"`
+	Storage            storage.Report `json:"storage"`
+}
+
+// SetS3Key replaces a host's S3 key with one the admin made, after testing it against the storage
+// contract. A key that fails is refused and the old one stays. The agent gets the new key on its next
+// poll. The escrow bundle is out of date until the next export.
+func (s *Server) SetS3Key(ctx context.Context, a Actor, fqdn string, in SetS3KeyInput) (SetS3KeyResult, error) {
+	key, err := in.S3Key.key()
+	if err != nil {
+		return SetS3KeyResult{}, err
+	}
+	h, err := s.st.Q().GetHost(ctx, fqdn)
+	if err != nil {
+		return SetS3KeyResult{}, fmt.Errorf("host %s: %w", fqdn, err)
+	}
+	if h.State == "retired" {
+		return SetS3KeyResult{}, fmt.Errorf("host %s is retired: %w", fqdn, ErrConflict)
+	}
+	rep, err := s.prepareKey(ctx, fqdn, key, store.KeyByAdmin)
+	if err != nil {
+		return SetS3KeyResult{}, err
+	}
+	if !rep.OK() {
+		return SetS3KeyResult{}, &StorageError{rep}
+	}
+	res := SetS3KeyResult{Storage: rep}
+	err = s.st.InTx(ctx, func(q *store.Q) error {
+		c, err := q.GetCredentials(ctx, fqdn)
+		if err != nil {
+			return err
+		}
+		c.Version++
+		c.S3AccessKeyID, c.S3Secret, c.S3KeySource, c.CreatedAt = key.AccessKeyID, s.seal.Seal(key.SecretAccessKey, fqdn), store.KeyByAdmin, s.now()
+		if err := q.PutCredentials(ctx, c); err != nil {
+			return err
+		}
+		if err := q.RecordStorageCheck(ctx, fqdn, rep); err != nil {
+			return err
+		}
+		res.CredentialsVersion = c.Version
+		if err := q.Audit(ctx, store.AuditEntry{Actor: a.Name, Source: a.Source, Action: "host.s3_key_set", FQDN: fqdn,
+			Detail: map[string]any{"credentials_version": c.Version, "message": in.Message}}); err != nil {
+			return err
+		}
+		return q.NotifyHost(ctx, fqdn)
+	})
+	return res, err
 }
 
 // IssueEnrollmentCode gives a host a new 15-minute code and revokes the open one. It also serves
