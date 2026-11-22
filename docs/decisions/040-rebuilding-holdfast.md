@@ -1,6 +1,9 @@
 # 040: Rebuilding Holdfast
 
-Status: accepted, 2026-11-22 (plan-m7 Q9–Q12; you answered "Continue"). It decides OQ3. It is built in M8 (plan-m7 Q1).
+Status: accepted, 2026-11-22 (plan-m7 Q9–Q12; you answered "Continue"). It decides OQ3. It is built in M9
+([plan-m9](../plan-m9.md)): decision 041 put the two-program architecture first, as M8. With no vault, the server
+writes each export to both buckets itself; and agents are known by pinned certificates, not tokens, which the export
+holds just the same.
 
 ## Decision
 

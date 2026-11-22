@@ -42,7 +42,9 @@ Read the spec and the current plan before changing anything.
   rollback** (decision 038: a rollback deletes no S3 version, and can itself be rolled back). That covers
   forget, prune, retention cuts, deleting a snapshot (decision 031) and removal, however they are triggered.
   Removing a job or a host never deletes data; only decommission does. Nothing in site A deletes anything
-  in site B.
+  in site B. **M8 changes that last sentence** (decision 041: the server makes the off-site copies): from then,
+  off-site copies are forgotten only by their own retention, behind the 7-day protection, or by an admin's Prune
+  now or Delete now, and deleting a snapshot in primary never deletes its copy.
 
 These also follow from the spec:
 
@@ -65,7 +67,8 @@ These also follow from the spec:
 | M5 | Operating Holdfast (plan-m5): packages and upgrades with protocol version negotiation, run controls, repository size, the repository password in escrow (decision 036), the compromise procedure, alerting without Alertmanager, decommission. | The packages install and upgrade on the Ubuntu, RHEL and Oracle Linux test VMs, and the M5 e2e tests pass. |
 | M6 | Recovering with Holdfast (plan-m6): dumps with commands defined on the host, restore to another host, rolling a repository back from S3 versions, the bare-metal runbook. | The dump, restore-to-another-host and rollback e2e tests pass; the lab's dump test passes on the Ubuntu, RHEL and Oracle Linux VMs; and the bare-metal runbook's first path is walked in the lab. |
 | M7 | Off-site copies (plan-m7): holdfast-vault with `restic copy` (decisions 027, 039), its own retention, "Delete here too" (decision 031), holdfast-server's read-only view and its hold, restores from the other site. No standby failover (decision 030). | |
-| M8 | Rebuilding Holdfast (plan-m7 Q1, decision 040): the nightly export, `holdfast host import`, the rebuild runbook. | |
+| M8 | Two programs (plan-m8, decision 041): agents identified by a pinned certificate, a gateway in holdfast-server in place of per-host S3 keys, off-site copies made by the server, holdfast-vault removed. | The e2e suite passes with no S3 key on any host and no vault, and the lab's fidelity, recovery and off-site tests pass on the Ubuntu, RHEL and Oracle Linux VMs. |
+| M9 | Rebuilding Holdfast (plan-m9, decision 040): the nightly export, `holdfast host import`, the rebuild runbook. | |
 
 ## Repository
 

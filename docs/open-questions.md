@@ -64,7 +64,7 @@ A list of prunes, both manual (Prune now) and scheduled, under Config history.
 > **Decided on 2026-11-22 (plan-m7 Q9–Q12; you answered "Continue"):** see
 > [decision 040](decisions/040-rebuilding-holdfast.md). A nightly export to the bucket, encrypted to the escrow key and
 > copied off-site by the vault; agents keep their tokens; `holdfast host import` from escrow files; no hash chain.
-> Built in M8.
+> Built in M9, after decision 041's two-program architecture (M8), which replaces the vault and the tokens.
 
 **Decided around it (decision 030):**
 - There is no warm standby.

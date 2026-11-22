@@ -1,126 +1,109 @@
-# Plan for M8: rebuilding Holdfast
+# Plan for M8: two programs
 
-Status: proposed, 2026-11-22. Waiting for your answers to §5 before any product code.
+Status: decided, 2026-11-22. You asked me to make the choice; it is [decision 041](decisions/041-two-programs-gateway-and-agent-certificates.md).
+This plan is how it is built. §6 lists what I chose inside that, so you can overrule any of it; nothing waits on an
+answer.
 
-M8 is decision 040, which decided OQ3: when holdfast-server's PostgreSQL is lost, Holdfast is rebuilt from a nightly
-export in the bucket, the escrow, and a runbook. There is no standby (decision 030). The snapshot catalogue is a cache,
-read again from the repositories (M2).
+## 1. Where it ends
 
-## 1. What M8 holds
-
-| # | Part | From |
+| | Before M8 | After M8 |
 | --- | --- | --- |
-| 1 | **The nightly export**: holdfast-server writes `meta/<date>.age` to its own bucket, its database and its config, encrypted to the escrow's age recipient | 040 |
-| 2 | **Off-site**: the vault copies site A's `meta/` to site B with the rest, so nothing in A connects to B | 040, 039 |
-| 3 | **Restoring an export** into a new database on a rebuilt server; agents enrolled before the export reconnect with their tokens | 040 |
-| 4 | **`holdfast host import`**: a host back from its escrow file and its S3 key, when there is no export | 040 |
-| 5 | **The rebuild runbook**, `docs/runbooks/rebuild-holdfast.md`, walked in the lab | 030, 040 |
+| Programs | holdfast-agent, holdfast-server, holdfast-vault | holdfast-agent, holdfast-server |
+| S3 users, 100 hosts | ~102 in site A, up to ~102 in site B | 2 per bucket |
+| Adding a host | make an S3 user and key, then `holdfast host add --s3-key-file` | `holdfast host add` |
+| On the host | an S3 key, the repository password, a bearer token | a private key it made itself, the repository password |
+| Agent to server | HTTPS, server pinned, bearer token | HTTPS, server pinned, the agent's pinned certificate (mutual TLS) |
+| Backup data path | host to S3 | host to the server's gateway to S3 |
+| Off-site copies | the vault pulls | the server copies |
+| Off-site settings | in the vault's own UI | on the job, in the one UI |
 
-Already decided, and only built here:
-- the export is encrypted to `escrow.age_recipient` (decision 036); restoring it also needs the server's credentials
-  key, which the admin keeps offline (`holdfast-server keygen`);
-- agents keep their bearer tokens; there is no Holdfast CA;
-- no hash-chained audit log: the audit log is in the export, and bucket versioning keeps the exports;
-- `holdfast host import` is admin only, tests the storage contract first, and its jobs are set again by hand.
+## 2. Parts, in build order
 
-## 2. Design in brief
+**1. Agent certificates.**
+- `holdfast-agent enroll` makes an ECDSA key and a self-signed certificate (root-only files), and sends the certificate
+  with the one-time code. The server pins its fingerprint for that host.
+- The agent listener asks for a client certificate. An agent route answers only to a pinned one; the host's identity comes
+  from it, never from the request. `/metrics` and `/healthz` need none.
+- The bearer token goes: from the agent, the store and the protocol (protocol 4). A new code and a new enrollment replace
+  a certificate; removing or rotating a host unpins it.
+- TLS on the agent listener is required. The e2e harness runs every test with it.
 
-**1. The export.** Once a day, and on `holdfast export now`, the server writes `meta/<UTC date>.age`: a tar of each
-table it needs as `COPY … TO STDOUT` CSV, with the schema version, Holdfast's version and the time, encrypted to the age
-recipient. Its own format (Q1), so restoring needs no `pg_dump` of a matching version. The credentials inside stay sealed
-with the credentials key, so the export alone opens no repository. The maintenance key writes it (a new storage check,
-Q10). Each export is audited; a failure is a problem on the server and an alert.
+**2. The gateway.**
+- restic's REST protocol under `/gateway/v1/<fqdn>/` on the agent listener: config, keys, snapshots, index, data, locks.
+- A host reads and writes its own repository only. Deletes are refused except for lock files. Uploads and downloads are
+  streamed, not buffered.
+- It uses the gateway key: `storage.gateway_credentials_file` in `server.yaml`. New storage checks replace the host-key
+  checks (B001–B007): the gateway key writes and reads under `repos/`, deletes only lock files, and cannot delete a
+  version or use another prefix.
+- The agent's restic gets `rest:https://…`, the pinned server certificate (`--cacert`) and the agent's certificate
+  (`--tls-client-cert`), from files.
+- Metrics per host (requests, bytes, refusals), and an audit entry for each refusal.
+- An agent that cannot reach the gateway retries, and backs up as soon as it answers.
 
-**2. Off-site.** The vault lists site A's `meta/` with the read key it already has, and copies new exports to site B's
-bucket under `meta/<vault's source>/`. The read key must then read `meta/*` too (Q4).
+**3. Per-host S3 keys go.**
+- `holdfast host add` without a key; `host set-key`, the provisioner hook and the credentials' S3 fields are removed.
+- A restore onto another host needs no read-only key: the server allows that host's certificate to read the other
+  repository through the gateway for that one restore.
+- The escrow bundle holds passwords only.
 
-**3. Restoring.** On a rebuilt server: the packages, `server.yaml`, the credentials key put back, an empty database,
-then `holdfast-server restore-export --identity <age key file> <export>`. It refuses a database that is not empty, migrates
-to the export's schema, loads every table, migrates on to the running version, and audits that it was restored, from
-which export. Then the server starts as usual: agents enrolled before the export reconnect with their tokens; the
-catalogue is refreshed from the repositories; what was lost is shown (Q6).
+**4. Off-site copies by the server.**
+- `offsite:` in `server.yaml`: the endpoint, the bucket and its maintenance key. Tested with the same contract as the
+  primary bucket.
+- The copier (M7's) runs in the server: after a backup, and every few minutes, `restic copy` from the primary repository
+  into the off-site one, made with the same chunker parameters, with a password of its own, escrowed there.
+- Each job has an off-site retention (it starts as a copy of primary), Exclude and Match primary, in the job's own
+  settings: UI, API and CLI. O101 warns when off-site keeps less. The daily run does forget, check and prune off-site too,
+  behind the 7-day protection.
+- The hold, "Deleted in primary" and the lag alert stay. A copy's snapshots are listed and browsed like any others.
+- A restore from off-site runs on the host through the gateway, read-only, into a new or another directory.
+- The vault role, the vault protocol, grants, restore keys, `holdfast vault`, `holdfast --vault`, the holdfast-vault
+  package and rclone are removed.
 
-**4. `holdfast host import <fqdn> --escrow-file <decrypted> --s3-key-file <key>`**: for a host the export does not have,
-or with no export at all. It checks that the file is that host's, tests the key against the storage contract, proves the
-password opens the repository (`restic cat config`), and adds the host with that repository and password, and an
-enrollment code. No job: the admin sets them again, from the config in the export if there is one.
+**5. Documents and the lab.**
+- spec, storage.md (two keys per bucket, their policies), install.md, the runbooks, CLAUDE.md's rules and table, and the
+  "How Holdfast works" page.
+- The lab: every agent enrolled again, backups and restores through the gateway on Ceph, off-site copies in a second
+  bucket, a restore from off-site.
 
-**5. The runbook**, `docs/runbooks/rebuild-holdfast.md`: what to have offline (the age key, the credentials key, the
-packages), the steps in order, how to check each one, and what is lost (Q6).
+## 3. What does not change
 
-## 3. Tests
+- The repositories stay where they are, `repos/<fqdn>/` in the same bucket, so no data moves. Agents enroll again.
+- The agent keeps its own schedule and its cached config. restic still encrypts on the host: the gateway sees only
+  encrypted files.
+- Config revisions, checks, retention decided by restic, the 7-day protection, Prune now, Delete now, rollback, escrow
+  with age, dumps, the bounds a host sets on restores, roles and login.
 
-- **e2e:** a nightly export written, and copied by a vault; a fresh database restored from it, and the server started on
-  it: agents reconnect, the config, history and audit log are back, the catalogue refreshes; a refused restore into a
-  database that is not empty; an agent newer than the export (Q6); `host import` from an escrow file, its storage test
-  and its password check.
-- **Lab:** the runbook walked on hfsrv: its database dropped and `/etc/holdfast` and `/var/lib/holdfast-server` removed,
-  the packages installed again, the export restored, the three agents back without new codes (Q8).
+## 4. Tests
 
-## 4. Order
+- **Unit:** the gateway's rules for each restic file type and method; a certificate's host; path tricks (`..`, another
+  host's name, encoded slashes).
+- **e2e**, real restic through the real gateway on MinIO:
+  - every existing test, on TLS with certificates;
+  - host A's certificate on host B's repository is refused, and so is a delete, and both are audited;
+  - an unpinned certificate gets nothing; a removed host's certificate stops working;
+  - the server stopped during a backup: the run fails, is retried, and succeeds once the server is back;
+  - a large backup and `restic check --read-data` through the gateway;
+  - off-site: M7's `TestVault`, turned into `TestOffsite` with one server;
+  - a restore onto another host, and from off-site, through the gateway.
+- **Lab:** as §2 part 5, on Ubuntu, AlmaLinux and Oracle Linux with Ceph RGW; the fidelity test must still keep 39 of 39.
 
-The export first, then restoring it, then `host import`, then the vault's copy of `meta/`, then the runbook and the lab.
+## 5. Order and size
 
-## 5. Questions
+Parts 1 to 5 in that order, each ending with the whole e2e suite green. Part 2 is the largest new piece; part 4 mostly
+moves and removes code. About the size of M7.
 
-**Q1. The export's format.** Decision 040 says "a PostgreSQL dump".
-- *Proposal:* Holdfast's own: each table as `COPY … TO STDOUT` CSV in a tar, with the schema version, restored by
-  `holdfast-server restore-export`. It needs no PostgreSQL client tools on the server, works whatever PostgreSQL version
-  the rebuilt server has, and loads into an older schema before migrating forward.
-- *The alternative:* `pg_dump --format=custom`, restored with `pg_restore`. Standard, but it needs the client tools at a
-  version no older than the server's, and a dump from a newer PostgreSQL may not load into an older one.
+## 6. What I chose inside the decision
 
-**Q2. What is in it.**
-- *Proposal:* every table except the sessions (they would be stale, and a rebuilt server's users log in again) and a
-  vault's cached feed (it is fetched again). The snapshot catalogue is in it: it is a cache, but its tombstones (what
-  Holdfast deleted, and when; what was deleted on request; what was acknowledged) cannot be read again from a
-  repository, and without them the "disappeared" and "Deleted in primary" views would be wrong after a rebuild.
-- *The alternative:* leave the catalogue out, and read it all again; tombstones are lost.
+Say so if you want any of these otherwise.
 
-**Q3. When, and how many are kept.**
-- *Proposal:* once a day, at 00:30 in the server's default zone, and at start when the last one is older than a day;
-  `holdfast export now` for an admin (API, CLI, UI). The server keeps the newest 30 and deletes older ones with the
-  maintenance key; bucket versioning then keeps them for the lifecycle rule's days. `holdfast_export_last_success_
-  timestamp_seconds` and `HoldfastExportStale` after 2 days. Without an age recipient no export is written, and the
-  server warns, as for escrow.
-- *The alternative:* the admin's lifecycle rule expires `meta/` (an expiration rule, besides the noncurrent one), and
-  Holdfast deletes nothing.
-
-**Q4. The vault's copy of `meta/`.**
-- *Proposal:* through site A's bucket, with the vault's read key, which then reads `meta/*` as well as `repos/*`
-  (docs/storage.md changes; `holdfast vault add` tests it). Into site B's bucket under `meta/<vault name>/`, kept as
-  site A keeps them. It works while site A's server is down.
-- *The alternative:* through the vault protocol (`/vault/v1/export`): no change to the key, but no copy while site A's
-  server is down.
-
-**Q5. Restoring.**
-- *Proposal:* `holdfast-server restore-export` (on the server, as root; not an API: there is no server yet), into an empty
-  database only. The vault restores its own exports the same way (`holdfast-vault restore-export`).
-- *Open detail:* the age identity on a file given on the command line, read once and never kept. *Proposal:* yes.
-
-**Q6. What a rebuilt server lacks, and agents ahead of it.** Revisions, history and audit entries after the export are
-lost. An agent may run a revision newer than the restored head.
-- *Proposal:* the server sends no config to an agent that reports a revision newer than its head, and shows the problem
-  "runs revision N, newer than this server's head M: make the change again"; the agent keeps running its own config
-  meanwhile. The first save that touches the host sends it as usual. Agents enrolled after the export get 401, keep
-  backing up, and are brought back with `holdfast host import` (or `host enroll-code` if the export has the host).
-- *The alternative:* send the restored config to every agent at once, which could quietly undo a change made after the
-  export, a job added included.
-
-**Q7. `host import` in the UI.** UI = API = CLI.
-- *Proposal:* all three: `POST /api/v1/hosts/import`, admin everywhere, with the escrow file's contents and the S3 key
-  as input (never shown back), and a form in the UI beside Add host.
-- *The alternative:* CLI and API only, listed in spec §3.3 as an exception, since a repository password then goes
-  through a browser.
-
-**Q8. The lab's walk.**
-- *Proposal:* on hfsrv itself: its database dropped, `/etc/holdfast` and the server's state removed, the packages
-  removed and installed again, the credentials key and `server.yaml` put back from the lab's state, the export restored;
-  then the three agents back by themselves. It needs no new VM.
-- *The alternative:* a new server VM, which the lab would have to make (vms.yml, a sixth VM).
-
-**Q9. The vault's own export.** The vault is holdfast-server, so it writes its export to site B's bucket by itself,
-which rebuilds a lost vault the same way. *Proposal:* yes, the same code and settings; nothing to build.
-
-**Q10. The storage contract.** *Proposal:* a new check, B016: the maintenance key may write, read and delete under
-`meta/`; host keys may not read `meta/` (B007 already tests another prefix: it gains `meta/`).
+- **Holdfast's own gateway**, not the pinned `rclone serve restic` the review preferred as a first step. The protocol is
+  small, and the gateway key cannot delete, which bounds what a bug in it can do.
+- **One gateway, in the server.** A second one on another machine is designed for, not built.
+- **Certificates pinned like SSH keys**, with no CA and no expiry to manage. The certificate's own dates are ignored: the
+  pin is what counts.
+- **Object Lock is reported, not required, and locks are not extended.**
+- **M8 comes before the rebuild** (now M9, [plan-m9](plan-m9.md)), so the rebuild is designed once, on this
+  architecture. Nothing is in production to lose meanwhile.
+- **Second-admin approval** is left for a later milestone.
+- **Agents enroll again** when they are upgraded to M8, in place of a migration path, since Holdfast has no production
+  installs.

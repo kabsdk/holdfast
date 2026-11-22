@@ -1,6 +1,11 @@
 # A simpler Holdfast: two programs, a gateway, Object Lock
 
-Status: study for a decision, 2026-11-22. No product code is changed. §6 asks the questions; nothing here is decided.
+Status: study, 2026-11-22. **Decided by [decision 041](../decisions/041-two-programs-gateway-and-agent-certificates.md)**,
+which takes the gateway, makes the off-site copies in the server (proposal B's shape) and does not require Object Lock.
+A review found errors in this study, which the decision corrects: Object Lock adds less against a hacked server than
+§3.1 and the tables say (versioning with the lifecycle rule already keeps deleted files); reusing the agent's token at
+the gateway would be unsafe; the gateway is not stateless; proposal A's "site A cannot delete in site B" does not hold
+for a mirror; and the S3 user counts leave out restore keys and the witness. The text below is as it was written.
 
 You asked for three things:
 1. **Two programs**, holdfast-server and holdfast-agent, with the server running both sites, so holdfast-vault goes.
