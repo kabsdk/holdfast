@@ -25,6 +25,7 @@ const MaxUpload = 512 << 20
 
 // Options build a gateway.
 type Options struct {
+	Base                         string // where it is served; Base when empty
 	Endpoint, Bucket, Region     string
 	AccessKeyID, SecretAccessKey string // the gateway key (docs/storage.md)
 	// Access says what host may do with repo's repository: Own for its own, ReadOnly under a grant.
@@ -65,13 +66,16 @@ func New(o Options) (*Gateway, error) {
 	if o.Log == nil {
 		o.Log = slog.Default()
 	}
+	if o.Base == "" {
+		o.Base = Base
+	}
 	return &Gateway{o: o, client: c, core: minio.Core{Client: c}, hosts: map[string]*counters{}, lastSaid: map[string]time.Time{}}, nil
 }
 
 // Serve answers one request from host, the host whose certificate the connection was made with.
 func (g *Gateway) Serve(w http.ResponseWriter, r *http.Request, host string) {
 	ctx := r.Context()
-	req, err := Parse(r.Method, r.URL.EscapedPath(), r.URL.Query())
+	req, err := ParseAt(g.o.Base, r.Method, r.URL.EscapedPath(), r.URL.Query())
 	if err != nil {
 		g.refuse(ctx, w, host, Request{Repo: "", Op: Op(strings.ToLower(r.Method))}, &Refusal{ReasonMalformed, err.Error()}, http.StatusBadRequest)
 		return

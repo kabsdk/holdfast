@@ -32,9 +32,7 @@ const (
 	CodeMaintSettings     = "B010" // the maintenance key can change the bucket's settings
 	CodeLifecycle         = "B011" // no lifecycle rule expires noncurrent versions under repos/
 	CodeEscrowWrite       = "B012" // the maintenance key cannot write and delete under escrow/ (decision 036)
-	// A read-only key, for a restore onto another host (plan-m6 §2.2).
-	CodeReadOnlyRead  = "B014" // it cannot read or list the host's prefix
-	CodeReadOnlyWrite = "B015" // it can write or delete there
+	// B014 and B015 tested the read-only keys of M6 and M7, which decision 041 removed. They are not used again.
 )
 
 // Finding is one storage check that failed.
@@ -79,13 +77,11 @@ func (r Report) Summary() string {
 	return b.String()
 }
 
-// Prober tests the storage contract on one host's prefix: the gateway key's (decision 041), and in a vault a
-// read-only key for restores from it (decision 039).
+// Prober tests the storage contract on one host's prefix: the gateway key's and the maintenance key's (decision 041).
 type Prober interface {
 	Probe(ctx context.Context, fqdn string, gateway Key) Report
-	ProbeReadOnly(ctx context.Context, fqdn string, key Key) Report
-	// ProbeMaintenance tests the bucket's side alone, with the maintenance key: a vault has no host keys that
-	// write (decision 039).
+	// ProbeMaintenance tests the bucket's side alone, with the maintenance key: the off-site bucket, which only the
+	// server writes (decision 041).
 	ProbeMaintenance(ctx context.Context) Report
 }
 
@@ -118,7 +114,7 @@ func (p S3Prober) ProbeMaintenance(ctx context.Context) Report {
 		}
 		if versioned && info.VersionID != "" {
 			if err := mc.RemoveObject(ctx, b, other, minio.RemoveObjectOptions{VersionID: info.VersionID}); err == nil {
-				add(CodeMaintVersionDel, "the maintenance key deleted a version of %s for good, so a compromised vault could "+
+				add(CodeMaintVersionDel, "the maintenance key deleted a version of %s for good, so a compromised server could "+
 					"destroy the copies for good; deny it s3:DeleteObjectVersion (docs/storage.md)", other)
 			}
 		}
@@ -178,46 +174,6 @@ type StaticProber struct{ Findings []Finding }
 // Probe implements Prober.
 func (p StaticProber) Probe(context.Context, string, Key) Report {
 	return Report{Findings: append([]Finding{}, p.Findings...)}
-}
-
-// ProbeReadOnly implements Prober: every read-only key passes.
-func (p StaticProber) ProbeReadOnly(context.Context, string, Key) Report {
-	return Report{Findings: []Finding{}}
-}
-
-// ProbeReadOnly tests a key for restores from a vault: it must read and list the host's prefix (B014), and must not
-// write or delete anything there, its locks included (B015). restic then restores with --no-lock.
-func (p S3Prober) ProbeReadOnly(ctx context.Context, fqdn string, key Key) Report {
-	rep := Report{Findings: []Finding{}}
-	add := func(code, format string, a ...any) {
-		rep.Findings = append(rep.Findings, Finding{Code: code, Message: fmt.Sprintf(format, a...)})
-	}
-	ctx, cancel := context.WithTimeout(ctx, time.Minute)
-	defer cancel()
-	c, err1 := p.client(key, "")
-	mc, err2 := p.client(p.Maint, p.Location.Region)
-	if err := errors.Join(err1, err2); err != nil {
-		add(CodeReadOnlyRead, "cannot use the S3 endpoint %s: %v", p.Location.Endpoint, err)
-		return rep
-	}
-	b, prefix := p.Location.Bucket, Prefix(fqdn)+"/"
-	if err := list(ctx, c, b, prefix); err != nil {
-		add(CodeReadOnlyRead, "the key cannot list %s: %s", prefix, s3err(err))
-	}
-	if err := get(ctx, c, b, prefix+"config"); err != nil {
-		add(CodeReadOnlyRead, "the key cannot read %sconfig, the repository's own file: %s", prefix, s3err(err))
-	}
-	tag := "holdfast-probe-" + randHex(6)
-	for _, k := range []string{prefix + tag, prefix + "locks/" + tag} {
-		if _, err := put(ctx, c, b, k); err == nil {
-			add(CodeReadOnlyWrite, "the key wrote %s: a key for a restore onto another host must only read", k)
-			_ = mc.RemoveObject(ctx, b, k, minio.RemoveObjectOptions{})
-		}
-	}
-	if err := c.RemoveObject(ctx, b, prefix+tag+"-absent", minio.RemoveObjectOptions{}); err == nil {
-		add(CodeReadOnlyWrite, "the key may delete under %s: a key for a restore onto another host must only read", prefix)
-	}
-	return rep
 }
 
 // S3Prober tests the contract with plain S3 calls, the same calls restic makes, so it works with any S3

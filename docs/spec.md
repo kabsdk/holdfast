@@ -84,13 +84,11 @@ supports.
   - A backup or a check that runs past its timeout is stopped and reported as failed, so the host's other
     jobs can run. The timeout is the schedule's longest gap, and at least an hour.
 - Keeps its state in PostgreSQL.
+- Optionally, with `offsite:` in its settings, copies every host's snapshots with `restic copy` into a second bucket,
+  under their own retention and the same 7-day protection (§3.7, decision 041). M7's holdfast-vault, a program of its
+  own, did this until M8.
 
-**Vault** (`holdfast-vault`, in the other site; decisions 027 and 039, §3.7)
-- holdfast-server in the vault role: its own settings (`/etc/holdfast-vault/vault.yaml`, `role: vault`), its own
-  PostgreSQL and its own bucket, in site B.
-- It copies site A's hosts with `restic copy` into site B's own repositories, with site B's own passwords, and keeps
-  them under its own retention, with the same 7-day protection.
-- It opens every connection: it polls site A's holdfast-server. Nothing in site A connects to it.
+There are two programs: holdfast-agent and holdfast-server (decision 041).
 
 **Storage witness** (`holdfast-freshness`)
 - Lists the bucket without going through any agent.
@@ -107,7 +105,7 @@ supports.
 - There is no standby (decision 030). Backups go through the server's gateway (decision 041), so while the server
   is down no backup is made: agents keep their schedule, restic waits and retries, and a failed backup is retried
   as soon as the server answers. A second gateway, on another machine, is designed for and not built.
-- Instead, there is a nightly PostgreSQL dump and config export to site B, the sealing key is in escrow,
+- Instead, there is a nightly PostgreSQL dump and config export off-site (M9), the sealing key is in escrow,
   and a tested runbook rebuilds the server.
 
 ### 2.3 Credentials and storage protection
@@ -157,12 +155,10 @@ supports.
 - **The agent and the server agree on a protocol version.** The agent sends its own with every poll (an agent
   before M5 sends none and speaks 1), and the server answers with the range it accepts. The server accepts
   every agent from its minimum on, so it is upgraded first, and agents after it, one by one. Protocol 2 (M6)
-  adds dump jobs, restores from another host, and pause and resume; protocol 3 (M7) adds restores of the host's
-  own snapshots from a vault's copy. A feature an agent does not speak is refused for it (D002), and the rest goes
-  on.
-- The `holdfast-vault` package holds the vault, with the pinned rclone it reads site A through at
-  `/usr/libexec/holdfast/rclone`; it needs `holdfast-restic`. It may share a machine with `holdfast-server`: its
-  defaults (`:8444`, `/var/lib/holdfast-vault`, `/run/holdfast-vault/api.sock`) differ.
+  adds dump jobs, restores from another host, and pause and resume; protocol 3 (M7) added restores from a vault's
+  copy; protocol 4 (M8, decision 041) is the agent's own certificate in place of a token, backups through the
+  gateway, and restores from off-site through it. An agent before 4 cannot log in at all: it enrolls again after its
+  upgrade. A feature an agent does not speak is refused for it (D002), and the rest goes on.
 - An agent older than the server accepts is refused with 426 and the range. It logs that it must be
   upgraded, keeps backing up on its cached config, and the server still takes its reports. It gets no new
   config and no commands meanwhile. The host shows the `agent_too_old` problem, and
@@ -200,9 +196,8 @@ retention. See [decision 013](decisions/013-no-rollback.md).
     without secrets.
   - **Login** differs by client: a browser is redirected to the provider, the CLI shows a device code
     (decision 034). Both end in the same kind of session.
-  - **Off-site settings** (a job's off-site retention, Exclude, Match primary) exist only in the vault, which is a
-    program of its own with its own UI, API and CLI (`holdfast --vault`). holdfast-server shows them read-only
-    (🔒), from the vault's reports (decision 027). Inside each program, UI = API = CLI holds.
+  - **Off-site copies** (§3.7) are the same UI, API and CLI on the off-site repositories: the pages under
+    `#/offsite/`, the API under `/api/v1/offsite/`, the CLI with `--offsite`. UI = API = CLI holds there too.
 - The API comes first. The UI and the CLI are thin clients of the HTTP API, and all logic, validation and
   checks live behind it (decision 028).
 - Every action is recorded in the host's history and in the audit log.
@@ -234,12 +229,12 @@ would keep.
 <fqdn>` (`GET /api/v1/hosts/{fqdn}/pending`) shows each waiting snapshot, the revision whose policy still
 keeps it, and when the daily run may forget it.
 
-**The hold** (decision 039). The daily run does not forget a snapshot that a vault wants and has not copied yet,
-while the snapshot is younger than 7 days; it is pending, marked "a vault has not copied it yet". What a vault wants
-is worked out here, from this site's snapshots of the jobs it copies and the copies it last reported, so the hold
-holds while the vault is down or cannot write. After 7 days the snapshot is forgotten as usual: a vault that stalls
-is an incident, which its lag alert reports long before, not a reason to keep this site's data for ever. Prune now
-and Delete now are not held.
+**The hold** (decision 039), with off-site copies (§3.7). The daily run does not forget a snapshot that is not
+copied off-site yet, while the snapshot is younger than 7 days; it is pending, marked "not copied off-site yet". What
+is not copied is worked out from the primary snapshots of the jobs copied and the copies last reported, so the hold
+holds while the off-site bucket is down or cannot be written. After 7 days the snapshot is forgotten as usual: a copier
+that stalls is an incident, which its lag alert reports long before, not a reason to keep primary data for ever.
+Prune now and Delete now are not held. Without off-site copies nothing is held.
 
 **Keep longer.** `holdfast job keep-longer <fqdn> <job>` saves a new revision in which the job has an older
 retention again: by default the newest one in force during the last 7 days that differs from today's. It
@@ -263,9 +258,9 @@ the union, then checks and prunes.
   `holdfast snapshot delete <fqdn> <id>`.
 - It becomes a pending deletion for 7 days, which can be cancelled (`--cancel`). **Delete now** (`--now
   --confirm <short name>`) skips the wait, with the same confirmation as Prune now.
-- It never touches site B. The vault marks its copy **Deleted in primary**, and a vault admin can choose
-  **Delete here too**. That deletion follows the same rules in B.
-- The snapshot page shows when the data is really gone in each site. Space is freed at the next prune, and
+- It never deletes the snapshot's off-site copy (decision 041). The copy is marked **Deleted in primary**, and an
+  admin can choose **Delete here too** on the off-site pages. That deletion follows the same rules off-site.
+- The snapshot page shows when the data is really gone in each bucket. Space is freed at the next prune, and
   S3 versioning keeps the old files until the bucket's lifecycle rule expires them. The daily storage test
   reads that rule's days (B011), so the date is the prune's date plus those days.
 
@@ -346,57 +341,70 @@ See decision 032.
     anything;
   - a host that reports another version gets a warning and, after an hour, an alert.
 
-### 3.7 Off-site copies: the vault
+### 3.7 Off-site copies (optional)
 
-Decisions 027, 031 and 039, plan-m7. Each site runs its own holdfast-server for its own hosts, and its own vault for
-the other site's copies. Below, site A is the source and site B the vault's.
+Decisions 027, 031, 039 and 041. **Off-site copies are optional.** Without an `offsite:` section in `server.yaml`,
+Holdfast keeps one bucket: nothing is copied, no off-site page, setting, column or action is shown, no snapshot is held
+back for a copy, and no off-site metric or alert exists. With it, holdfast-server copies every host's snapshots into a
+second bucket, best in another site, with a key of its own there. Adding the section later starts copying from then on.
 
-**Registering.** On site A, an admin everywhere registers the vault with a key that may only read `repos/` there
-(docs/storage.md): `holdfast vault add <name> --s3-key-file <key>` tests the key on a host and prints the vault's
-token, once, for its `source.token_file`. `holdfast vault list` shows each vault, when it was last seen, and what it
-copies; `holdfast vault remove` makes its token stop working, and holds nothing back for it any more. Its copies stay.
+**How it runs.** The server runs a second instance of its own code beside itself, the **off-site instance**, on the
+off-site bucket, with its tables in the schema `offsite` of the same database. The two talk in-process: every
+`offsite.poll` (5 minutes by default) the off-site instance hands over its report and takes the feed: every enrolled
+host, its jobs as they run, its repository's password, the snapshots deleted on request, and the bindings. Nothing
+registers and there is no token.
 
-**The sync.** Every `source.poll` (5 minutes by default) the vault posts its report to site A's holdfast-server
-(`/vault/v1/sync`, on the agent listener) and gets the feed: every enrolled host, its jobs as they run there, its
-repository's password, the read-only key, the snapshots deleted there on request, and the restores the vault is asked
-to grant. The vault keeps the feed, sealed, so it goes on copying while site A's server is down.
-
-**Hosts and jobs come from site A**, by revisions of the vault's own:
-- a new host is copied at once, into site B's own repository for it, with a password of its own;
-- a new job's **off-site retention** starts as a copy of its primary retention; after that, the vault admin sets it,
-  and **Match primary** copies primary's again. Keeping less than primary is warning **O101**, which the vault admin
-  accepts; a cut is R104 and waits 7 days, as everywhere;
-- a job's paths, schedule and primary retention follow site A; its off-site retention and Exclude do not;
+**Hosts and jobs follow the server's**, by revisions of the off-site instance's own:
+- a new host is copied at once, into its own off-site repository, with a password of its own, which the host never
+  has; that password is escrowed in the off-site bucket (decision 036);
+- a new job's **off-site retention** starts as a copy of its primary retention; after that, an admin sets it, and
+  **Match primary** copies primary's again. Keeping less than primary is warning **O101**, which the admin accepts; a
+  cut is R104 and waits 7 days, as everywhere;
+- a job's paths, schedule and primary retention follow the server's; its off-site retention and Exclude do not;
 - **Exclude** stops copying a job, and keeps its copies under its off-site retention; **Include** copies it again;
-- a job site A removes is **Retired**: its copies stay, under its off-site retention. A host all of whose jobs are
-  retired can be removed in the vault, and then decommissioned there, after 7 days;
-- a vault adds no hosts, enrolls no agents, backs nothing up, runs no restores and rotates no passwords.
+- a job the server removes is **Retired**: its copies stay, under its off-site retention. A host all of whose jobs are
+  retired can be removed off-site, and then decommissioned there, after 7 days;
+- off-site, no host is added, no agent enrolls, nothing is backed up, no restore runs and no password is rotated.
 
-**The copies.** For each host, the vault lists site A's repository, and copies the snapshots of the jobs it copies
-that it has never copied: `restic --no-lock copy <ids>`, site A through restic's `rclone:` backend with the read-only
-key, site B through `s3:` with the vault's maintenance key. site B's repository is made once with
-`init --copy-chunker-params`, so copies deduplicate. A copy keeps its host name, tags and time, and names its source
-snapshot (`original`). Each copy is a run in the host's history, so it counts as made by Holdfast. A copy that the
-vault's retention or Delete here too removed is not made again. Once a day, after a copy, the vault checks the
-repository as an agent does (1/`check_cycle_days` of the data), and its daily run forgets and prunes behind the 7-day
-protection, as holdfast-server's does.
+**The copies.** For each host, the copier lists the primary repository, and copies the snapshots of the jobs it
+copies that it has never copied: `restic --no-lock copy <ids>`. It reads the primary repository from a loopback
+endpoint of the server that serves it read-only (the gateway's code, with a secret of its own), and writes the
+off-site one through `s3:` with the off-site key, so restic needs only that key. The off-site repository is made once
+with `init --copy-chunker-params`, so copies deduplicate. A copy keeps its host name, tags and time, and names its
+source snapshot (`original`). Each copy is a run in the host's off-site history, so it counts as made by Holdfast. A
+copy that the off-site retention or Delete here too removed is not made again. Once a day, after a copy, the
+off-site repository is checked as an agent checks its own (1/`check_cycle_days` of the data), and its daily run
+forgets and prunes behind the 7-day protection.
 
-**Deleted in primary** (decision 031). A snapshot an admin deleted in site A is marked on its copy; a vault admin may
-**Delete here too**, which waits 7 days like any deletion, or Delete now.
+**Deleting.** Off-site copies are forgotten only by their own retention, after the 7-day protection, or by an
+admin's Prune now or Delete now there. Deleting a snapshot in primary never deletes its copy: the copy is marked
+**Deleted in primary** (decision 031), and an admin may **Delete here too**, which waits 7 days like any deletion, or
+Delete now.
 
-**Site A's view** is read-only: each host's page shows, per vault, its copies, what it still wants, its last copy and
-error, and each job's off-site retention, with "keeps less than primary".
+**Where people see it.** The same UI, API and CLI, with the same login and the same bindings:
+- each host's page has an **Off-site copies** part: the copies, what is not copied yet, the last copy and its error,
+  and each job's off-site retention, with "keeps less than primary";
+- the off-site pages are the same pages under `#/offsite/`, in red, with the badge "OFF-SITE" and only the off-site
+  actions; their API is `/api/v1/offsite/…`, the same routes, and their CLI is `holdfast --offsite …`, the same
+  commands. `holdfast offsite exclude|include|match-primary` act on the off-site jobs, and `holdfast offsite copies
+  <fqdn>` lists a host's copies;
+- the off-site instance's config history and audit log are its own: `holdfast --offsite revision list` and
+  `holdfast --offsite audit`.
 
-**The lag.** A job's newest copy is behind site A's newest snapshot by `holdfast_offsite_behind_seconds`;
-`HoldfastOffsiteLag` pages past twice the job's longest gap. `HoldfastOffsiteCopyFailing` raises a ticket when a host's
-copies keep failing. In the vault the stale alert does not apply: its jobs are backed up in site A.
+**A restore from off-site** runs on the host, into a new or another directory, never in place: `holdfast restore
+<fqdn> <snapshot> --from-offsite`, with the copy's ID or its original's. The host's agent gets the copy's password in
+the restore command, sealed, once, and reads its own copy through the gateway's off-site endpoint
+(`/gateway/v1/offsite/<fqdn>/`), read-only, until it reports the restore. Outside such a restore a host cannot read
+its off-site copy at all. The grant is in the off-site audit log.
 
-**Storage in site B** passes the bucket's side of the storage contract (B004, B008–B012) with the vault's maintenance
-key, and each host's restore key passes B014 and B015.
+**The hold** (§3.4) keeps, in primary, a snapshot not copied yet, for up to 7 days.
 
-**Roles.** A vault has admins and viewers only; by default `holdfast-vault-admins` and `holdfast-vault-viewers`.
+**The lag.** A job's newest copy is behind its newest snapshot in primary by `holdfast_offsite_behind_seconds`, on the
+server's `/metrics`; `HoldfastOffsiteLag` pages past twice the job's longest gap. `HoldfastOffsiteCopyFailing` raises
+a ticket when a host's copies keep failing. Off-site, the stale alert does not apply: the jobs are backed up in
+primary.
 
-**The vault's UI** is holdfast-server's, in red, with the badge "VAULT · SITE B" and only the vault's actions.
+**Storage off-site** passes the bucket's side of the storage contract (B004, B008–B012) with the off-site key.
 
 ---
 
@@ -516,8 +524,9 @@ errors that cannot be accepted. A host whose storage fails one cannot be added o
 | B010 | The maintenance key can change the bucket's settings: versioning, the lifecycle rule or the bucket policy. |
 | B011 | No enabled lifecycle rule expires noncurrent versions under `repos/`. |
 | B012 | The maintenance key cannot write and delete under `escrow/`. Tested only when `escrow.age_recipient` is set (decision 036). |
-| B014 | A vault's read-only key, for restores from it, cannot read or list its host's prefix. |
-| B015 | That key can write or delete under the prefix: it must only read. |
+
+B014 and B015 tested the read-only keys of M6 and M7; no such key exists since decision 041, and the codes are not
+used again. The off-site bucket passes B004 and B008–B012 with the off-site key.
 
 - The accepted codes are stored in the revision and in the audit log.
 - The CLI takes them explicitly, for example `holdfast job set … --accept R102,R104`. Without them it
@@ -631,14 +640,13 @@ host B with `holdfast restore A <snapshot> --to-host B`:
   restore, at most 49 hours (decision 041); B runs restic without locks;
 - A's history and B's both have it.
 
-**From a vault's copy, in the other site** (decision 039): `holdfast restore <fqdn> <snapshot> --from-vault <name>`,
-with the copy's ID or its original's (`holdfast offsite copies <fqdn>` lists them):
+**From its off-site copy** (§3.7): `holdfast restore <fqdn> <snapshot> --from-offsite`, with the copy's ID or its
+original's (`holdfast offsite copies <fqdn>` lists them):
 - it runs on the snapshot's own host, into a new or another directory, never in place;
-- site A asks; the vault grants it on its next sync, with site B's repository, its password and the host's read-only
-  key there, which the vault's admin gave it (`holdfast --vault host set-key`); the host's agent gets them sealed,
-  once, and restores without locks, as from another host, but needs no `allow_other_hosts`: it is its own data;
-- a refusal, or no answer within 24 hours, ends it as a failed restore in the host's history; the grant is in both
-  audit logs.
+- it is granted at once, if the copy is still off-site; the host's agent gets the copy's password sealed, once, and
+  reads the copy through the gateway's off-site endpoint, read-only and without locks, until it reports the restore.
+  It needs no `allow_other_hosts`: it is its own data;
+- a refusal is an error at once; the grant or the refusal is in the off-site audit log.
 
 **Per-file actions**
 - **Restore only this**.
@@ -731,7 +739,7 @@ for you:** it is not listed, not searchable and not counted (decision 033). Aski
 found". Revisions and the audit log are cut down to your hosts. Nobody sees file contents.
 
 Actions the table does not name (plan-m4 Q6):
-- adding a host, giving a vault's host its read-only key, issuing an enrollment code and rotating its password
+- adding a host, issuing an enrollment code and rotating its password
   (`holdfast host rotate`) need `config.storage`;
 - a restore into another directory needs `restore.in_place`, and a restore onto another host needs it on both;
 - saving a job needs `config.jobs`, and also `retention.cut` when it accepts R104;
@@ -750,7 +758,8 @@ These are part of the normal config.
 | `holdfast-editors` | editor | `["*"]` |
 | `holdfast-viewers` | viewer | `["*"]` |
 
-A vault's are `holdfast-vault-admins` (admin) and `holdfast-vault-viewers` (viewer), and it has no editors (§3.7).
+The off-site pages (§3.7) use the same bindings: the off-site instance takes them from the server at every sync, and
+refuses to set its own.
 
 ### 6.4 `/etc/holdfast/server.yaml`
 
@@ -770,7 +779,16 @@ auth:
   bootstrap_admins: []   # usernames that are admin everywhere, for the first login; each use is audited
 escrow:
   age_recipient: age1…   # decision 036: an age public key; its private key is kept offline
+storage:                 # decision 041: two keys for the bucket; hosts hold none
+  maintenance_credentials_file: /etc/holdfast/maintenance.env
+  gateway_credentials_file: /etc/holdfast/gateway.env
+offsite:                 # optional (§3.7): a second bucket, and its key
+  endpoint: https://rgw.site-b.example.internal
+  bucket: holdfast-offsite
+  maintenance_credentials_file: /etc/holdfast/offsite.env
 ```
+
+The full example is `deploy/examples/server.yaml`.
 
 ### 6.5 File contents
 

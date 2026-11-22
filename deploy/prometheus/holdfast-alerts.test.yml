@@ -6,7 +6,7 @@ rule_files:
 evaluation_interval: 1m
 
 tests:
-  # A vault's copy more than twice the job's longest gap behind site A pages; a small lag does not.
+  # An off-site copy more than twice the job's longest gap behind primary pages; a small lag does not.
   - interval: 1m
     input_series:
       - series: 'holdfast_offsite_behind_seconds{host="web01",job_id="data"}'
@@ -26,7 +26,7 @@ tests:
         exp_alerts:
           - exp_labels: {severity: page, host: web01, job_id: data}
             exp_annotations:
-              summary: "web01/data: its off-site copy is 2d 2h 0m 0s behind site A"
+              summary: "web01/data: its off-site copy is 2d 2h 0m 0s behind primary"
 
   # A restic password added outside Holdfast pages at once.
   - interval: 1m

@@ -94,34 +94,19 @@ The wildcard in the middle of `repos/*/locks/*` holds on MinIO and on Ceph RGW (
 To restore host A's snapshot onto host B (spec §5.4), no key is needed: the server lets B's certificate read A's
 repository through the gateway for that one restore, and only read it. The grant ends when B reports the restore.
 
-## The vault's keys (off-site copies, decision 039)
+## The off-site bucket (optional, decision 041)
 
-A vault in site B (spec §3.7) needs three kinds of key, all made by the storage admins with their own tools:
+Off-site copies are optional (spec §3.7). With `offsite:` in `server.yaml`, the server copies every host's snapshots
+into a second bucket, best in another site: another cluster, or at least another realm. Holdfast cannot test that.
 
-| Where | Key | May |
-| --- | --- | --- |
-| site A | the vault's read key, given to `holdfast vault add` on site A | read and list `repos/` in site A's bucket, and nothing else |
-| site B | the vault's maintenance key, in `vault.yaml` | what a maintenance key may in site B's bucket (above), with the same deny |
-| site B | one restore key per copied host, given with `holdfast --vault host set-key` | read and list `repos/<fqdn>/` in site B's bucket, and nothing else |
-
-The read key in site A:
-
-```json
-{"Version": "2012-10-17", "Statement": [
-  {"Effect": "Allow", "Action": ["s3:GetBucketLocation", "s3:ListBucket"], "Resource": ["arn:aws:s3:::holdfast"]},
-  {"Effect": "Allow", "Action": ["s3:GetObject"], "Resource": ["arn:aws:s3:::holdfast/repos/*"]}
-]}
-```
-
-- The vault reads site A through restic's `rclone:` backend with this key, and writes site B through `s3:` with its
-  own. restic takes one set of S3 credentials for both repositories of a copy, so this keeps the key that can write
-  site B out of site A (decision 039). Both are used with `--no-lock`: site A's key may not write a lock.
-- `holdfast vault add` tests the read key on one of site A's hosts (B014, B015).
-- Site B's bucket needs versioning and a lifecycle rule, as site A's: the vault tests B004 and B008–B012 with its
-  maintenance key, and each restore key with B014 and B015. A separate cluster for site B, or at least a separate
-  realm, is recommended; Holdfast cannot test that.
-- The restore key is given, with the repository's password, to the host's agent for each restore from site B. Make
-  a new one when a host's root should no longer read site B.
+- **Make it as the primary bucket**: with versioning and a lifecycle rule, and with an identity of your own.
+- **One key**: `offsite.maintenance_credentials_file`, with the maintenance key's policy above, for the off-site
+  bucket. The server copies into it, forgets and prunes there behind the 7-day protection, and writes the off-site
+  passwords' escrow files there. It tests B004 and B008–B012 with it, as for the primary bucket.
+- **Use a key of its own**, not one of the primary bucket's: a key that can write both buckets would put both under
+  one secret.
+- No host ever has this key. A restore from off-site reads the copy through the server's gateway.
+- The copier reads the primary repositories from the server itself, read-only, so it needs no primary key of its own.
 
 ## If B003 fails: who owns an object
 

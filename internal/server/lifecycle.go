@@ -80,7 +80,7 @@ func (s *Server) RemoveHost(ctx context.Context, a Actor, fqdn string, in Remove
 		if s.set.IsVault() {
 			for id, j := range hc.Jobs {
 				if !j.Retired {
-					return fmt.Errorf("host %s is still in the source (job %s); a vault removes only a host the source removed: %w", fqdn, id, ErrConflict)
+					return fmt.Errorf("host %s is still on the server (job %s); off-site, only a host the server removed is removed: %w", fqdn, id, ErrConflict)
 				}
 			}
 		}

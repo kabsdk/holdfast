@@ -37,26 +37,34 @@ type Settings struct {
 	UI   UISettings   `yaml:"ui"`
 	Auth AuthSettings `yaml:"auth"`
 
-	// Role is "server" (the default) or "vault": holdfast-vault, which copies another site's hosts into this
-	// site's bucket (decisions 027 and 039). Source is then that site's holdfast-server.
-	Role   string         `yaml:"role"`
-	Source SourceSettings `yaml:"source"`
+	// Offsite is the optional second bucket, in another site, that the server copies every host's snapshots into
+	// (decision 041). Without it Holdfast keeps one bucket, and shows nothing about off-site copies.
+	Offsite *OffsiteSettings `yaml:"offsite"`
+
+	// Role is RoleServer, or RoleVault for the off-site instance the server runs beside itself when Offsite is set.
+	// It is not a setting.
+	Role string `yaml:"-"`
 }
 
-// Roles of a holdfast-server process.
+// Roles of a server instance. M7's holdfast-vault was the vault role in a program of its own; since decision 041 it
+// is the off-site instance, inside holdfast-server.
 const (
 	RoleServer = "server"
 	RoleVault  = "vault"
 )
 
-// SourceSettings are, for a vault, the holdfast-server it copies from.
-type SourceSettings struct {
-	Server    string        `yaml:"server"`     // its agent listener, such as https://holdfast.site-a.example:8443
-	CASHA256  string        `yaml:"ca_sha256"`  // its CA's fingerprint, as agents pin it
-	TokenFile string        `yaml:"token_file"` // the token `holdfast vault add` printed, alone in a root-only file
-	Poll      time.Duration `yaml:"poll"`       // how often it syncs and copies; default 5m
-	RcloneBin string        `yaml:"rclone_bin"` // default /usr/libexec/holdfast/rclone, which the vault's package ships
+// OffsiteSettings are the off-site bucket and the key the server uses there. Its versioning and lifecycle rule are
+// tested as the primary bucket's are (docs/storage.md).
+type OffsiteSettings struct {
+	Endpoint                   string        `yaml:"endpoint"`
+	Bucket                     string        `yaml:"bucket"`
+	Region                     string        `yaml:"region"`
+	MaintenanceCredentialsFile string        `yaml:"maintenance_credentials_file"` // KEY=VALUE, root-only
+	Poll                       time.Duration `yaml:"poll"`                         // how often it copies; default 5m
 }
+
+// OffsiteSchema is where the off-site instance keeps its tables, in the server's database.
+const OffsiteSchema = "offsite"
 
 // UISettings are the listener for people: the UI and /api/v1 over HTTPS, with sessions (decision 034). It is
 // off while Listen is empty.
@@ -121,8 +129,21 @@ type EscrowSettings struct {
 	AgeRecipient string `yaml:"age_recipient"`
 }
 
-// IsVault says whether this process is holdfast-vault.
+// IsVault says whether this is the off-site instance.
 func (s Settings) IsVault() bool { return s.Role == RoleVault }
+
+// OffsiteInstance returns the off-site instance's settings: the server's, on the off-site bucket, with no listener of
+// its own and a state directory of its own.
+func (s Settings) OffsiteInstance() Settings {
+	o := s
+	o.Role = RoleVault
+	o.Listen, o.APISocket, o.UI = "", "", UISettings{}
+	o.StateDir = s.StateDir + "/offsite"
+	o.Storage = StorageSettings{Endpoint: s.Offsite.Endpoint, Bucket: s.Offsite.Bucket, Region: s.Offsite.Region,
+		MaintenanceCredentialsFile: s.Offsite.MaintenanceCredentialsFile}
+	o.NodeName = s.NodeName + " (off-site)"
+	return o
+}
 
 // Values of MaintenanceSettings.Check and MaintenanceSettings.Retention.
 const (
@@ -155,19 +176,11 @@ func LoadSettings(path string) (Settings, error) {
 }
 
 func (s *Settings) defaults() {
-	// A vault may share a machine with its site's holdfast-server: its defaults differ.
-	vault := s.Role == RoleVault
 	if s.Listen == "" {
 		s.Listen = ":8443"
-		if vault {
-			s.Listen = ":8444"
-		}
 	}
 	if s.StateDir == "" {
 		s.StateDir = "/var/lib/holdfast-server"
-		if vault {
-			s.StateDir = "/var/lib/holdfast-vault"
-		}
 	}
 	if s.DefaultZone == "" {
 		s.DefaultZone = "UTC"
@@ -187,11 +200,8 @@ func (s *Settings) defaults() {
 	if s.Role == "" {
 		s.Role = RoleServer
 	}
-	if s.Source.Poll <= 0 {
-		s.Source.Poll = 5 * time.Minute
-	}
-	if s.Source.RcloneBin == "" {
-		s.Source.RcloneBin = "/usr/libexec/holdfast/rclone"
+	if s.Offsite != nil && s.Offsite.Poll <= 0 {
+		s.Offsite.Poll = 5 * time.Minute
 	}
 	o := &s.Auth.OIDC
 	if len(o.Scopes) == 0 {
@@ -224,6 +234,18 @@ func (s Settings) validate() error {
 	need(s.Storage.Endpoint, "storage.endpoint")
 	need(s.Storage.Bucket, "storage.bucket")
 	need(s.Storage.MaintenanceCredentialsFile, "storage.maintenance_credentials_file")
+	need(s.Storage.GatewayCredentialsFile, "storage.gateway_credentials_file")
+	if o := s.Offsite; o != nil {
+		need(o.Endpoint, "offsite.endpoint")
+		need(o.Bucket, "offsite.bucket")
+		need(o.MaintenanceCredentialsFile, "offsite.maintenance_credentials_file")
+		if strings.TrimSuffix(o.Endpoint, "/") == strings.TrimSuffix(s.Storage.Endpoint, "/") && o.Bucket == s.Storage.Bucket {
+			errs = append(errs, errors.New("offsite.bucket is the primary bucket: the off-site copies need a bucket of their own, best in another site"))
+		}
+		if o.MaintenanceCredentialsFile == s.Storage.MaintenanceCredentialsFile || o.MaintenanceCredentialsFile == s.Storage.GatewayCredentialsFile {
+			errs = append(errs, errors.New("offsite.maintenance_credentials_file is a primary key's file: the off-site bucket needs a key of its own"))
+		}
+	}
 	if _, err := time.LoadLocation(s.DefaultZone); err != nil {
 		errs = append(errs, fmt.Errorf("default_zone: %w", err))
 	}
@@ -232,15 +254,6 @@ func (s Settings) validate() error {
 	}
 	if c := s.Maintenance.Retention; c != CheckDaily && c != CheckOff {
 		errs = append(errs, fmt.Errorf("maintenance.retention is %q; it must be %q or %q", c, CheckDaily, CheckOff))
-	}
-	switch s.Role {
-	case RoleServer:
-		need(s.Storage.GatewayCredentialsFile, "storage.gateway_credentials_file")
-	case RoleVault:
-		need(s.Source.Server, "source.server (role is vault)")
-		need(s.Source.TokenFile, "source.token_file (role is vault)")
-	default:
-		errs = append(errs, fmt.Errorf("role is %q; it must be %q or %q", s.Role, RoleServer, RoleVault))
 	}
 	if r := s.Escrow.AgeRecipient; r != "" {
 		if _, err := age.ParseX25519Recipient(r); err != nil {

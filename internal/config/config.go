@@ -85,15 +85,6 @@ func DefaultAccess() Access {
 	}}
 }
 
-// VaultAccess returns a vault's default bindings: it has admins and viewers only (decision 039).
-func VaultAccess() Access {
-	all := []string{"*"}
-	return Access{Bindings: []Binding{
-		{Group: "holdfast-vault-admins", Role: "admin", Hosts: all},
-		{Group: "holdfast-vault-viewers", Role: "viewer", Hosts: all},
-	}}
-}
-
 // DefaultJob is where a new job starts (plan-m4 Q11). With paths, it passes every check with no warnings:
 // daily at 02:00 with a 20-minute spread; one per day for 14 days, per week for 8 weeks, per month for 12
 // months and per year for 3 years; and always the newest 3.

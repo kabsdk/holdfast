@@ -26,11 +26,13 @@ func (s *Server) AgentHandler() http.Handler {
 	mux.HandleFunc("POST "+proto.Base+"/enroll", s.handleEnroll)
 	mux.HandleFunc("POST "+proto.Base+"/poll", s.agentAuth(s.handlePoll))
 	mux.HandleFunc("POST "+proto.Base+"/events", s.agentAuth(s.handleEvents))
-	mux.HandleFunc("POST "+proto.VaultBase+"/sync", s.vaultAuth(s.handleVaultSync))
-	mux.HandleFunc("POST "+proto.VaultBase+"/grant", s.vaultAuth(s.handleVaultGrant))
 	if s.gw != nil {
 		// restic's REST protocol, for the host whose certificate the connection was made with (decision 041).
 		mux.HandleFunc(gateway.Base, s.agentAuth(func(w http.ResponseWriter, r *http.Request) { s.gw.Serve(w, r, hostOf(r)) }))
+	}
+	if s.offsiteGW != nil {
+		// A host's off-site copy, read-only, while a restore from off-site is granted to it (offsite.go).
+		mux.HandleFunc(gateway.OffsiteBase, s.agentAuth(func(w http.ResponseWriter, r *http.Request) { s.offsiteGW.Serve(w, r, hostOf(r)) }))
 	}
 	mux.HandleFunc("GET /metrics", s.handleMetrics)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {

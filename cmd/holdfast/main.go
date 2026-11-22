@@ -21,7 +21,9 @@ import (
 var (
 	socketPath string
 	asJSON     bool
-	useVault   bool
+	// useOffsite sends every command to the off-site copies' API, /api/v1/offsite/ (decision 041): the same
+	// commands, on the off-site repositories, their retention, their history and their audit log.
+	useOffsite bool
 )
 
 func main() {
@@ -30,9 +32,6 @@ func main() {
 			if cmd.Name() == "login" || cmd.Name() == "logout" {
 				return nil
 			}
-			if useVault && !cmd.Flags().Changed("socket") && os.Getenv("HOLDFAST_SOCKET") == "" {
-				socketPath = vaultSocket
-			}
 			var err error
 			current, err = resolveTarget(cmd)
 			return err
@@ -40,9 +39,9 @@ func main() {
 	root.PersistentFlags().StringVar(&socketPath, "socket", envOr("HOLDFAST_SOCKET", "/run/holdfast/api.sock"), "API socket of holdfast-server (root on the server)")
 	root.PersistentFlags().StringVar(&serverURL, "server", os.Getenv("HOLDFAST_SERVER"), "the server's URL, for holdfast login; later commands use the saved login")
 	root.PersistentFlags().BoolVar(&asJSON, "json", false, "print the API's JSON answer")
-	root.PersistentFlags().BoolVar(&useVault, "vault", false, "talk to holdfast-vault on this machine ("+vaultSocket+") rather than holdfast-server")
+	root.PersistentFlags().BoolVar(&useOffsite, "offsite", false, "act on the off-site copies: their hosts, retention, history and audit log")
 	root.AddCommand(statusCmd(), hostCmd(), jobCmd(), snapshotCmd(), restoreCmd(), restoresCmd(), searchCmd(), revisionCmd(), auditCmd(), checkCmd(), escrowCmd(),
-		pendingCmd(), prunesCmd(), retentionCmd(), pruneNowCmd(), loginCmd(), logoutCmd(), whoamiCmd(), accessCmd(), settingsCmd(), vaultCmd(), offsiteCmd())
+		pendingCmd(), prunesCmd(), retentionCmd(), pruneNowCmd(), loginCmd(), logoutCmd(), whoamiCmd(), accessCmd(), settingsCmd(), offsiteCmd())
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
 	}
@@ -84,48 +83,12 @@ func (r *storageReport) lines() string {
 	return b.String()
 }
 
-// readS3Key reads a key file of AWS_ACCESS_KEY_ID= and AWS_SECRET_ACCESS_KEY= lines, or standard input
-// for "-". The server validates the key and tests it; the secret never goes on a command line.
-func readS3Key(path string) (map[string]string, error) {
-	var r io.Reader = os.Stdin
-	if path != "-" {
-		fi, err := os.Stat(path)
-		if err != nil {
-			return nil, err
-		}
-		if fi.Mode().Perm()&0o077 != 0 {
-			return nil, fmt.Errorf("%s has mode %04o: a key file must be readable by its owner only", path, fi.Mode().Perm())
-		}
-		f, err := os.Open(path)
-		if err != nil {
-			return nil, err
-		}
-		defer f.Close()
-		r = f
-	}
-	key := map[string]string{"access_key_id": "", "secret_access_key": ""}
-	b, err := io.ReadAll(io.LimitReader(r, 1<<16))
-	if err != nil {
-		return nil, err
-	}
-	for _, line := range strings.Split(string(b), "\n") {
-		name, value, ok := strings.Cut(strings.TrimSpace(line), "=")
-		if !ok {
-			continue
-		}
-		value = strings.Trim(strings.TrimSpace(value), `"'`)
-		switch strings.TrimSpace(strings.TrimPrefix(name, "export ")) {
-		case "AWS_ACCESS_KEY_ID":
-			key["access_key_id"] = value
-		case "AWS_SECRET_ACCESS_KEY":
-			key["secret_access_key"] = value
-		}
-	}
-	return key, nil
-}
-
-// call sends a request and decodes the answer into out. It returns the raw body for --json.
+// call sends a request and decodes the answer into out. It returns the raw body for --json. With --offsite it goes to
+// the off-site copies' API: the same paths, under /api/v1/offsite/.
 func call(method, path string, in, out any) ([]byte, error) {
+	if useOffsite {
+		path = strings.Replace(path, "/api/v1/", "/api/v1/offsite/", 1)
+	}
 	resp, err := current.do(method, path, in)
 	if err != nil {
 		return nil, err
@@ -397,33 +360,6 @@ func hostCmd() *cobra.Command {
 	addCmd.Flags().StringVar(&add.id, "job", "", "also add this job (then the job flags apply)")
 	add.register(addCmd)
 	c.AddCommand(addCmd)
-	var setKeyFile, setKeyMsg string
-	setKey := &cobra.Command{Use: "set-key <fqdn>", Short: "In a vault: give a host its read-only key, for restores from the vault; the key is tested first, and a key that fails is refused", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, a []string) error {
-		if setKeyFile == "" {
-			return errors.New("--s3-key-file is required")
-		}
-		key, err := readS3Key(setKeyFile)
-		if err != nil {
-			return err
-		}
-		var res struct {
-			CredentialsVersion int `json:"credentials_version"`
-		}
-		raw, err := call("PUT", "/api/v1/hosts/"+url.PathEscape(a[0])+"/s3-key", map[string]any{"s3_key": key, "message": setKeyMsg}, &res)
-		if err != nil {
-			return err
-		}
-		if asJSON {
-			printJSON(raw)
-			return nil
-		}
-		fmt.Printf("the new read-only key of %s passed every storage check and is credentials version %d\n"+
-			"export a new escrow bundle: the last one has the old key\n", a[0], res.CredentialsVersion)
-		return nil
-	}}
-	setKey.Flags().StringVar(&setKeyFile, "s3-key-file", "", "a root-only file of AWS_ACCESS_KEY_ID= and AWS_SECRET_ACCESS_KEY= lines, or - for stdin")
-	setKey.Flags().StringVarP(&setKeyMsg, "message", "m", "", "why the key is replaced, for the audit log")
-	c.AddCommand(setKey)
 	c.AddCommand(&cobra.Command{Use: "acknowledge <fqdn>", Short: "Clear the red alerts for changes made outside Holdfast, after looking into them", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, a []string) error {
 		var res struct{ Snapshots, Keys int }
 		raw, err := call("POST", "/api/v1/hosts/"+url.PathEscape(a[0])+"/acknowledge", nil, &res)

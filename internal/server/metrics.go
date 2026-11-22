@@ -91,35 +91,10 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(&b, "holdfast_agent_too_old{host=%q} %d\n", h.FQDN, old)
 	}
 
-	// A vault's jobs are the source's, backed up there: here they lag, and the stale alert is the source's.
-	if s.set.IsVault() {
-		gauge("holdfast_job_longest_gap_seconds", "The schedule's longest gap; the off-site lag alert fires at 2x this.")
-		gauge("holdfast_offsite_behind_seconds", "How far the newest copy of the job is behind the source's newest snapshot (decision 039).")
-		gauge("holdfast_offsite_copy_failed", "1 if the host's last copy from the source failed.")
-		for _, h := range hosts {
-			failed := 0
-			if h.CopyError != "" {
-				failed = 1
-			}
-			fmt.Fprintf(&b, "holdfast_offsite_copy_failed{host=%q} %d\n", h.FQDN, failed)
-			for _, j := range h.Jobs {
-				gap, _ := time.ParseDuration(j.LongestGap)
-				fmt.Fprintf(&b, "holdfast_job_longest_gap_seconds{host=%q,job_id=%q} %.0f\n", h.FQDN, j.ID, gap.Seconds())
-				if j.BehindS != nil && !j.Excluded && !j.Retired {
-					fmt.Fprintf(&b, "holdfast_offsite_behind_seconds{host=%q,job_id=%q} %d\n", h.FQDN, j.ID, *j.BehindS)
-				}
-			}
-		}
-	}
-	jobHosts := hosts
-	if s.set.IsVault() {
-		jobHosts = nil
-	} else {
-		gauge("holdfast_job_last_success_timestamp_seconds", "Finish time of the last successful or warning backup.")
-		gauge("holdfast_job_longest_gap_seconds", "The schedule's longest gap; the stale alert fires at 2x this.")
-		gauge("holdfast_job_last_status", "1 for the status of the job's most recent run.")
-	}
-	for _, h := range jobHosts {
+	gauge("holdfast_job_last_success_timestamp_seconds", "Finish time of the last successful or warning backup.")
+	gauge("holdfast_job_longest_gap_seconds", "The schedule's longest gap; the stale alert fires at 2x this, and the off-site lag alert too.")
+	gauge("holdfast_job_last_status", "1 for the status of the job's most recent run.")
+	for _, h := range hosts {
 		for _, j := range h.Jobs {
 			var last *time.Time
 			status := ""
@@ -248,6 +223,7 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	if s.gw != nil {
 		s.gw.WriteMetrics(&b)
 	}
+	s.writeOffsiteMetrics(ctx, &b) // nothing without offsite:
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
 	_, _ = w.Write([]byte(b.String()))
 }

@@ -68,6 +68,9 @@ func (s *Server) APIHandler(local bool) http.Handler {
 		}
 		mux.HandleFunc(rt.Method+" "+rt.Path, s.guard(rt))
 	}
+	if !s.set.IsVault() {
+		mux.HandleFunc("/api/v1/offsite/", s.serveOffsite(local)) // the off-site instance's API (offsite.go)
+	}
 	return mux
 }
 
@@ -270,19 +273,6 @@ func (s *Server) apiAcknowledge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, got)
-}
-
-func (s *Server) apiSetS3Key(w http.ResponseWriter, r *http.Request) {
-	var in SetS3KeyInput
-	if !decode(w, r, &in) {
-		return
-	}
-	res, err := s.SetS3Key(r.Context(), actorOf(r), r.PathValue("fqdn"), in)
-	if err != nil {
-		apiError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, res)
 }
 
 func (s *Server) apiSetJob(w http.ResponseWriter, r *http.Request) {

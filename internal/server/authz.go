@@ -125,7 +125,6 @@ func (s *Server) Routes() []Route {
 		r("DELETE", "/api/v1/hosts/{fqdn}/jobs/{job}", access.HostRemove, s.apiRemoveJob),
 		r("GET", "/api/v1/hosts/{fqdn}/events", access.View, s.apiHostEvents),
 		r("POST", "/api/v1/hosts/{fqdn}/enrollment-code", access.ConfigStorage, s.apiEnrollmentCode),
-		r("PUT", "/api/v1/hosts/{fqdn}/s3-key", access.ConfigStorage, s.apiSetS3Key),
 		r("POST", "/api/v1/hosts/{fqdn}/rotate", access.ConfigStorage, s.apiRotate),
 		r("POST", "/api/v1/hosts/{fqdn}/decommission", access.HostDecommission, s.apiDecommission),
 		r("DELETE", "/api/v1/hosts/{fqdn}/decommission", access.HostDecommission, s.apiCancelDecommission),
@@ -145,7 +144,7 @@ func (s *Server) Routes() []Route {
 		r("PUT", "/api/v1/hosts/{fqdn}/jobs/{job}", access.ConfigJobs, s.apiSetJob), // R104: retention.cut, in SetJob
 		r("POST", "/api/v1/hosts/{fqdn}/jobs/{job}/check", access.ConfigJobs, s.apiCheckJob),
 		r("POST", "/api/v1/hosts/{fqdn}/jobs/{job}/keep-longer", access.ConfigJobs, s.apiKeepLonger),
-		r("POST", "/api/v1/hosts/{fqdn}/jobs/{job}/exclude", access.ConfigJobs, s.apiExclude(true)), // a vault's (vault.go)
+		r("POST", "/api/v1/hosts/{fqdn}/jobs/{job}/exclude", access.ConfigJobs, s.apiExclude(true)), // off-site (vault.go)
 		r("POST", "/api/v1/hosts/{fqdn}/jobs/{job}/include", access.ConfigJobs, s.apiExclude(false)),
 		r("POST", "/api/v1/hosts/{fqdn}/jobs/{job}/match-primary", access.ConfigJobs, s.apiMatchPrimary), // R104: retention.cut, in SetJob
 		r("POST", "/api/v1/hosts/{fqdn}/jobs/{job}/run", access.BackupRun, s.apiRunNow),
@@ -169,9 +168,6 @@ func (s *Server) Routes() []Route {
 		r("PUT", "/api/v1/access", "", s.apiSetAccess),               // admin everywhere, in SetAccess
 		r("GET", "/api/v1/sessions", "", s.apiSessions),              // admin everywhere
 		r("DELETE", "/api/v1/sessions/{user}", "", s.apiEndSessions), // admin everywhere
-		r("GET", "/api/v1/vaults", "", s.apiVaults),                  // admin everywhere, in Vaults
-		r("POST", "/api/v1/vaults", "", s.apiAddVault),               // admin everywhere, in AddVault
-		r("DELETE", "/api/v1/vaults/{name}", "", s.apiRemoveVault),   // admin everywhere, in RemoveVault
 		r("GET", "/api/v1/hosts/{fqdn}/offsite", access.View, s.apiOffsiteCopies),
 		{Method: "POST", Path: "/api/v1/escrow/export", Local: true, h: s.apiEscrow},
 	}
@@ -237,12 +233,6 @@ func (v viewer) restores(rv RestoresView) RestoresView {
 				spec.Include, spec.Exclude = nil, nil
 				rv.Queued[i].Payload, _ = json.Marshal(spec)
 			}
-		}
-	}
-	rv.WaitingForVault = keep(rv.WaitingForVault, func(r store.VaultRequest) bool { return v.sees(r.FQDN) })
-	for i, r := range rv.WaitingForVault {
-		if !v.can(access.Browse, r.FQDN) {
-			rv.WaitingForVault[i].Spec = nil
 		}
 	}
 	rv.Done = keep(rv.Done, func(e store.Event) bool { return v.sees(e.FQDN) })

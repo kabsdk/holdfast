@@ -1,5 +1,5 @@
-// Package serverd is the main of holdfast-server and of holdfast-vault, which is holdfast-server in the vault role
-// (decision 039): the same program, with its own name, settings file and package.
+// Package serverd is the main of holdfast-server. With offsite: in its settings it also runs the off-site instance
+// beside itself (decision 041), which M7 ran as holdfast-vault, another program.
 package serverd
 
 import (
@@ -23,9 +23,8 @@ import (
 	"github.com/kabsdk/holdfast/internal/server/store"
 )
 
-// Main runs the program called name, whose settings are at defaultConfig unless -config says otherwise, and must
-// be for role.
-func Main(name, defaultConfig, role string) {
+// Main runs the program called name, whose settings are at defaultConfig unless -config says otherwise.
+func Main(name, defaultConfig string) {
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	if len(os.Args) == 3 && os.Args[1] == "keygen" {
 		if err := creds.WriteNewKeyFile(os.Args[2]); err != nil {
@@ -44,7 +43,7 @@ func Main(name, defaultConfig, role string) {
 		minProto, err = testMinProtocol(name, *test, log)
 	}
 	if err == nil {
-		err = run(name, *cfgPath, role, now, minProto, log)
+		err = run(*cfgPath, now, minProto, log)
 	}
 	if err != nil {
 		log.Error(name+" stopped", "err", err)
@@ -89,14 +88,10 @@ func testMinProtocol(name string, test bool, log *slog.Logger) (int, error) {
 	return n, nil
 }
 
-func run(name, cfgPath, role string, now func() time.Time, minProto int, log *slog.Logger) error {
+func run(cfgPath string, now func() time.Time, minProto int, log *slog.Logger) error {
 	set, err := server.LoadSettings(cfgPath)
 	if err != nil {
 		return err
-	}
-	if set.Role != role {
-		other := map[string]string{server.RoleServer: "holdfast-server", server.RoleVault: "holdfast-vault"}[set.Role]
-		return fmt.Errorf("%s says role: %s, which is %s's; %s needs role: %s", cfgPath, set.Role, other, name, role)
 	}
 	sealer, err := creds.LoadKeyFile(set.CredentialsKeyFile)
 	if err != nil {
@@ -117,17 +112,28 @@ func run(name, cfgPath, role string, now func() time.Time, minProto int, log *sl
 		return fmt.Errorf("migrations: %w", err)
 	}
 	// Decision 041: hosts hold no S3 key. The server's gateway reads and writes their repositories with its own.
-	var gw storage.Key
-	if !set.IsVault() {
-		if gw, err = storage.ReadKeyFile(set.Storage.GatewayCredentialsFile); err != nil {
-			return err
-		}
+	gw, err := storage.ReadKeyFile(set.Storage.GatewayCredentialsFile)
+	if err != nil {
+		return err
 	}
 	srv, err := server.New(set, server.Deps{Store: st, Sealer: sealer, Maintenance: maint, Gateway: gw, Logger: log, Now: now, MinProtocol: minProto})
 	if err != nil {
 		return err
 	}
+	var off *server.Server
+	if set.Offsite != nil {
+		if off, err = offsiteInstance(ctx, set, sealer, now, log); err != nil {
+			return fmt.Errorf("off-site: %w", err)
+		}
+		if err := srv.AttachOffsite(ctx, off); err != nil {
+			return fmt.Errorf("off-site: %w", err)
+		}
+		log.Info("copying every host off-site", "endpoint", set.Offsite.Endpoint, "bucket", set.Offsite.Bucket, "poll", set.Offsite.Poll)
+	}
 	srv.Run(ctx)
+	if off != nil {
+		off.Run(ctx)
+	}
 
 	errc := make(chan error, 3)
 	// Agents are known by the certificate their TLS connection is made with (decision 041), so this listener is
@@ -188,6 +194,24 @@ func run(name, cfgPath, role string, now func() time.Time, minProto int, log *sl
 		_ = apiSrv.Shutdown(sctx)
 	}
 	return nil
+}
+
+// offsiteInstance builds the off-site instance: the server's code on the off-site bucket, with its tables in the
+// schema "offsite" of the same database, which it makes and migrates.
+func offsiteInstance(ctx context.Context, set server.Settings, sealer *creds.Sealer, now func() time.Time, log *slog.Logger) (*server.Server, error) {
+	key, err := storage.ReadKeyFile(set.Offsite.MaintenanceCredentialsFile)
+	if err != nil {
+		return nil, err
+	}
+	st, err := store.OpenSchema(ctx, set.DatabaseDSN, server.OffsiteSchema)
+	if err != nil {
+		return nil, fmt.Errorf("database: %w", err)
+	}
+	go func() { <-ctx.Done(); st.Close() }()
+	if err := st.Migrate(ctx); err != nil {
+		return nil, fmt.Errorf("migrations: %w", err)
+	}
+	return server.New(set.OffsiteInstance(), server.Deps{Store: st, Sealer: sealer, Maintenance: key, Logger: log.With("site", "offsite"), Now: now})
 }
 
 // listenSocket opens the API socket: its directory is 0700 and the socket 0600, so only its owner

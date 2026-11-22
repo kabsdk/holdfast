@@ -20,9 +20,17 @@ import (
 // Base is where the gateway is served, on the agent listener. A host's repository is Base + its FQDN + "/".
 const Base = "/gateway/v1/"
 
+// OffsiteBase is where the off-site repositories are served, read-only, for restores from off-site (decision 041).
+const OffsiteBase = "/gateway/v1/offsite/"
+
 // RepoURL is the restic repository URL of a host's repository at a server.
 func RepoURL(server, fqdn string) string {
 	return "rest:" + strings.TrimSuffix(server, "/") + Base + fqdn + "/"
+}
+
+// OffsiteRepoURL is the restic repository URL of a host's off-site copy at a server.
+func OffsiteRepoURL(server, fqdn string) string {
+	return "rest:" + strings.TrimSuffix(server, "/") + OffsiteBase + fqdn + "/"
 }
 
 // Op is what a request does.
@@ -83,7 +91,12 @@ var ErrMalformed = errors.New("not a request of restic's REST protocol for a Hol
 // Parse reads a request from its method, its path as sent (escaped) and its query. It takes nothing it does not
 // know: every part of the path is checked against what restic sends, so no path trick reaches the bucket.
 func Parse(method, escapedPath string, query url.Values) (Request, error) {
-	rest, ok := strings.CutPrefix(escapedPath, Base)
+	return ParseAt(Base, method, escapedPath, query)
+}
+
+// ParseAt is Parse for a gateway served under base.
+func ParseAt(base, method, escapedPath string, query url.Values) (Request, error) {
+	rest, ok := strings.CutPrefix(escapedPath, base)
 	// Nothing restic sends is escaped: a % could only hide a slash or a dot.
 	if !ok || strings.ContainsAny(rest, "%\\") {
 		return Request{}, ErrMalformed

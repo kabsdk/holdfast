@@ -73,7 +73,7 @@ function Editor({ fqdn, jobID, saved, base, isNew, defaults, dumps, vault, prima
   const cut = check && check.findings.some((f) => f.code === 'R104') && accept.includes('R104');
   return html`<div class="grid2"><div>
     ${vault && html`<div class="panel"><h3>Off-site retention · job ${jobID}</h3>
-      <p class="muted">The rest of the job is the source's. Primary retention there 🔒: ${primary ? retentionText(primary) : '—'}. Keeping less here is warning O101, which you accept.</p></div>`}
+      <p class="muted">The rest of the job is set on the server's pages. Primary retention 🔒: ${primary ? retentionText(primary) : '—'}. Keeping less off-site is warning O101, which you accept.</p></div>`}
     ${!vault && html`<div class="panel"><h3>What · job ${isNew ? 'new' : jobID}</h3>
       ${isNew && html`<label class="field"><span>Job ID (lower-case letters, digits, dashes; the snapshot tag job=…)</span><input value=${id} onInput=${(e) => setID(e.target.value)} /></label>`}
       <div class="row"><label><input type="radio" checked=${what === 'paths'} onChange=${() => setWhat('paths')} /> Paths</label>
@@ -137,7 +137,7 @@ export function Configure({ fqdn, job, settings, vault }) {
     <p class="muted">Every save is a revision in PostgreSQL. Schedule and retention are checked together: errors block the save, warnings must be accepted one by one.</p>
     <div class="tabs">${h.jobs.map((j) => html`<a class=${j.id === job ? 'on' : ''} href=${link('hosts', fqdn, 'configure', j.id)}>${j.id}</a>`)}
       ${!vault && html`<a class=${!saved ? 'on' : ''} href=${link('hosts', fqdn, 'configure')}>+ Add job</a>`}</div>
-    ${vault && !saved ? html`<div class="banner info">A vault's jobs come from its source: choose one above to set its off-site retention.</div>`
+    ${vault && !saved ? html`<div class="banner info">The off-site jobs follow the server's: choose one above to set its off-site retention.</div>`
       : html`<${Editor} key=${job || 'new'} fqdn=${fqdn} jobID=${job} saved=${asJob(saved)} isNew=${!saved} base=${status.data.head_revision} defaults=${settings.default_job}
       dumps=${h.agent?.dumps || []} vault=${vault} primary=${saved?.primary_retention} />`}`;
 }

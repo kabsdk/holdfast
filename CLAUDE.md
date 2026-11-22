@@ -41,10 +41,13 @@ Read the spec and the current plan before changing anything.
 - **Nothing destructive bypasses the 7-day protection, except an admin's Prune now, Delete now or repository
   rollback** (decision 038: a rollback deletes no S3 version, and can itself be rolled back). That covers
   forget, prune, retention cuts, deleting a snapshot (decision 031) and removal, however they are triggered.
-  Removing a job or a host never deletes data; only decommission does. Nothing in site A deletes anything
-  in site B. **M8 changes that last sentence** (decision 041: the server makes the off-site copies): from then,
-  off-site copies are forgotten only by their own retention, behind the 7-day protection, or by an admin's Prune
-  now or Delete now, and deleting a snapshot in primary never deletes its copy.
+  Removing a job or a host never deletes data; only decommission does. Off-site copies, which are optional, are
+  forgotten only by their own retention, behind the 7-day protection, or by an admin's Prune now or Delete now
+  there; deleting a snapshot in primary never deletes its copy (decision 041).
+- **Hosts hold no S3 key.** They back up through the server's gateway with their own pinned certificate, and the
+  gateway decides what a host may do: read and add to its own repository, delete only its own lock files, never
+  rewrite a file or write config or keys (decision 041). Off-site stays optional: without `offsite:` nothing about
+  it is shown, checked or alerted.
 
 These also follow from the spec:
 

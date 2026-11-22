@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kabsdk/holdfast/internal/gateway"
 	"github.com/kabsdk/holdfast/internal/proto"
 	"github.com/kabsdk/holdfast/internal/restic"
 )
@@ -51,8 +52,8 @@ func (a *Agent) runRestore(ctx context.Context, c proto.Command) bool {
 
 	// Another host's snapshot (plan-m6 §2.2): only if this host allows it, never in place, and with that
 	// host's password and read-only key, which live in root-only files for this one restore.
-	// A source with this host's own name is a vault's copy of its own snapshots, in site B (decision 039): that is
-	// no other host's data, so allow_other_hosts does not apply, but it is still never restored in place.
+	// A source with this host's own name is its own off-site copy (decisions 039 and 041): that is no other host's
+	// data, so allow_other_hosts does not apply, but it is still never restored in place.
 	owner := a.cfg.FQDN
 	otherHost := spec.Source != nil && spec.Source.FQDN != a.cfg.FQDN
 	if src := spec.Source; src != nil {
@@ -69,6 +70,9 @@ func (a *Agent) runRestore(ctx context.Context, c proto.Command) bool {
 		defer cleanup()
 		r, owner = other, src.FQDN
 		ev.Detail["source_host"] = src.FQDN
+		if src.Offsite {
+			ev.Detail["from_offsite"] = "true"
+		}
 	}
 
 	sn, err := r.SnapshotInfo(ctx, spec.Snapshot)
@@ -185,9 +189,9 @@ func isDump(sn restic.Snapshot) bool {
 	return false
 }
 
-// sourceRunner is restic on another repository, with its password: another host's, through the gateway, which lets
-// this host read it for this restore (decision 041); or a vault's copy, with the vault's read-only key for it
-// (decision 039). It runs without locks: neither may write them. cleanup removes the files.
+// sourceRunner is restic on another repository, with its password, through the gateway, which lets this host read it
+// for this restore (decision 041): another host's, or this host's own copy off-site. It runs without locks: it may
+// not write them. cleanup removes the files.
 func (a *Agent) sourceRunner(commandID string, src proto.RestoreSource) (restic.Runner, func(), error) {
 	dir := a.path("source-" + commandID)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -199,13 +203,12 @@ func (a *Agent) sourceRunner(commandID string, src proto.RestoreSource) (restic.
 		cleanup()
 		return restic.Runner{}, nil, err
 	}
-	if src.S3AccessKeyID == "" {
-		r := a.gatewayRunner(src.FQDN, pf, filepath.Join(dir, "cache"))
-		r.NoLock, r.RetryLock = true, 0
-		return r, cleanup, nil
+	r := a.gatewayRunner(src.FQDN, pf, filepath.Join(dir, "cache"))
+	if src.Offsite {
+		r.Repo = gateway.OffsiteRepoURL(a.cfg.Server, src.FQDN)
 	}
-	return restic.Runner{Bin: a.cfg.ResticBin, Repo: src.Repository, PasswordFile: pf, CacheDir: filepath.Join(dir, "cache"), NoLock: true,
-		Env: []string{"AWS_ACCESS_KEY_ID=" + src.S3AccessKeyID, "AWS_SECRET_ACCESS_KEY=" + src.S3SecretAccessKey}}, cleanup, nil
+	r.NoLock, r.RetryLock = true, 0
+	return r, cleanup, nil
 }
 
 // safetyBackup backs up the paths an in-place restore will replace, and reports it as a pre_restore

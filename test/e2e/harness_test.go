@@ -216,6 +216,8 @@ type env struct {
 	// gwKey is the gateway key's access key ID, and gwPolicy the name of its policy (decision 041): hosts hold no
 	// S3 key, the server's gateway uses this one for all of them.
 	gwKey, gwPolicy string
+	// offBucket and offKey are the off-site bucket and its key's access key ID, with envOpts.Offsite.
+	offBucket, offKey string
 	// tls is the agent listener's certificate: always TLS, since agents are known by their own certificates
 	// (decision 041). Agents pin tls.pin.
 	tls *tlsFiles
@@ -228,6 +230,7 @@ type envOpts struct {
 	MaintPolicy   string    // give the server a maintenance key with this policy instead of docs/storage.md's
 	GatewayPolicy string    // give the server a gateway key with this policy instead of docs/storage.md's
 	OIDC          bool      // serve the UI listener on uiAddr, with login through the e2e Authelia (M4)
+	Offsite       bool      // a second bucket, and offsite: in server.yaml (decision 041)
 }
 
 func newEnv(t *testing.T) *env { return newEnvWith(t, envOpts{}) }
@@ -261,7 +264,7 @@ func newEnvWith(t *testing.T, o envOpts) *env {
 	maint := filepath.Join(dir, "maintenance.env")
 	policy := o.MaintPolicy
 	if policy == "" {
-		policy = e.maintPolicy()
+		policy = maintPolicy(e.bucket)
 	}
 	mak, msk := e.makeUser(policy)
 	must(t, os.WriteFile(maint, []byte("AWS_ACCESS_KEY_ID="+mak+"\nAWS_SECRET_ACCESS_KEY="+msk+"\n"), 0o600))
@@ -289,6 +292,18 @@ func newEnvWith(t *testing.T, o envOpts) *env {
 		"escrow":      map[string]any{"age_recipient": id.Recipient().String()},
 		"tls":         map[string]any{"cert_file": o.TLS.cert, "key_file": o.TLS.key},
 		"ca_sha256":   o.TLS.pin,
+	}
+	if o.Offsite {
+		// The off-site bucket, made as the primary one is, with a key of its own.
+		e.offBucket = e.bucket + "-off"
+		mc(t, "mb", "--quiet", "hf/"+e.offBucket)
+		mc(t, "version", "enable", "hf/"+e.offBucket)
+		mc(t, "ilm", "rule", "add", "--noncurrent-expire-days", "30", "hf/"+e.offBucket)
+		oak, osk := e.makeUser(maintPolicy(e.offBucket))
+		e.offKey = oak
+		offFile := filepath.Join(dir, "offsite-maintenance.env")
+		must(t, os.WriteFile(offFile, []byte("AWS_ACCESS_KEY_ID="+oak+"\nAWS_SECRET_ACCESS_KEY="+osk+"\n"), 0o600))
+		set["offsite"] = map[string]any{"endpoint": s3Endpoint, "bucket": e.offBucket, "region": "us-east-1", "maintenance_credentials_file": offFile, "poll": "2s"}
 	}
 	if o.OIDC {
 		if oidcDir == "" {
@@ -370,6 +385,12 @@ func (e *env) cli(args ...string) []byte {
 	return out
 }
 
+// offsite runs the holdfast CLI on the off-site copies (holdfast --offsite).
+func (e *env) offsite(args ...string) []byte {
+	e.t.Helper()
+	return e.cli(append([]string{"--offsite"}, args...)...)
+}
+
 func (e *env) cliErr(args ...string) ([]byte, error) {
 	cmd := exec.Command(filepath.Join(binDir, "holdfast"), append([]string{"--socket", e.sock, "--json"}, args...)...)
 	var out bytes.Buffer
@@ -401,9 +422,8 @@ func (e *env) setGatewayPolicy(policy string) {
 	e.gwPolicy = name
 }
 
-// maintPolicy is the example maintenance policy of docs/storage.md, for this environment's bucket.
-func (e *env) maintPolicy() string {
-	b := e.bucket
+// maintPolicy is the example maintenance policy of docs/storage.md, for a bucket.
+func maintPolicy(b string) string {
 	return `{"Version":"2012-10-17","Statement":[
  {"Effect":"Allow","Action":["s3:ListBucket","s3:ListBucketVersions","s3:GetBucketLocation","s3:GetBucketVersioning","s3:GetLifecycleConfiguration"],"Resource":["arn:aws:s3:::` + b + `"]},
  {"Effect":"Allow","Action":["s3:GetObject","s3:GetObjectVersion","s3:PutObject","s3:DeleteObject"],"Resource":["arn:aws:s3:::` + b + `/repos/*"]},
@@ -823,11 +843,9 @@ func (e *env) waitProgress(fqdn, progress string, d time.Duration) {
 }
 
 type escrowHost struct {
-	FQDN              string `json:"fqdn"`
-	Repository        string `json:"repository"`
-	RepoPassword      string `json:"repo_password"`
-	S3AccessKeyID     string `json:"s3_access_key_id"` // none for a host (decision 041); a vault's read-only key
-	S3SecretAccessKey string `json:"s3_secret_access_key"`
+	FQDN         string `json:"fqdn"`
+	Repository   string `json:"repository"`
+	RepoPassword string `json:"repo_password"`
 }
 
 // escrow exports the escrow bundle through the CLI (root on the server only).

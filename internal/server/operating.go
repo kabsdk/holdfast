@@ -236,7 +236,7 @@ type RotateResult struct {
 // removed by the next rotation.
 func (s *Server) RotateHost(ctx context.Context, a Actor, fqdn string, in RotateInput) (RotateResult, error) {
 	if s.set.IsVault() {
-		return RotateResult{}, fmt.Errorf("a compromised host is rotated on the source's holdfast-server; a vault's copies are not on the host: %w", ErrConflict)
+		return RotateResult{}, fmt.Errorf("a compromised host is rotated on the server's pages; its off-site copies have a password of their own, which the host never had: %w", ErrConflict)
 	}
 	h, err := s.st.Q().GetHost(ctx, fqdn)
 	if err != nil {

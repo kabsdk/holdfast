@@ -1,14 +1,10 @@
 package server
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
-	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -19,7 +15,6 @@ import (
 
 	"github.com/kabsdk/holdfast/internal/checks"
 	"github.com/kabsdk/holdfast/internal/config"
-	"github.com/kabsdk/holdfast/internal/pin"
 	"github.com/kabsdk/holdfast/internal/proto"
 	"github.com/kabsdk/holdfast/internal/restic"
 	"github.com/kabsdk/holdfast/internal/server/creds"
@@ -27,44 +22,39 @@ import (
 	"github.com/kabsdk/holdfast/internal/server/store"
 )
 
-// holdfast-vault (decisions 027 and 039, plan-m7): holdfast-server in the vault role, in site B. In place of agents it
-// has the copier: every few minutes it syncs with its source, site A's holdfast-server, and copies each job's new
-// snapshots from site A into site B's own repositories with `restic copy`. Everything else, its revisions, retention
-// behind the 7-day protection, Prune now, Delete now, decommission, rollback, escrow and size, is the server's, on
-// site B's bucket.
+// The off-site instance (decisions 027, 039 and 041; offsite.go): holdfast-server's own code in the vault role, on the
+// off-site bucket. In place of agents it has the copier: every offsite.poll it syncs with the server, in-process, and
+// copies each job's new snapshots into the off-site repositories with `restic copy`. Everything else, its revisions,
+// retention behind the 7-day protection, Prune now, Delete now, decommission, rollback, escrow and size, is the
+// server's code, on the off-site bucket.
 //
-// It reads site A through restic's rclone backend with a key that may only read A's repos/, and writes B through s3
-// with its maintenance key. Both repositories are used with --no-lock: A's key may not write a lock, and the vault is
-// B's only writer, which runs one thing at a time per host (busyHosts).
+// It reads the primary repositories from the server's loopback endpoint, read-only, and writes off-site through s3
+// with the off-site key. Both repositories are used with --no-lock: the source may not be locked, and the copier is
+// the off-site repositories' only writer, which runs one thing at a time per host (repoLocks, busyHosts).
 
 const (
-	syncTimeout = time.Minute
 	copyTimeout = 12 * time.Hour // a host's first copy is everything it has
 	checkEach   = 24 * time.Hour // the daily check of a copied repository, as an agent checks its own
-	feedSealID  = "vault-feed"
-	vaultActor  = "holdfast-vault"
-	sourceAlias = "hfa" // rclone's name for site A's S3
 )
 
 // vaultState is what the copier knows between its runs: how far each job is behind, and when each repository was last
 // checked. It is worked out again from the repositories on every run.
 type vaultState struct {
 	mu      sync.Mutex
-	client  *http.Client
-	feed    *proto.VaultFeed                    // the latest, from the source or the database
-	behind  map[string]map[string]time.Duration // fqdn → job → how far its newest copy is behind the source's newest
+	feed    *proto.VaultFeed                    // the latest, from the server
+	behind  map[string]map[string]time.Duration // fqdn → job → how far its newest copy is behind the newest in primary
 	checked map[string]time.Time                // fqdn → the last daily check
 }
 
-// vaultSync is the vault's own work, as holdfast-server's is systemActor.
-var vaultSync = Actor{Name: vaultActor, Source: "system"}
+// vaultSync is the off-site instance's own work.
+var vaultSync = offsiteActor
 
 // Version is set at build time, as the agent's is.
 var Version = "dev"
 
-// vaultLoop syncs, and copies, every source.poll from when the vault starts. They are two loops: a copy can take
-// hours, or hang while this site's storage fails and restic retries, and the source must still get the reports, by
-// which it holds back what the vault has not copied, and the grants.
+// vaultLoop syncs, and copies, every offsite.poll from when the instance starts. They are two loops: a copy can take
+// hours, or hang while the off-site storage fails and restic retries, and the server must still get the reports, by
+// which it holds back what is not copied yet.
 func (s *Server) vaultLoop(ctx context.Context) {
 	if !s.set.IsVault() {
 		return
@@ -88,7 +78,7 @@ func (s *Server) every(ctx context.Context, f func(context.Context)) {
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(s.set.Source.Poll):
+		case <-time.After(s.set.Offsite.Poll):
 		}
 	}
 }
@@ -99,23 +89,23 @@ func (s *Server) currentFeed() *proto.VaultFeed {
 	return s.vault.feed
 }
 
-// syncOnce reports to the source and takes its feed: hosts and jobs, then the grants.
+// syncOnce hands the server the report and takes its feed: hosts and jobs, and the bindings.
 func (s *Server) syncOnce(ctx context.Context) {
-	feed, fresh, err := s.syncSource(ctx)
+	rep, err := s.vaultReport(ctx)
 	if err != nil {
-		s.log.Warn("the sync with the source failed; copying from its last feed", "source", s.set.Source.Server, "err", err)
+		s.log.Error("the off-site report", "err", err)
+		return
 	}
-	if feed == nil {
+	feed, err := s.source.offsiteSync(ctx, rep)
+	if err != nil {
+		s.log.Error("the off-site sync with the server", "err", err)
 		return
 	}
 	s.vault.mu.Lock()
-	s.vault.feed = feed
+	s.vault.feed = &feed
 	s.vault.mu.Unlock()
-	if err := s.applyFeed(ctx, *feed); err != nil {
-		s.log.Error("applying the source's feed", "err", err)
-	}
-	if fresh {
-		s.grantRequests(ctx, *feed)
+	if err := s.applyFeed(ctx, feed); err != nil {
+		s.log.Error("applying the server's feed off-site", "err", err)
 	}
 }
 
@@ -133,117 +123,14 @@ func (s *Server) copyAll(ctx context.Context) {
 	}
 }
 
-/* ---------------- the sync ---------------- */
+/* ---------------- hosts and jobs from the server ---------------- */
 
-func (s *Server) sourceClient() (*http.Client, error) {
-	s.vault.mu.Lock()
-	defer s.vault.mu.Unlock()
-	if s.vault.client == nil {
-		c, err := pin.Client(s.set.Source.Server, s.set.Source.CASHA256, nil)
-		if err != nil {
-			return nil, err
-		}
-		c.Timeout = syncTimeout
-		s.vault.client = c
-	}
-	return s.vault.client, nil
-}
-
-func (s *Server) sourceToken() (string, error) {
-	b, err := os.ReadFile(s.set.Source.TokenFile)
-	if err != nil {
-		return "", fmt.Errorf("the vault's token: %w", err)
-	}
-	return strings.TrimSpace(string(b)), nil
-}
-
-// callSource posts to the source's vault protocol.
-func (s *Server) callSource(ctx context.Context, path string, in, out any) error {
-	c, err := s.sourceClient()
-	if err != nil {
-		return err
-	}
-	tok, err := s.sourceToken()
-	if err != nil {
-		return err
-	}
-	body, err := json.Marshal(in)
-	if err != nil {
-		return err
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimSuffix(s.set.Source.Server, "/")+proto.VaultBase+path, bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+tok)
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := c.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, 256<<20))
-	if err != nil {
-		return err
-	}
-	if resp.StatusCode != http.StatusOK {
-		var e proto.ErrorResponse
-		_ = json.Unmarshal(raw, &e)
-		return &sourceError{Code: resp.StatusCode, Msg: e.Error}
-	}
-	if out != nil {
-		return json.Unmarshal(raw, out)
-	}
-	return nil
-}
-
-type sourceError struct {
-	Code int
-	Msg  string
-}
-
-func (e *sourceError) Error() string { return fmt.Sprintf("the source answered %d: %s", e.Code, e.Msg) }
-
-// syncSource posts the report and takes the feed, which it keeps, sealed. When the source cannot be reached it
-// returns the last feed it kept, with fresh false: copies go on while site A's server is down.
-func (s *Server) syncSource(ctx context.Context) (*proto.VaultFeed, bool, error) {
-	rep, err := s.vaultReport(ctx)
-	if err != nil {
-		return nil, false, err
-	}
-	var feed proto.VaultFeed
-	err = s.callSource(ctx, "/sync", rep, &feed)
-	if err == nil {
-		raw, merr := json.Marshal(feed)
-		if merr == nil {
-			merr = s.st.Q().SaveVaultFeed(ctx, s.seal.Seal(string(raw), feedSealID), s.now())
-		}
-		if merr != nil {
-			s.log.Warn("keeping the source's feed", "err", merr)
-		}
-		return &feed, true, nil
-	}
-	sealed, _, cerr := s.st.Q().VaultFeed(ctx)
-	if cerr != nil {
-		return nil, false, err // no feed yet: nothing to copy
-	}
-	plain, cerr := s.seal.Open(sealed, feedSealID)
-	if cerr == nil {
-		cerr = json.Unmarshal([]byte(plain), &feed)
-	}
-	if cerr != nil {
-		return nil, false, errors.Join(err, cerr)
-	}
-	return &feed, false, err
-}
-
-/* ---------------- hosts and jobs from the source ---------------- */
-
-// applyFeed makes the vault's config follow the source, in one revision of the vault's when anything changed:
+// applyFeed makes the off-site config follow the server's, in one off-site revision when anything changed:
 //   - a new host or job is added; a new job's off-site retention starts as a copy of its primary retention;
-//   - a job's paths, schedule and primary retention follow the source; its off-site retention and Exclude do not;
-//   - a job the source no longer has is Retired: its copies stay, under its off-site retention, until a vault admin
-//     removes the host and decommissions it.
+//   - a job's paths, schedule and primary retention follow the server; its off-site retention and Exclude do not;
+//   - a job the server no longer has is Retired: its copies stay, under its off-site retention, until an admin
+//     removes the host off-site and decommissions it there;
+//   - the bindings are the server's: the off-site pages answer to the same people.
 func (s *Server) applyFeed(ctx context.Context, feed proto.VaultFeed) error {
 	var added []string
 	err := s.st.InTx(ctx, func(q *store.Q) error {
@@ -258,7 +145,7 @@ func (s *Server) applyFeed(ctx context.Context, feed proto.VaultFeed) error {
 		if p := doc.Validate(); len(p) > 0 {
 			return &ValidationError{p}
 		}
-		msg := "From the source: " + strings.Join(changes, "; ")
+		msg := "From the server: " + strings.Join(changes, "; ")
 		if len(msg) > 2000 {
 			msg = msg[:2000] + "…"
 		}
@@ -276,7 +163,7 @@ func (s *Server) applyFeed(ctx context.Context, feed proto.VaultFeed) error {
 			}
 			added = append(added, fqdn)
 		}
-		return q.Audit(ctx, store.AuditEntry{Actor: vaultSync.Name, Source: vaultSync.Source, Action: "vault.synced", Revision: rev.Number,
+		return q.Audit(ctx, store.AuditEntry{Actor: vaultSync.Name, Source: vaultSync.Source, Action: "offsite.synced", Revision: rev.Number,
 			Detail: map[string]any{"changes": changes}})
 	})
 	if err != nil {
@@ -289,15 +176,19 @@ func (s *Server) applyFeed(ctx context.Context, feed proto.VaultFeed) error {
 	}
 	for _, fqdn := range added {
 		s.vaultStorageCheck(ctx, fqdn)
-		_ = s.writeEscrow(ctx, fqdn) // B's own password, escrowed in B's bucket (decision 036); retried in the background
+		_ = s.writeEscrow(ctx, fqdn) // the off-site password, escrowed in the off-site bucket (decision 036); retried in the background
 	}
 	return nil
 }
 
-// followFeed returns the vault's config with the feed applied, and what changed.
+// followFeed returns the off-site config with the feed applied, and what changed.
 func followFeed(cur config.Document, feed proto.VaultFeed) (config.Document, []string) {
 	doc := cur.Clone()
 	var changes []string
+	if feed.Access.Bindings != nil && !reflect.DeepEqual(doc.Access.Bindings, feed.Access.Bindings) {
+		doc.Access.Bindings = slices.Clone(feed.Access.Bindings)
+		changes = append(changes, "the bindings follow the server's")
+	}
 	inFeed := map[string]bool{}
 	for _, fh := range feed.Hosts {
 		inFeed[fh.FQDN] = true
@@ -367,7 +258,7 @@ func (s *Server) activateCopiedHost(ctx context.Context, q *store.Q, fqdn string
 			return err
 		}
 		return q.PutCredentials(ctx, store.SealedCredentials{FQDN: fqdn, Version: 1, Repository: s.loc.RepoURL(fqdn),
-			RepoPassword: s.seal.Seal(creds.NewPassword(), fqdn), S3Secret: s.seal.Seal("", fqdn), S3KeySource: store.KeyByAdmin, CreatedAt: now})
+			RepoPassword: s.seal.Seal(creds.NewPassword(), fqdn), CreatedAt: now})
 	case err != nil:
 		return err
 	case h.State != "retired":
@@ -391,24 +282,9 @@ func (s *Server) activateCopiedHost(ctx context.Context, q *store.Q, fqdn string
 
 /* ---------------- the copier ---------------- */
 
-// sourceEnv is rclone's configuration of site A's S3, in rclone's environment: restic passes its own on to rclone.
-func sourceEnv(src proto.VaultSource) []string {
-	p := "RCLONE_CONFIG_" + strings.ToUpper(sourceAlias) + "_"
-	env := []string{p + "TYPE=s3", p + "PROVIDER=Other", p + "ENV_AUTH=false", p + "ENDPOINT=" + src.Endpoint,
-		p + "ACCESS_KEY_ID=" + src.S3AccessKeyID, p + "SECRET_ACCESS_KEY=" + src.S3SecretAccessKey}
-	if src.Region != "" {
-		env = append(env, p+"REGION="+src.Region)
-	}
-	return env
-}
-
-// sourceRepo is a host's repository in site A, as the vault reads it.
-func sourceRepo(src proto.VaultSource, fqdn string) string {
-	return "rclone:" + sourceAlias + ":" + src.Bucket + "/" + storage.Prefix(fqdn)
-}
-
-// copyRunners are restic on site A's repository of a host (read only) and on site B's, with A as the source of a copy.
-func (s *Server) copyRunners(ctx context.Context, src proto.VaultSource, fh proto.VaultHost) (a, b restic.Runner, cleanup func(), err error) {
+// copyRunners are restic on a host's primary repository, read-only through the server's loopback endpoint, and on its
+// off-site one, with the primary as the source of a copy.
+func (s *Server) copyRunners(ctx context.Context, src string, fh proto.VaultHost) (a, b restic.Runner, cleanup func(), err error) {
 	b, cleanB, err := s.maintRunner(ctx, fh.FQDN)
 	if err != nil {
 		return a, b, nil, err
@@ -419,17 +295,14 @@ func (s *Server) copyRunners(ctx context.Context, src proto.VaultSource, fh prot
 		return a, b, nil, err
 	}
 	cleanup = func() { cleanA(); cleanB() }
-	opts := []string{"rclone.program=" + s.set.Source.RcloneBin}
-	env := sourceEnv(src)
-	a = restic.Runner{Bin: s.set.ResticBin, Repo: sourceRepo(src, fh.FQDN), PasswordFile: pf, CacheDir: filepath.Join(s.set.StateDir, "cache"),
-		NoLock: true, Options: opts, Env: env}
-	b.NoLock, b.Options, b.Env = true, opts, append(b.Env, env...)
+	a = restic.Runner{Bin: s.set.ResticBin, Repo: "rest:" + src + fh.FQDN + "/", PasswordFile: pf, CacheDir: filepath.Join(s.set.StateDir, "cache"), NoLock: true}
+	b.NoLock = true
 	b.From = &restic.Source{Repo: a.Repo, PasswordFile: pf}
 	return a, b, cleanup, nil
 }
 
 // copyHost copies a host's new snapshots, of the jobs it copies, unless a forget or prune runs on its repository.
-func (s *Server) copyHost(ctx context.Context, src proto.VaultSource, fh proto.VaultHost) {
+func (s *Server) copyHost(ctx context.Context, src string, fh proto.VaultHost) {
 	head, err := s.head(ctx, s.st.Q())
 	if err != nil {
 		return
@@ -456,7 +329,7 @@ func (s *Server) copyHost(ctx context.Context, src proto.VaultSource, fh proto.V
 	msg := ""
 	if err != nil {
 		msg = err.Error()
-		s.log.Warn("copying from the source failed", "host", fh.FQDN, "err", err)
+		s.log.Warn("the copy to off-site failed", "host", fh.FQDN, "err", err)
 	}
 	if rerr := s.st.Q().RecordCopy(ctx, fh.FQDN, s.now(), msg); rerr != nil {
 		s.log.Error("recording a copy", "host", fh.FQDN, "err", rerr)
@@ -472,7 +345,7 @@ func jobOf(tags []string) string {
 	return ""
 }
 
-func (s *Server) copyOnce(ctx context.Context, src proto.VaultSource, fh proto.VaultHost, jobs map[string]bool) error {
+func (s *Server) copyOnce(ctx context.Context, src string, fh proto.VaultHost, jobs map[string]bool) error {
 	a, b, cleanup, err := s.copyRunners(ctx, src, fh)
 	if err != nil {
 		return err
@@ -480,13 +353,13 @@ func (s *Server) copyOnce(ctx context.Context, src proto.VaultSource, fh proto.V
 	defer cleanup()
 	listed, err := a.Snapshots(ctx)
 	if err != nil {
-		return fmt.Errorf("listing the source's snapshots: %w", err)
+		return fmt.Errorf("listing the snapshots in primary: %w", err)
 	}
 	// How far behind each job is, before the copy too: so it shows while this site's storage fails.
 	s.updateCopyState(ctx, fh.FQDN, listed, jobs)
 	created, err := b.InitFrom(ctx)
 	if err != nil {
-		return fmt.Errorf("initialising the repository in this site with the source's chunker parameters: %w", err)
+		return fmt.Errorf("initialising the off-site repository with the primary's chunker parameters: %w", err)
 	}
 	if created {
 		s.recordInitialised(ctx, b, fh.FQDN)
@@ -571,7 +444,7 @@ func (s *Server) recordCopies(ctx context.Context, fqdn string, want []restic.Sn
 			continue
 		}
 		ev := store.Event{FQDN: fqdn, ID: "copy-" + row.ID, Kind: proto.KindBackup, JobID: row.JobID, Status: proto.StatusSuccess, Started: started,
-			Finished: now, SnapshotID: row.ID, Detail: map[string]string{"copied_from": row.Original}, InitiatedBy: vaultActor}
+			Finished: now, SnapshotID: row.ID, Detail: map[string]string{"copied_from": row.Original}, InitiatedBy: offsiteActor.Name}
 		if row.TotalFiles != nil {
 			ev.TotalFiles = *row.TotalFiles
 		}
@@ -667,7 +540,7 @@ func (s *Server) dailyCheck(ctx context.Context, b restic.Runner, fqdn string) {
 	b.NoLock, b.From, b.Options = false, nil, nil // restic check takes its lock; the copy is done
 	err := b.Check(ctx, subset)
 	ev := store.Event{FQDN: fqdn, ID: "check-" + newID(), Kind: proto.KindCheck, Status: proto.StatusSuccess, Started: now, Finished: s.now(),
-		Detail: map[string]string{"subset": subset}, InitiatedBy: vaultActor}
+		Detail: map[string]string{"subset": subset}, InitiatedBy: offsiteActor.Name}
 	if err != nil {
 		ev.Status, ev.Error = proto.StatusFailed, err.Error()
 	}
@@ -740,87 +613,59 @@ func (s *Server) vaultReport(ctx context.Context) (proto.VaultSync, error) {
 	return rep, nil
 }
 
-/* ---------------- restores from this site ---------------- */
+/* ---------------- restores from off-site ---------------- */
 
-// grantRequests answers the source's restore requests: with a copy's repository, its password and the host's
-// read-only key, or with why not. Each answer is audited here, and on the source.
-func (s *Server) grantRequests(ctx context.Context, feed proto.VaultFeed) {
-	for _, r := range feed.Requests {
-		g, detail := s.grantFor(ctx, r)
-		err := s.callSource(ctx, "/grant", g, nil)
-		var se *sourceError
-		if errors.As(err, &se) && se.Code == http.StatusConflict {
-			continue // answered already
-		}
-		if err != nil {
-			s.log.Warn("answering a restore request", "request", r.ID, "err", err)
-			continue
-		}
-		action := "restore.granted"
-		if g.Refused != "" {
-			action, detail["refused"] = "restore.refused", g.Refused
-		}
-		if err := s.st.Q().Audit(ctx, store.AuditEntry{Actor: vaultSync.Name, Source: vaultSync.Source, Action: action, FQDN: r.FQDN, Detail: detail}); err != nil {
-			s.log.Error("auditing a restore grant", "request", r.ID, "err", err)
-		}
-	}
-}
-
-func (s *Server) grantFor(ctx context.Context, r proto.VaultRequest) (proto.VaultGrant, map[string]any) {
-	g := proto.VaultGrant{ID: r.ID}
-	detail := map[string]any{"request": r.ID, "snapshot": r.Snapshot, "requested_by": r.By}
-	refuse := func(format string, a ...any) (proto.VaultGrant, map[string]any) {
-		g.Refused = fmt.Sprintf(format, a...)
-		return g, detail
+// copySource checks that a copy can be restored, and returns its password and its copy's ID: the server queues the
+// restore at once, and the host reads the copy through the gateway's off-site endpoint (decision 041). It is audited
+// here as granted, or refused with why.
+func (s *Server) copySource(ctx context.Context, a Actor, fqdn, copyID, command string) (string, error) {
+	detail := map[string]any{"command": command, "snapshot": copyID, "requested_by": a.Name}
+	refuse := func(format string, args ...any) (string, error) {
+		msg := fmt.Sprintf(format, args...)
+		detail["refused"] = msg
+		_ = s.st.Q().Audit(ctx, store.AuditEntry{Actor: vaultSync.Name, Source: vaultSync.Source, Action: "restore.refused", FQDN: fqdn, Detail: detail})
+		return "", fmt.Errorf("%s: %w", msg, ErrConflict)
 	}
 	q := s.st.Q()
-	h, err := q.GetHost(ctx, r.FQDN)
+	h, err := q.GetHost(ctx, fqdn)
 	if err != nil {
-		return refuse("this vault does not copy %s", r.FQDN)
+		return refuse("nothing of %s is copied off-site", fqdn)
 	}
 	if h.Decommission != nil && h.Decommission.DoneAt != nil {
-		return refuse("%s's copies were decommissioned", r.FQDN)
+		return refuse("%s's off-site copies were decommissioned", fqdn)
 	}
-	sn, err := q.GetSnapshot(ctx, r.FQDN, r.Snapshot)
+	sn, err := q.GetSnapshot(ctx, fqdn, copyID)
 	if err != nil || sn.GoneAt != nil {
-		return refuse("the copy %s is no longer in this site", r.Snapshot)
+		return refuse("the copy %s is no longer off-site", copyID)
 	}
-	c, err := q.GetCredentials(ctx, r.FQDN)
+	c, err := q.GetCredentials(ctx, fqdn)
 	if err != nil {
-		return refuse("the vault has no credentials for %s", r.FQDN)
+		return refuse("there is no off-site password for %s", fqdn)
 	}
-	if c.S3AccessKeyID == "" {
-		return refuse("the vault has no read-only key for %s: its admin gives one with holdfast host s3-key %s", r.FQDN, r.FQDN)
+	pw, err := s.seal.Open(c.RepoPassword, fqdn)
+	if err != nil {
+		return refuse("the off-site password of %s cannot be opened", fqdn)
 	}
-	pw, err1 := s.seal.Open(c.RepoPassword, r.FQDN)
-	secret, err2 := s.seal.Open(c.S3Secret, r.FQDN)
-	if errors.Join(err1, err2) != nil {
-		return refuse("the vault cannot open %s's credentials", r.FQDN)
+	if err := q.Audit(ctx, store.AuditEntry{Actor: vaultSync.Name, Source: vaultSync.Source, Action: "restore.granted", FQDN: fqdn, Detail: detail}); err != nil {
+		return "", err
 	}
-	g.Repository, g.RepoPassword, g.S3AccessKeyID, g.S3SecretAccessKey = c.Repository, pw, c.S3AccessKeyID, secret
-	return g, detail
+	return pw, nil
 }
 
 /* ---------------- storage ---------------- */
 
-// vaultStorageCheck tests site B's storage for a host: the bucket's side of the contract with the maintenance key
-// (versioning, the lifecycle rule, what the key must not do), and the host's read-only key for restores, once given.
+// vaultStorageCheck tests the off-site storage for a host: the bucket's side of the contract with the off-site key
+// (versioning, the lifecycle rule, what the key must not do).
 func (s *Server) vaultStorageCheck(ctx context.Context, fqdn string) storage.Report {
 	rep := s.prober.ProbeMaintenance(ctx)
-	if c, err := s.st.Q().GetCredentials(ctx, fqdn); err == nil && c.S3AccessKeyID != "" {
-		if secret, err := s.seal.Open(c.S3Secret, fqdn); err == nil {
-			ro := s.prober.ProbeReadOnly(ctx, fqdn, storage.Key{AccessKeyID: c.S3AccessKeyID, SecretAccessKey: secret})
-			rep.Findings = append(rep.Findings, ro.Findings...)
-		}
-	}
 	rep.CheckedAt = s.now()
 	s.recordStorage(ctx, fqdn, rep)
 	return rep
 }
 
-/* ---------------- what the vault does not do ---------------- */
+/* ---------------- what the off-site instance does not do ---------------- */
 
-var errVaultHosts = fmt.Errorf("a vault's hosts and jobs come from its source; add them on site A's holdfast-server: %w", ErrConflict)
+var errVaultHosts = fmt.Errorf("the off-site hosts and jobs follow the server's; add them there, not under offsite: %w", ErrConflict)
 
 // vaultJobFindings are the checks on a vault's job: only those about retention, since the rest is the source's,
 // with O101 when the off-site retention keeps less than primary, and R104 for a cut.
@@ -916,7 +761,7 @@ func (s *Server) MatchPrimary(ctx context.Context, a Actor, fqdn, jobID string, 
 	return s.SetJob(ctx, a, fqdn, jobID, SetJobInput{Base: &base, Message: in.Message, Job: j, Accept: in.Accept})
 }
 
-var errNotVault = fmt.Errorf("only a vault has off-site settings; they are set in the vault, and shown here read-only: %w", ErrConflict)
+var errNotVault = fmt.Errorf("off-site settings are set under offsite: holdfast --offsite, or /api/v1/offsite/: %w", ErrConflict)
 
 func (s *Server) apiExclude(excluded bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

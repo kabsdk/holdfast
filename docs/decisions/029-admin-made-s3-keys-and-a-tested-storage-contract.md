@@ -1,5 +1,9 @@
 # 029: The admin makes the S3 keys; Holdfast tests the storage contract
 
+> **Changed by [decision 041](041-two-programs-gateway-and-agent-certificates.md) (M8):** the admin still makes the keys
+> and Holdfast still tests them, but there are two per bucket, the gateway key and the maintenance key. Hosts hold no
+> S3 key, and the provisioner hook is gone.
+
 Status: accepted, 2026-11-21. Answers plan-m1 Q4's first question.
 
 ## Decision

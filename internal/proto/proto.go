@@ -19,16 +19,13 @@ const Base = "/agent/v1"
 // Protocol is the version of the agent protocol this build speaks (plan-m5 item 1). It goes up only when
 // a change needs both sides to know of it; a field the other side may ignore does not change it. Agents
 // before M5 sent none, and speak 1. 2 (M6): dump jobs, restores from another host, pause and resume. 3 (M7):
-// restores of the host's own snapshots from a vault's copies. 4 (M8, decision 041): the agent is known by its own
+// restores of the host's own snapshots from a vault's copies, as M7 made them. 4 (M8, decision 041): the agent is known by its own
 // certificate, which the server pins at enrollment, and no longer by a token, and it backs up through the server's
 // gateway with no S3 key; an agent before 4 cannot log in at all, and enrolls again after its upgrade.
 const Protocol = 4
 
 // ProtocolRecovery is the first protocol with M6's dump jobs, restores from another host, and pausing.
 const ProtocolRecovery = 2
-
-// ProtocolVault is the first protocol whose agents restore their own snapshots from a vault (decision 039).
-const ProtocolVault = 3
 
 // MinProtocol is the oldest agent protocol this server accepts. A server can then be upgraded before its
 // agents, and the agents one by one. An older agent's polls are refused with 426 and the range; it keeps
@@ -79,15 +76,14 @@ type RestoreBounds struct {
 // which the server keeps sealed and deletes once the agent has it; the agent keeps it in root-only files for that one
 // restore.
 //
-// Another host's repository (plan-m6 §2.2) is read through the gateway, which lets this host read it for this restore
-// (decision 041): it comes without a key, and Repository is only shown. A vault's copy (decision 039) comes with the
-// vault's read-only key for it, and Repository is where it is.
+// Both are read through the server's gateway, which lets this host read them for this restore (decision 041): another
+// host's repository (plan-m6 §2.2), or with Offsite this host's own copy off-site (decision 039). The agent reaches
+// them at its own server; Repository is only shown.
 type RestoreSource struct {
-	FQDN              string `json:"fqdn"`
-	Repository        string `json:"repository"`
-	RepoPassword      string `json:"repo_password"`
-	S3AccessKeyID     string `json:"s3_access_key_id,omitempty"`
-	S3SecretAccessKey string `json:"s3_secret_access_key,omitempty"`
+	FQDN         string `json:"fqdn"`
+	Offsite      bool   `json:"offsite,omitempty"`
+	Repository   string `json:"repository"`
+	RepoPassword string `json:"repo_password"`
 }
 
 // Restore targets.

@@ -38,10 +38,6 @@ func (p *testProber) Probe(_ context.Context, _ string, k storage.Key) storage.R
 
 func (p *testProber) fail(codes ...string) { p.mu.Lock(); defer p.mu.Unlock(); p.codes = codes }
 
-func (p *testProber) ProbeReadOnly(context.Context, string, storage.Key) storage.Report {
-	return storage.Report{Findings: []storage.Finding{}}
-}
-
 func (p *testProber) ProbeMaintenance(context.Context) storage.Report {
 	return storage.Report{Findings: []storage.Finding{}}
 }
@@ -82,12 +78,6 @@ func TestStorageContractGatesHosts(t *testing.T) {
 	}
 	if p.lastKey.AccessKeyID != "GATEWAY01" || p.lastKey.SecretAccessKey != gwSecret {
 		t.Fatal("the contract was not tested with the gateway key")
-	}
-	if c, _ := s.st.Q().GetCredentials(ctx, fqdn); c.S3AccessKeyID != "" {
-		t.Fatalf("a host has an S3 key: %s", c.S3AccessKeyID)
-	}
-	if _, err := s.SetS3Key(ctx, root, fqdn, SetS3KeyInput{S3Key: S3KeyInput{AccessKeyID: "HOSTKEY01", SecretAccessKey: "host-secret"}}); !errors.Is(err, ErrConflict) {
-		t.Fatalf("a host was given an S3 key: %v", err)
 	}
 
 	// A stranger with the FQDN but not the code causes no S3 traffic.

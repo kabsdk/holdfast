@@ -2,6 +2,10 @@
 // reads this file: each call is one line of the form `name: (...) => req('METHOD', '/api/v1/...')`.
 //
 // A browser session is a cookie; the browser adds the Origin header the server checks on every change.
+//
+// On the off-site pages (#/offsite/), every call goes to the off-site copies' API, /api/v1/offsite/: the same calls,
+// on the off-site repositories (decision 041).
+import { onOffsite } from './lib.js';
 
 export class APIError extends Error {
   constructor(status, data) {
@@ -12,6 +16,7 @@ export class APIError extends Error {
 }
 
 async function req(method, path, body) {
+  if (onOffsite() && path.startsWith('/api/v1/')) path = '/api/v1/offsite' + path.slice('/api/v1'.length);
   const opts = { method, credentials: 'same-origin', headers: {} };
   if (body !== undefined) {
     opts.headers['Content-Type'] = 'application/json';
@@ -47,7 +52,6 @@ export const api = {
   removeHost: (f, body) => req('DELETE', `/api/v1/hosts/${e(f)}`, body),
   hostEvents: (f, limit) => req('GET', `/api/v1/hosts/${e(f)}/events${q({ limit })}`),
   enrollmentCode: (f) => req('POST', `/api/v1/hosts/${e(f)}/enrollment-code`),
-  setS3Key: (f, body) => req('PUT', `/api/v1/hosts/${e(f)}/s3-key`, body),
   rotate: (f, body) => req('POST', `/api/v1/hosts/${e(f)}/rotate`, body),
   decommission: (f, body) => req('POST', `/api/v1/hosts/${e(f)}/decommission`, body),
   cancelDecommission: (f, body) => req('DELETE', `/api/v1/hosts/${e(f)}/decommission`, body),
@@ -87,9 +91,6 @@ export const api = {
   setAccess: (body) => req('PUT', '/api/v1/access', body),
   sessions: () => req('GET', '/api/v1/sessions'),
   endSessions: (user) => req('DELETE', `/api/v1/sessions/${e(user)}`),
-  vaults: () => req('GET', '/api/v1/vaults'),
-  addVault: (body) => req('POST', '/api/v1/vaults', body),
-  removeVault: (name, body) => req('DELETE', `/api/v1/vaults/${e(name)}`, body),
   offsiteCopies: (f) => req('GET', `/api/v1/hosts/${e(f)}/offsite`),
   exclude: (f, job, body) => req('POST', `/api/v1/hosts/${e(f)}/jobs/${e(job)}/exclude`, body),
   include: (f, job, body) => req('POST', `/api/v1/hosts/${e(f)}/jobs/${e(job)}/include`, body),

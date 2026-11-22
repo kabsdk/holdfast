@@ -5,12 +5,18 @@ export { html, render, useState, useEffect, useCallback, useRef, useMemo } from 
 
 /* ---------------- routing: #/path ---------------- */
 
+// The off-site copies' pages (decision 041) are the same pages under #/offsite/, on the off-site API, in red.
+export function onOffsite() {
+  return /^#\/offsite(\/|$)/.test(location.hash);
+}
+
 export function currentPath() {
-  return location.hash.replace(/^#/, '') || '/';
+  const p = location.hash.replace(/^#/, '') || '/';
+  return p.replace(/^\/offsite(?=\/|$)/, '') || '/';
 }
 
 export function go(path) {
-  location.hash = '#' + path;
+  location.hash = '#' + (onOffsite() ? '/offsite' : '') + path;
 }
 
 export function useRoute() {
@@ -24,7 +30,10 @@ export function useRoute() {
 }
 
 export const enc = encodeURIComponent;
-export const link = (...parts) => '#/' + parts.map((p) => enc(p)).join('/');
+// link stays on the pages it is on: the server's, or the off-site ones. primaryLink and offsiteLink cross over.
+export const link = (...parts) => (onOffsite() ? '#/offsite/' : '#/') + parts.map((p) => enc(p)).join('/');
+export const primaryLink = (...parts) => '#/' + parts.map((p) => enc(p)).join('/');
+export const offsiteLink = (...parts) => '#/offsite/' + parts.map((p) => enc(p)).join('/');
 
 /* ---------------- data ---------------- */
 

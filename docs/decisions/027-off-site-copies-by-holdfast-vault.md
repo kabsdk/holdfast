@@ -1,5 +1,9 @@
 # 027: Off-site copies are made and governed by holdfast-vault in site B
 
+> **Superseded in part by [decision 041](041-two-programs-gateway-and-agent-certificates.md) (M8):** the copies are
+> made by holdfast-server itself, which runs its off-site instance beside it; there is no holdfast-vault, and off-site
+> copies are optional. `restic copy`, the off-site retention, "Deleted in primary" and the hold stand.
+
 Status: accepted, 2026-11-21. [Decision 030](030-simplify-after-the-architecture-review.md) reopened how
 copies are made, then confirmed `restic copy`: a mirror of the repository files breaks when B keeps other
 snapshots than A. 030 also drops the shared cross-site key (O10) and the "one snapshot, for a limited time"

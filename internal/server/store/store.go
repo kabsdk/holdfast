@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -41,6 +42,40 @@ type Store struct{ pool *pgxpool.Pool }
 // Open connects to PostgreSQL.
 func Open(ctx context.Context, dsn string) (*Store, error) {
 	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		return nil, err
+	}
+	if err := pool.Ping(ctx); err != nil {
+		pool.Close()
+		return nil, err
+	}
+	return &Store{pool: pool}, nil
+}
+
+// schemaName is a PostgreSQL schema Holdfast makes: lower-case letters and underscores.
+var schemaName = regexp.MustCompile(`^[a-z_]{1,32}$`)
+
+// OpenSchema connects to PostgreSQL with every table in schema, which it makes if it is not there. The off-site
+// copies keep their own tables there, in the server's own database (decision 041), so nothing more is set up.
+func OpenSchema(ctx context.Context, dsn, schema string) (*Store, error) {
+	if !schemaName.MatchString(schema) {
+		return nil, fmt.Errorf("schema %q is not a name Holdfast makes", schema)
+	}
+	conn, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		return nil, err
+	}
+	_, err = conn.Exec(ctx, `CREATE SCHEMA IF NOT EXISTS `+schema)
+	_ = conn.Close(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("making schema %s: %w", schema, err)
+	}
+	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		return nil, err
+	}
+	cfg.ConnConfig.RuntimeParams["search_path"] = schema
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -625,44 +660,31 @@ func (q *Q) ListAgents(ctx context.Context) ([]Agent, error) {
 
 /* ---------------- credentials ---------------- */
 
-// SealedCredentials is a host's credentials as stored: secrets are ciphertext.
+// SealedCredentials is a host's credentials as stored: the repository and its password, which is ciphertext. A host
+// has no S3 key (decision 041).
 type SealedCredentials struct {
 	FQDN           string
 	Version        int
 	Repository     string
 	RepoPassword   []byte
-	S3AccessKeyID  string
-	S3Secret       []byte
-	S3KeySource    string // KeyByAdmin or KeyByHoldfast
 	CreatedAt      time.Time
 	EscrowExportID *int64
 }
 
-// Who made a host's S3 key (decision 029). Hosts have none since decision 041; a vault's hosts have their read-only
-// key for restores from it, which the admin gives (decision 039).
-const (
-	KeyByAdmin    = "admin"    // given at host add or set-key
-	KeyByHoldfast = "holdfast" // generated, then made by the provisioner command
-)
-
 // PutCredentials stores a host's credentials, replacing any older version.
 func (q *Q) PutCredentials(ctx context.Context, c SealedCredentials) error {
-	if c.S3KeySource == "" {
-		c.S3KeySource = KeyByHoldfast
-	}
-	_, err := q.db.Exec(ctx, `INSERT INTO host_credentials (fqdn, version, repository, repo_password, s3_access_key_id, s3_secret, s3_key_source, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-		ON CONFLICT (fqdn) DO UPDATE SET version = $2, repository = $3, repo_password = $4, s3_access_key_id = $5, s3_secret = $6,
-		s3_key_source = $7, created_at = $8, escrow_export_id = NULL`,
-		c.FQDN, c.Version, c.Repository, c.RepoPassword, c.S3AccessKeyID, c.S3Secret, c.S3KeySource, c.CreatedAt)
+	_, err := q.db.Exec(ctx, `INSERT INTO host_credentials (fqdn, version, repository, repo_password, created_at)
+		VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT (fqdn) DO UPDATE SET version = $2, repository = $3, repo_password = $4, created_at = $5, escrow_export_id = NULL`,
+		c.FQDN, c.Version, c.Repository, c.RepoPassword, c.CreatedAt)
 	return err
 }
 
-const credCols = `fqdn, version, repository, repo_password, s3_access_key_id, s3_secret, s3_key_source, created_at, escrow_export_id`
+const credCols = `fqdn, version, repository, repo_password, created_at, escrow_export_id`
 
 func scanCreds(row pgx.Row) (SealedCredentials, error) {
 	var c SealedCredentials
-	err := row.Scan(&c.FQDN, &c.Version, &c.Repository, &c.RepoPassword, &c.S3AccessKeyID, &c.S3Secret, &c.S3KeySource, &c.CreatedAt, &c.EscrowExportID)
+	err := row.Scan(&c.FQDN, &c.Version, &c.Repository, &c.RepoPassword, &c.CreatedAt, &c.EscrowExportID)
 	return c, notFound(err)
 }
 

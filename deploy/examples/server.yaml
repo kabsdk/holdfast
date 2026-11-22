@@ -24,6 +24,17 @@ storage:
   maintenance_credentials_file: /etc/holdfast/maintenance.env   # AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY, root only
   gateway_credentials_file: /etc/holdfast/gateway.env           # the same format, root only
 
+# Optional: off-site copies (decision 041). With this section the server also copies every host's snapshots, with
+# restic copy, into a second bucket, best in another site, under each job's own off-site retention and the same 7-day
+# protection. Make the bucket with versioning and a lifecycle rule, and one key for it with the maintenance policy
+# (docs/storage.md). Without the section Holdfast keeps one bucket, and shows nothing about off-site copies.
+# offsite:
+#   endpoint: https://rgw.site-b.example.internal
+#   bucket: holdfast-offsite
+#   region: default
+#   maintenance_credentials_file: /etc/holdfast/offsite.env   # AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY, root only
+#   poll: 5m                                                  # how often it copies
+
 maintenance:
   # Each agent runs restic check on its own repository once a day, right after a backup, reading a
   # rotating 1/check_cycle_days of the data. "off" leaves only `holdfast check`.

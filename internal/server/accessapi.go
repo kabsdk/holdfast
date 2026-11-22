@@ -92,12 +92,8 @@ func (s *Server) SetAccess(ctx context.Context, a Actor, in SetAccessInput) (int
 	if in.Bindings == nil {
 		in.Bindings = []config.Binding{}
 	}
-	if s.set.IsVault() { // admins and viewers only (decision 039)
-		for i, b := range in.Bindings {
-			if b.Role != "admin" && b.Role != "viewer" {
-				return 0, &ValidationError{config.Problems{{Path: fmt.Sprintf("bindings[%d].role", i), Message: "a vault has two roles, admin and viewer"}}}
-			}
-		}
+	if s.set.IsVault() { // the server's bindings, from the feed (decision 041)
+		return 0, fmt.Errorf("the off-site pages use the server's bindings: set them there, not under offsite: %w", ErrConflict)
 	}
 	var revNum int64
 	err := s.st.InTx(ctx, func(q *store.Q) error {

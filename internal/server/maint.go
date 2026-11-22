@@ -102,7 +102,7 @@ func (s *Server) checkStorage(ctx context.Context, fqdn string) (storage.Report,
 	if s.set.IsVault() {
 		return s.vaultStorageCheck(ctx, fqdn), nil
 	}
-	rep := s.probeKey(ctx, fqdn, s.gwKey)
+	rep := s.probeStorage(ctx, fqdn)
 	s.recordStorage(ctx, fqdn, rep)
 	return rep, nil
 }

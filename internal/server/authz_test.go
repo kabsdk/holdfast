@@ -86,7 +86,6 @@ func TestPermissions(t *testing.T) {
 		{"an editor cannot add a host", editor, "POST", "/api/v1/hosts", map[string]any{"fqdn": "new01.example.com"}, 403},
 		{"an editor cannot Prune now", editor, "GET", "/api/v1/hosts/web01.example.com/prune-now", nil, 403},
 		{"an editor cannot delete a snapshot", editor, "POST", "/api/v1/hosts/web01.example.com/snapshots/aaaaaaaa/delete", map[string]any{}, 403},
-		{"an editor cannot replace a key", editor, "PUT", "/api/v1/hosts/web01.example.com/s3-key", map[string]any{}, 403},
 		{"an editor cannot acknowledge", editor, "POST", "/api/v1/hosts/web01.example.com/acknowledge", nil, 403},
 		{"an editor cannot rotate the password", editor, "POST", "/api/v1/hosts/web01.example.com/rotate", nil, 403},
 		{"an editor cannot decommission", editor, "POST", "/api/v1/hosts/web01.example.com/decommission", map[string]any{"confirm": "web01.example.com"}, 403},

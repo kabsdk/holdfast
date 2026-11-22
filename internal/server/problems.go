@@ -101,17 +101,17 @@ func problems(v HostView, now time.Time, retentionFailed, escrowOn bool) []Probl
 	if retentionFailed {
 		add("retention", "warning", "", "the last forget and prune failed (holdfast prunes %s says why)", v.FQDN)
 	}
-	// A vault's (decision 039).
+	// Off-site (decision 039): on the off-site pages, and on the host's own when the copies fail or lag.
 	if v.CopyError != "" {
-		add("copy", "error", "", "the last copy from the source failed: %s", v.CopyError)
+		add("copy", "error", "", "the last copy to off-site failed: %s", v.CopyError)
 	}
-	if v.RestoreKeyMissing {
-		add("restore_key", "warning", "", "no read-only key for restores from this site yet: give one with holdfast host s3-key %s", v.FQDN)
+	if o := v.Offsite; o != nil && o.CopyError != "" {
+		add("offsite_copy", "error", "", "the last copy to off-site failed: %s", o.CopyError)
 	}
 	for _, j := range v.Jobs {
 		switch {
 		case j.Lagging:
-			add("lag", "error", j.ID, "the newest copy is %s behind the source's newest snapshot, more than twice the job's longest gap", ago(time.Duration(*j.BehindS)*time.Second))
+			add("lag", "error", j.ID, "the newest off-site copy is %s behind the newest snapshot in primary, more than twice the job's longest gap", ago(time.Duration(*j.BehindS)*time.Second))
 		case j.Stale:
 			last := "no successful backup yet"
 			if j.Status != nil && j.Status.LastSuccessAt != nil {

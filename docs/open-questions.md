@@ -18,7 +18,8 @@ around it. Since 2026-11-22 every question here is decided: OQ1's last points by
 > - Restores from site B are granted automatically.
 >
 > The remaining points, in [research/off-site.md](research/off-site.md) §7, were decided on 2026-11-22 by
-> [decision 039](decisions/039-the-vault-in-detail.md) (plan-m7). The text below is kept as the
+> [decision 039](decisions/039-the-vault-in-detail.md) (plan-m7). [Decision 041](decisions/041-two-programs-gateway-and-agent-certificates.md)
+> (M8) then moved the copies into holdfast-server and made them optional. The text below is kept as the
 > history of how the question was framed.
 >
 > **Reopened and closed again on 2026-11-21 ([decision 030](decisions/030-simplify-after-the-architecture-review.md)):**

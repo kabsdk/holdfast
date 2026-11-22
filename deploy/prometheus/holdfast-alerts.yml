@@ -203,21 +203,21 @@ groups:
           summary: "{{ $labels.host }}: its decommission is overdue; the repository could not be deleted (holdfast host show {{ $labels.host }})"
 
       - alert: HoldfastOffsiteLag
-        # From a vault (decision 039): a job's newest copy in site B is more than twice the job's longest gap
-        # behind its newest snapshot in site A, as the stale alert does on primary. Copies catch up by themselves
-        # once the vault can reach site A again.
+        # With offsite: (decisions 039 and 041): a job's newest off-site copy is more than twice the job's longest
+        # gap behind its newest snapshot in primary, as the stale alert does on primary. Copies catch up by
+        # themselves once the off-site bucket answers again. Without offsite: the metric does not exist.
         expr: holdfast_offsite_behind_seconds > on(host, job_id) (2 * holdfast_job_longest_gap_seconds)
         for: 15m
         labels: {severity: page}
         annotations:
-          summary: "{{ $labels.host }}/{{ $labels.job_id }}: its off-site copy is {{ $value | humanizeDuration }} behind site A"
+          summary: "{{ $labels.host }}/{{ $labels.job_id }}: its off-site copy is {{ $value | humanizeDuration }} behind primary"
 
       - alert: HoldfastOffsiteCopyFailing
         expr: holdfast_offsite_copy_failed == 1
         for: 1h
         labels: {severity: ticket}
         annotations:
-          summary: "{{ $labels.host }}: the vault's copies from site A keep failing (holdfast host show {{ $labels.host }} on the vault)"
+          summary: "{{ $labels.host }}: its copies to off-site keep failing (holdfast --offsite host show {{ $labels.host }})"
 
       - alert: Watchdog
         # Always firing. Something outside both sites must notice when it stops arriving: that is the dead

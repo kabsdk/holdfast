@@ -41,9 +41,9 @@ type RestoreInput struct {
 	// ToHost restores the snapshot onto another host (plan-m6 §2.2). That host reads this one's repository through
 	// the gateway, which lets it for this restore only, and only to read (decision 041).
 	ToHost string `json:"to_host,omitempty"`
-	// FromVault restores the vault's copy of the snapshot, from site B (decision 039). The snapshot is the copy's
-	// ID or the original's here. The vault grants it on its next sync; the restore then runs on the host.
-	FromVault string `json:"from_vault,omitempty"`
+	// FromOffsite restores the off-site copy of the snapshot (decisions 039 and 041). The snapshot is the copy's ID or
+	// the original's here. The host reads the copy through the gateway's off-site endpoint, read-only, for this restore.
+	FromOffsite bool `json:"from_offsite,omitempty"`
 }
 
 // RestoreResult is a queued restore.
@@ -107,12 +107,15 @@ func (s *Server) Restore(ctx context.Context, a Actor, fqdn, snapshotID string, 
 	if s.set.IsVault() {
 		return RestoreResult{}, errVaultRestore
 	}
-	if in.FromVault != "" {
+	if in.FromOffsite {
+		if s.offsite == nil {
+			return RestoreResult{}, fmt.Errorf("off-site copies are not set up: %w", ErrNotFound)
+		}
 		if in.ToHost != "" {
-			return RestoreResult{}, &ValidationError{config.Problems{{Path: "to_host", Message: "a copy from a vault is restored on its own host"}}}
+			return RestoreResult{}, &ValidationError{config.Problems{{Path: "to_host", Message: "an off-site copy is restored on its own host"}}}
 		}
 		if in.Target == proto.TargetInPlace {
-			return RestoreResult{}, &ValidationError{config.Problems{{Path: "target", Message: "a copy from a vault is restored into a new or another directory, never in place"}}}
+			return RestoreResult{}, &ValidationError{config.Problems{{Path: "target", Message: "an off-site copy is restored into a new or another directory, never in place"}}}
 		}
 	}
 	if in.Target != proto.TargetNew {
@@ -129,8 +132,8 @@ func (s *Server) Restore(ctx context.Context, a Actor, fqdn, snapshotID string, 
 	}
 	var sn store.Snapshot
 	var copied proto.VaultCopy
-	if in.FromVault != "" {
-		if copied, err = s.vaultCopy(ctx, in.FromVault, fqdn, snapshotID); err != nil {
+	if in.FromOffsite {
+		if copied, err = s.offsiteCopy(ctx, fqdn, snapshotID); err != nil {
 			return RestoreResult{}, err
 		}
 		sn = store.Snapshot{ID: copied.ID, JobID: copied.JobID}
@@ -195,30 +198,41 @@ func (s *Server) Restore(ctx context.Context, a Actor, fqdn, snapshotID string, 
 		}
 		spec.JobID = "" // the safety backup's job: none on another host, which is why it is never in place
 	}
-	if in.FromVault != "" && (agErr != nil || (proto.Facts{Protocol: ag.Protocol}).AgentProtocol() < proto.ProtocolVault) {
-		return RestoreResult{}, fmt.Errorf("%s's agent does not know restores from a vault: upgrade holdfast-agent there first: %w", target, ErrConflict)
+	now := s.now()
+	res := RestoreResult{Command: newID(), Snapshot: sn.ID, Target: in.Target, ExpiresAt: now.Add(RestoreExpiry)}
+	if in.FromOffsite {
+		if agErr != nil || (proto.Facts{Protocol: ag.Protocol}).AgentProtocol() < proto.Protocol {
+			return RestoreResult{}, fmt.Errorf("%s's agent does not know restores from off-site: upgrade holdfast-agent there first: %w", target, ErrConflict)
+		}
+		// The off-site instance checks the copy is still there, and audits the grant in its own log.
+		pw, err := s.offsite.copySource(ctx, a, fqdn, copied.ID, res.Command)
+		if err != nil {
+			return RestoreResult{}, err
+		}
+		b, err := json.Marshal(proto.RestoreSource{FQDN: fqdn, Offsite: true, Repository: gateway.OffsiteRepoURL(s.set.PublicURL, fqdn), RepoPassword: pw})
+		if err != nil {
+			return RestoreResult{}, err
+		}
+		sealed = s.seal.Seal(string(b), fqdn)
 	}
 	payload, err := json.Marshal(spec)
 	if err != nil {
 		return RestoreResult{}, err
 	}
-	now := s.now()
-	res := RestoreResult{Command: newID(), Snapshot: sn.ID, Target: in.Target, ExpiresAt: now.Add(RestoreExpiry)}
 	err = s.st.InTx(ctx, func(q *store.Q) error {
 		detail := map[string]any{"command": res.Command, "snapshot": sn.ID, "target": in.Target, "directory": in.Directory, "dry_run": in.DryRun,
 			"left_out": len(in.Exclude), "only": len(in.Include), "overwrite": in.Overwrite, "message": in.Message}
-		// From a vault, the command waits for its grant: the vault answers on its next sync (vaultsrc.go).
-		if in.FromVault != "" {
-			detail["from_vault"], detail["original"] = in.FromVault, copied.Original
-			if err := q.AddVaultRequest(ctx, store.VaultRequest{ID: res.Command, Vault: in.FromVault, FQDN: fqdn, Snapshot: copied.ID, Original: copied.Original,
-				Spec: payload, RequestedBy: a.Name, RequestedAt: now}); err != nil {
-				return err
-			}
-			return q.Audit(ctx, store.AuditEntry{Actor: a.Name, Source: a.Source, Action: "restore.requested", FQDN: fqdn, JobID: spec.JobID, Detail: detail})
-		}
 		if err := q.EnqueueCommand(ctx, store.Command{ID: res.Command, FQDN: target, Kind: proto.CommandRestore, JobID: spec.JobID, CreatedAt: now,
 			CreatedBy: a.Name, Payload: payload, ExpiresAt: &res.ExpiresAt, Sealed: sealed}); err != nil {
 			return err
+		}
+		// From off-site, the host may read its own copy through the gateway's off-site endpoint until it reports it.
+		if in.FromOffsite {
+			detail["from_offsite"], detail["original"] = true, copied.Original
+			if err := q.AddGrant(ctx, store.Grant{CommandID: res.Command, Reader: fqdn, Repo: fqdn, Site: store.SiteOffsite, CreatedAt: now,
+				ExpiresAt: res.ExpiresAt.Add(GrantAfterExpiry)}); err != nil {
+				return err
+			}
 		}
 		if in.ToHost != "" {
 			detail["from_host"], detail["to_host"] = fqdn, target
@@ -268,8 +282,6 @@ func (s *Server) sealSource(ctx context.Context, from, target string) ([]byte, e
 type RestoresView struct {
 	Queued []store.Command `json:"queued"`
 	Done   []store.Event   `json:"done"`
-	// WaitingForVault are restores from a vault that wait for its grant (decision 039).
-	WaitingForVault []store.VaultRequest `json:"waiting_for_vault"`
 }
 
 // Restores returns the restore history of every host.
@@ -289,17 +301,12 @@ func (s *Server) Restores(ctx context.Context, limit int) (RestoresView, error) 
 	if done == nil {
 		done = []store.Event{}
 	}
-	waiting, err := q.WaitingForVaults(ctx)
-	if err != nil {
-		return RestoresView{}, err
-	}
-	return RestoresView{Queued: queued, Done: done, WaitingForVault: waiting}, nil
+	return RestoresView{Queued: queued, Done: done}, nil
 }
 
 // expireCommands cancels queued restores whose host did not pick them up in time. Each is reported in the
 // host's history as a failed restore, and audited (plan-m2 Q6).
 func (s *Server) expireCommands(ctx context.Context) {
-	s.expireVaultRequests(ctx)
 	now := s.now()
 	expired, err := s.st.Q().ExpireCommands(ctx, now)
 	if err != nil {

@@ -231,7 +231,7 @@ export function Snapshot({ fqdn, id, tab, vault }) {
   const [only, setOnly] = useState([]);
   if (all.error || hostPoll.error) return html`<${ErrorBox} error=${all.error || hostPoll.error} />`;
   if (!all.data || !hostPoll.data) return html`<${Loading} what="the snapshot" />`;
-  // A vault restores nothing itself: restores from it are asked on the source's holdfast-server (decision 039).
+  // The off-site pages restore nothing themselves: a restore from off-site is asked on the host's own page (decision 039).
   const host = { data: vault ? { ...hostPoll.data, actions: (hostPoll.data.actions || []).filter((a) => !a.startsWith('restore.')) } : hostPoll.data };
   const snap = all.data.find((s) => s.id.startsWith(id));
   if (!snap) return html`<h1>Snapshot ${id}</h1><div class="banner error">No snapshot with this ID exists in this repository.</div>`;
@@ -245,7 +245,7 @@ export function Snapshot({ fqdn, id, tab, vault }) {
     <dl class="facts"><dt>Host</dt><dd><a href=${link('hosts', fqdn)}>${fqdn}</a></dd><dt>Job</dt><dd>${snap.job_id || html`<span class="muted">none: not made by Holdfast</span>`}</dd>
       <dt>Paths</dt><dd class="mono">${(snap.paths || []).join(' ')}</dd><dt>Taken</dt><dd>${fmtTime(snap.time)}</dd>
       <dt>Files · size</dt><dd>${snap.total_files ?? '—'} · ${bytes(snap.total_bytes)}</dd><dt>ID</dt><dd class="mono">${snap.id}</dd>
-      ${snap.original && html`<dt>Copied from</dt><dd class="mono">${snap.original} <span class="muted">· in the source</span></dd>`}</dl>
+      ${snap.original && html`<dt>Copied from</dt><dd class="mono">${snap.original} <span class="muted">· in primary</span></dd>`}</dl>
     ${!snap.gone_at && tabs.length > 0 && html`<div class="tabs">${tabs.map(([k, label]) => html`<a class=${t === k ? 'on' : ''} href=${base + '/' + k}>${label}</a>`)}</div>
       ${t === 'files' && can(host.data, 'browse') && html`<${Files} fqdn=${fqdn} id=${snap.id} host=${host.data} onRestoreOnly=${(p) => { setOnly([p]); go(base.slice(1) + '/restore'); }} />`}
       ${t === 'changes' && can(host.data, 'browse') && html`<${Changes} fqdn=${fqdn} id=${snap.id} host=${host.data} older=${older} />`}

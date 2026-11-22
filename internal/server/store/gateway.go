@@ -5,27 +5,38 @@ import (
 	"time"
 )
 
-// Grant lets reader read repo's repository through the gateway, for one restore onto reader (decision 041).
+// Sites of a repository: the primary bucket, or the off-site one (decision 041).
+const (
+	SitePrimary = "primary"
+	SiteOffsite = "offsite"
+)
+
+// Grant lets reader read repo's repository in a site through the gateway: another host's, for a restore onto
+// reader, or its own off-site copy, for a restore from off-site (decision 041).
 type Grant struct {
 	CommandID string
 	Reader    string
 	Repo      string
+	Site      string // SitePrimary when empty
 	CreatedAt time.Time
 	ExpiresAt time.Time
 }
 
 // AddGrant records a grant. It goes in the transaction that queues its restore.
 func (q *Q) AddGrant(ctx context.Context, g Grant) error {
-	_, err := q.db.Exec(ctx, `INSERT INTO gateway_grants (command_id, reader, repo, created_at, expires_at) VALUES ($1, $2, $3, $4, $5)`,
-		g.CommandID, g.Reader, g.Repo, g.CreatedAt, g.ExpiresAt)
+	if g.Site == "" {
+		g.Site = SitePrimary
+	}
+	_, err := q.db.Exec(ctx, `INSERT INTO gateway_grants (command_id, reader, repo, site, created_at, expires_at) VALUES ($1, $2, $3, $4, $5, $6)`,
+		g.CommandID, g.Reader, g.Repo, g.Site, g.CreatedAt, g.ExpiresAt)
 	return err
 }
 
-// HasGrant says whether reader may read repo's repository now.
-func (q *Q) HasGrant(ctx context.Context, reader, repo string, now time.Time) (bool, error) {
+// HasGrant says whether reader may read repo's repository in site now.
+func (q *Q) HasGrant(ctx context.Context, reader, repo, site string, now time.Time) (bool, error) {
 	var ok bool
-	err := q.db.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM gateway_grants WHERE reader = $1 AND repo = $2 AND ended_at IS NULL AND expires_at > $3)`,
-		reader, repo, now).Scan(&ok)
+	err := q.db.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM gateway_grants
+		WHERE reader = $1 AND repo = $2 AND site = $3 AND ended_at IS NULL AND expires_at > $4)`, reader, repo, site, now).Scan(&ok)
 	return ok, err
 }
 

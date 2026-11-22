@@ -1,5 +1,9 @@
 # 039: The vault in detail
 
+> **Superseded in part by [decision 041](041-two-programs-gateway-and-agent-certificates.md) (M8):** the vault is now
+> the server's off-site instance, in the same program and database, linked in-process: no registration, token, rclone,
+> read key or restore key. A restore from off-site reads the copy through the gateway. The rest of this record stands.
+
 Status: accepted, 2026-11-22 (plan-m7 Q2–Q8, Q13–Q15; you answered "Continue"). It decides research/off-site.md's open
 points O1–O10, on top of decision 027.
 

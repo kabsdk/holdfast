@@ -154,7 +154,7 @@ func TestRestoreDumpAndOntoAnotherHost(t *testing.T) {
 			got = cmd.Restore.Source
 		}
 	}
-	if got == nil || got.FQDN != a || got.RepoPassword != pw || got.S3AccessKeyID != "" || !strings.Contains(got.Repository, "/gateway/v1/"+a+"/") {
+	if got == nil || got.FQDN != a || got.RepoPassword != pw || got.Offsite || !strings.Contains(got.Repository, "/gateway/v1/"+a+"/") {
 		t.Fatalf("B's restore source: %+v", got)
 	}
 	if _, err := s.Poll(ctx, b, proto.PollRequest{AckedCommands: []string{res.Command}, Facts: proto.Facts{Protocol: 2, RestoreBounds: bounds}}, 0); err != nil {

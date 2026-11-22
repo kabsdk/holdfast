@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -57,7 +58,14 @@ type Server struct {
 	op        operating  // escrow, size and decommission (operating.go)
 	// minProtocol is the oldest agent protocol accepted (protocol.go): proto.MinProtocol, or a test's.
 	minProtocol int
-	vault       vaultState // in the vault role only (vault.go)
+	vault       vaultState // in the off-site instance only (vault.go)
+
+	// Off-site copies (offsite.go), set by AttachOffsite; all nil or empty without offsite: in server.yaml.
+	offsite      *Server          // in the server: its off-site instance
+	source       *Server          // in the off-site instance: the server
+	offsiteGW    *gateway.Gateway // the off-site repositories, read-only, for restores from off-site
+	copierSource string           // the loopback endpoint the copier reads the primary repositories from
+	offsiteAPI   [2]http.Handler  // the off-site instance's API: [0] for people, [1] for the root socket
 }
 
 // background is the context for work that outlives a request, such as a catalogue refresh.
@@ -129,7 +137,7 @@ func (s *Server) gatewayAccess(ctx context.Context, host, repo string) gateway.A
 	if host == repo {
 		return gateway.Own
 	}
-	if ok, err := s.st.Q().HasGrant(ctx, host, repo, s.now()); err == nil && ok {
+	if ok, err := s.st.Q().HasGrant(ctx, host, repo, store.SitePrimary, s.now()); err == nil && ok {
 		return gateway.ReadOnly
 	}
 	return gateway.NoAccess
@@ -224,10 +232,7 @@ func (s *Server) hostSHAs(doc config.Document) map[string]string {
 func (s *Server) head(ctx context.Context, q *store.Q) (store.Revision, error) {
 	r, err := q.Head(ctx)
 	if errors.Is(err, store.ErrNotFound) {
-		doc := config.New()
-		if s.set.IsVault() {
-			doc.Access = config.VaultAccess()
-		}
+		doc := config.New() // off-site too: the server's bindings replace the defaults at the first sync
 		return store.Revision{Number: 0, Config: doc}, nil
 	}
 	return r, err
@@ -275,41 +280,17 @@ func (s *Server) maintRunner(ctx context.Context, fqdn string) (restic.Runner, f
 		CacheDir: filepath.Join(s.set.StateDir, "cache"), Env: s.loc.Env(s.maintKey)}, cleanup, nil
 }
 
-// hostKey returns a host's current S3 key and who made it.
-func (s *Server) hostKey(ctx context.Context, fqdn string) (storage.Key, string, error) {
-	c, err := s.st.Q().GetCredentials(ctx, fqdn)
-	if err != nil {
-		return storage.Key{}, "", err
-	}
-	secret, err := s.seal.Open(c.S3Secret, fqdn)
-	if err != nil {
-		return storage.Key{}, "", err
-	}
-	return storage.Key{AccessKeyID: c.S3AccessKeyID, SecretAccessKey: secret}, c.S3KeySource, nil
-}
-
-// probeKey tests a key against the storage contract on a host's prefix. In the server it is the gateway key: hosts
-// hold none (decision 041). In a vault it is a host's read-only key, for restores from this site (decision 039).
-func (s *Server) probeKey(ctx context.Context, fqdn string, key storage.Key) storage.Report {
+// probeStorage tests the storage contract on a host's prefix. In the server it tests the gateway key, which reads and
+// writes for every host (decision 041), and the maintenance key; off-site, the off-site key alone.
+func (s *Server) probeStorage(ctx context.Context, fqdn string) storage.Report {
 	var rep storage.Report
 	if s.set.IsVault() {
-		rep = s.prober.ProbeReadOnly(ctx, fqdn, key)
-		m := s.prober.ProbeMaintenance(ctx)
-		rep.Findings, rep.NoncurrentDays = append(m.Findings, rep.Findings...), m.NoncurrentDays
+		rep = s.prober.ProbeMaintenance(ctx)
 	} else {
-		rep = s.prober.Probe(ctx, fqdn, key)
+		rep = s.prober.Probe(ctx, fqdn, s.gwKey)
 	}
 	rep.CheckedAt = s.now()
 	return rep
-}
-
-// storageKey is the key a host's storage is tested with: the gateway key, or in a vault the host's own.
-func (s *Server) storageKey(ctx context.Context, fqdn string) (storage.Key, error) {
-	if !s.set.IsVault() {
-		return s.gwKey, nil
-	}
-	k, _, err := s.hostKey(ctx, fqdn)
-	return k, err
 }
 
 // recordStorage keeps a host's latest contract test and audits a failure.
@@ -330,11 +311,7 @@ func (s *Server) recordStorage(ctx context.Context, fqdn string, rep storage.Rep
 // policies may have changed since the last test), records the result, and initialises the
 // repository once the contract holds.
 func (s *Server) ensureStorage(ctx context.Context, fqdn string) (storage.Report, error) {
-	key, err := s.storageKey(ctx, fqdn)
-	if err != nil {
-		return storage.Report{}, err
-	}
-	rep := s.probeKey(ctx, fqdn, key)
+	rep := s.probeStorage(ctx, fqdn)
 	s.recordStorage(ctx, fqdn, rep)
 	if !rep.OK() {
 		return rep, nil
@@ -348,21 +325,6 @@ type StorageError struct{ Report storage.Report }
 
 func (e *StorageError) Error() string {
 	return "the storage does not meet the contract (docs/storage.md): " + e.Report.Summary()
-}
-
-// S3KeyInput is a host's S3 key, as the admin made it. It is input only: no response, log, audit
-// entry or revision ever contains it.
-type S3KeyInput struct {
-	AccessKeyID     string `json:"access_key_id"`
-	SecretAccessKey string `json:"secret_access_key"`
-}
-
-func (k *S3KeyInput) key() (storage.Key, error) {
-	key := storage.Key{AccessKeyID: strings.TrimSpace(k.AccessKeyID), SecretAccessKey: strings.TrimSpace(k.SecretAccessKey)}
-	if err := key.Validate(); err != nil {
-		return storage.Key{}, &ValidationError{config.Problems{{Path: "s3_key", Message: err.Error()}}}
-	}
-	return key, nil
 }
 
 /* ---------------- operations (each is an /api/v1 endpoint) ---------------- */
@@ -453,7 +415,7 @@ func (s *Server) AddHost(ctx context.Context, a Actor, in AddHostInput) (AddHost
 		}
 	}
 	accepted := checks.Accepted(fs, in.Accept)
-	rep := s.probeKey(ctx, in.FQDN, s.gwKey)
+	rep := s.probeStorage(ctx, in.FQDN)
 	if !rep.OK() {
 		return AddHostResult{}, &StorageError{rep}
 	}
@@ -491,7 +453,7 @@ func (s *Server) AddHost(ctx context.Context, a Actor, in AddHostInput) (AddHost
 				return err
 			}
 			if err := q.PutCredentials(ctx, store.SealedCredentials{FQDN: in.FQDN, Version: 1, Repository: s.loc.RepoURL(in.FQDN),
-				RepoPassword: s.seal.Seal(creds.NewPassword(), in.FQDN), S3Secret: s.seal.Seal("", in.FQDN), CreatedAt: now}); err != nil {
+				RepoPassword: s.seal.Seal(creds.NewPassword(), in.FQDN), CreatedAt: now}); err != nil {
 				return err
 			}
 		default:
@@ -589,69 +551,11 @@ func (s *Server) initRepository(ctx context.Context, fqdn string) error {
 	})
 }
 
-// SetS3KeyInput replaces a host's S3 key.
-type SetS3KeyInput struct {
-	S3Key   S3KeyInput `json:"s3_key"`
-	Message string     `json:"message"`
-}
-
-// SetS3KeyResult is the outcome of SetS3Key.
-type SetS3KeyResult struct {
-	CredentialsVersion int            `json:"credentials_version"`
-	Storage            storage.Report `json:"storage"`
-}
-
-// SetS3Key gives a vault's host its read-only key, for restores from the vault, after testing it against the storage
-// contract (decision 039). A key that fails is refused and the old one stays. In the server, hosts have no S3 key:
-// they reach the bucket through its gateway (decision 041).
-func (s *Server) SetS3Key(ctx context.Context, a Actor, fqdn string, in SetS3KeyInput) (SetS3KeyResult, error) {
-	if !s.set.IsVault() {
-		return SetS3KeyResult{}, fmt.Errorf("hosts have no S3 key: they back up through the server's gateway (decision 041): %w", ErrConflict)
-	}
-	key, err := in.S3Key.key()
-	if err != nil {
-		return SetS3KeyResult{}, err
-	}
-	h, err := s.st.Q().GetHost(ctx, fqdn)
-	if err != nil {
-		return SetS3KeyResult{}, fmt.Errorf("host %s: %w", fqdn, err)
-	}
-	if h.State == "retired" {
-		return SetS3KeyResult{}, fmt.Errorf("host %s is retired: %w", fqdn, ErrConflict)
-	}
-	rep := s.probeKey(ctx, fqdn, key)
-	if !rep.OK() {
-		return SetS3KeyResult{}, &StorageError{rep}
-	}
-	res := SetS3KeyResult{Storage: rep}
-	err = s.st.InTx(ctx, func(q *store.Q) error {
-		c, err := q.GetCredentials(ctx, fqdn)
-		if err != nil {
-			return err
-		}
-		c.Version++
-		c.S3AccessKeyID, c.S3Secret, c.S3KeySource, c.CreatedAt = key.AccessKeyID, s.seal.Seal(key.SecretAccessKey, fqdn), store.KeyByAdmin, s.now()
-		if err := q.PutCredentials(ctx, c); err != nil {
-			return err
-		}
-		if err := q.RecordStorageCheck(ctx, fqdn, rep); err != nil {
-			return err
-		}
-		res.CredentialsVersion = c.Version
-		if err := q.Audit(ctx, store.AuditEntry{Actor: a.Name, Source: a.Source, Action: "host.s3_key_set", FQDN: fqdn,
-			Detail: map[string]any{"credentials_version": c.Version, "message": in.Message}}); err != nil {
-			return err
-		}
-		return q.NotifyHost(ctx, fqdn)
-	})
-	return res, err
-}
-
 // IssueEnrollmentCode gives a host a new 15-minute code and revokes the open one. It also serves
 // re-enrollment of a host that was enrolled before (plan-m1 Q9): the repository and its password stay.
 func (s *Server) IssueEnrollmentCode(ctx context.Context, a Actor, fqdn string) (Enrollment, error) {
 	if s.set.IsVault() {
-		return Enrollment{}, fmt.Errorf("no agent enrolls with a vault: its hosts' agents run in the source's site: %w", ErrConflict)
+		return Enrollment{}, fmt.Errorf("no agent enrolls off-site: agents enroll with the server: %w", ErrConflict)
 	}
 	now := s.now()
 	code := creds.NewEnrollmentCode()
@@ -796,7 +700,7 @@ func withJob(doc config.Document, fqdn, jobID string, j config.Job) config.Docum
 // RunNow queues "back up now" for one job.
 func (s *Server) RunNow(ctx context.Context, a Actor, fqdn, jobID string) (string, error) {
 	if s.set.IsVault() {
-		return "", fmt.Errorf("a vault backs nothing up: it copies what the source's agents back up, every source.poll: %w", ErrConflict)
+		return "", fmt.Errorf("nothing is backed up off-site: the copies follow the agents' backups, every offsite.poll: %w", ErrConflict)
 	}
 	id := newID()
 	err := s.st.InTx(ctx, func(q *store.Q) error {
@@ -871,10 +775,8 @@ type HostView struct {
 	Actions []string `json:"actions"`
 	// Problems are what the server knows is wrong with the host (problems.go).
 	Problems []Problem `json:"problems"`
-	// Offsite is what each vault reports of the host (vaultsrc.go), read-only here.
-	Offsite []HostOffsite `json:"offsite,omitempty"`
-	// RestoreKeyMissing is, in a vault, a host with no read-only key yet, so no restore from here can be granted.
-	RestoreKeyMissing bool `json:"restore_key_missing,omitempty"`
+	// Offsite is what the off-site instance reports of the host (vaultsrc.go); nil without offsite:.
+	Offsite *HostOffsite `json:"offsite,omitempty"`
 }
 
 // OnlineWithin is how recently an agent must have polled to count as online.
@@ -980,7 +882,7 @@ func (s *Server) Hosts(ctx context.Context) ([]HostView, error) {
 			}
 			jv.Stale = h.State == "enrolled" && since != nil && now.Sub(*since) > j.Schedule.StaleAfter()
 			if s.set.IsVault() {
-				// A vault's jobs lag rather than go stale: the source's agents back them up (decision 039).
+				// Off-site jobs lag rather than go stale: the agents back them up in primary (decision 039).
 				jv.Primary, jv.Excluded, jv.Retired, jv.Stale = j.Primary, j.Excluded, j.Retired, false
 				if behind := s.copyState(h.FQDN); behind != nil {
 					if b, ok := behind[id]; ok {
@@ -990,11 +892,6 @@ func (s *Server) Hosts(ctx context.Context) ([]HostView, error) {
 				}
 			}
 			v.Jobs = append(v.Jobs, jv)
-		}
-		if s.set.IsVault() && h.State == "enrolled" {
-			if c, err := q.GetCredentials(ctx, h.FQDN); err == nil && c.S3AccessKeyID == "" {
-				v.RestoreKeyMissing = true
-			}
 		}
 		v.Problems = problems(v, now, retentionFailed[h.FQDN], s.escrowOn())
 		out = append(out, v)
@@ -1028,13 +925,11 @@ func (s *Server) Host(ctx context.Context, fqdn string) (HostView, error) {
 /* ---------------- escrow ---------------- */
 
 // EscrowHost is one host's credentials in an escrow bundle: its repository and the password that opens it. A host
-// has no S3 key (decision 041); a vault's host has the read-only key for restores from it (decision 039).
+// has no S3 key (decision 041).
 type EscrowHost struct {
-	FQDN              string `json:"fqdn"`
-	Repository        string `json:"repository"`
-	RepoPassword      string `json:"repo_password"`
-	S3AccessKeyID     string `json:"s3_access_key_id,omitempty"`
-	S3SecretAccessKey string `json:"s3_secret_access_key,omitempty"`
+	FQDN         string `json:"fqdn"`
+	Repository   string `json:"repository"`
+	RepoPassword string `json:"repo_password"`
 }
 
 // EscrowBundle is what escrow export returns. Its encrypted format is still open (plan-m1 Q5); M1
@@ -1054,16 +949,11 @@ func (s *Server) EscrowExport(ctx context.Context, a Actor) (EscrowBundle, error
 	b := EscrowBundle{CreatedAt: s.now()}
 	var fqdns []string
 	for _, c := range all {
-		pw, err1 := s.seal.Open(c.RepoPassword, c.FQDN)
-		sec, err2 := s.seal.Open(c.S3Secret, c.FQDN)
-		if err := errors.Join(err1, err2); err != nil {
+		pw, err := s.seal.Open(c.RepoPassword, c.FQDN)
+		if err != nil {
 			return EscrowBundle{}, fmt.Errorf("%s: %w", c.FQDN, err)
 		}
-		eh := EscrowHost{FQDN: c.FQDN, Repository: c.Repository, RepoPassword: pw}
-		if c.S3AccessKeyID != "" {
-			eh.S3AccessKeyID, eh.S3SecretAccessKey = c.S3AccessKeyID, sec
-		}
-		b.Hosts = append(b.Hosts, eh)
+		b.Hosts = append(b.Hosts, EscrowHost{FQDN: c.FQDN, Repository: c.Repository, RepoPassword: pw})
 		fqdns = append(fqdns, c.FQDN)
 	}
 	err = s.st.InTx(ctx, func(q *store.Q) error {
