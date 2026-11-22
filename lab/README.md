@@ -280,7 +280,8 @@ checks, with Holdfast installed from this checkout's packages (`0.5.0~dev43…`)
 `holdfast-agent` on ub24 with `dpkg -i`, and on el9 and ol9 with `rpm -U`; `holdfast-restic`, `holdfast-cli`,
 `holdfast-server` and `holdfast-freshness` on hfsrv. The agents run at `Nice=10` and idle I/O priority. Every
 host's escrow file holds its current password (`credentials/escrow-age.key` reads it), and the storage test,
-B012 included, passes against Ceph RGW.
+B012 included, passes against Ceph RGW. **Then upgraded** to the next build, `0.5.0~dev44` (`63d594c`), package
+over package on all four VMs: the agents report the new version, and the test passed again, 39 of 39 and 5 of 5.
 
 The run found one gap: **measuring a repository's size needs `s3:ListBucketVersions`** on Ceph RGW (and AWS), which
 the maintenance policy lacked; MinIO lists versions with `s3:ListBucket` alone, so the e2e suite did not see it.

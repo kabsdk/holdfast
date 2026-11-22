@@ -122,7 +122,10 @@ features. That split is Q1.
 
 | # | Item | State |
 | --- | --- | --- |
-| 1 | Packages and upgrades | done: `make packages` (nfpm in a container, pinned by digest), five packages with `SHA256SUMS`, unsigned (Q2); protocol negotiation (spec §2.4); [install.md](install.md); the lab installs the packages |
+| 1 | Packages and upgrades | done: `make packages` (nfpm in a container, pinned by digest), five packages with `SHA256SUMS`, unsigned (Q2); protocol negotiation (spec §2.4); [install.md](install.md); the lab installs the packages on Ubuntu 24.04, AlmaLinux 9.8 and Oracle Linux 9.8, upgrades them to the next build, and passes the fidelity and login tests after each |
+
+**M5's "done when" holds:** the packages install and upgrade on the Ubuntu, RHEL (AlmaLinux) and Oracle Linux
+VMs (`lab/README.md`), and the full e2e suite passes, 21 tests, the M5 ones included.
 | 2 | Run controls | done: retries at 5, 15 and 45 minutes within the gap, `Nice=10` and `IOSchedulingClass=idle` in the unit, `--limit-upload` (spec §4.1) |
 | 3 | Size | done: a daily listing with versions; the host page, `host show` and `holdfast_repository_bytes{versions}` |
 | 4 | Escrow | done: `escrow.age_recipient`; `escrow/<fqdn>.age` at host add, rotate and backfill; B012; the `escrow` problem; `holdfast_escrow_current` and `holdfast_escrow_configured` |
