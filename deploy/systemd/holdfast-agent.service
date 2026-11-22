@@ -18,6 +18,10 @@ RestartSec=10
 # SIGTERM leaves the run marker; the next start reports the run as "interrupted".
 KillMode=control-group
 TimeoutStopSec=30
+# A backup gives way to the host's own work (plan-m5 item 2): the agent, and the restic it runs, have low
+# CPU and I/O priority.
+Nice=10
+IOSchedulingClass=idle
 
 [Install]
 WantedBy=multi-user.target

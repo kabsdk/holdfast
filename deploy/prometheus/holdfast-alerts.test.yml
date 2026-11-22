@@ -207,6 +207,52 @@ tests:
             exp_annotations:
               summary: "db01 has backed up, but storage holds no snapshot for it"
 
+  # The Watchdog always fires: the dead man's switch expects it (docs/alerting.md).
+  - interval: 1m
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: Watchdog
+        exp_alerts:
+          - exp_labels: {severity: none}
+            exp_annotations:
+              summary: "Holdfast alerting pipeline is alive"
+
+  # An escrow file that is not current for an hour raises a ticket; 30 minutes does not (it is retried).
+  - interval: 1m
+    input_series:
+      - series: 'holdfast_escrow_current{host="web01"}'
+        values: '0x120'
+      - series: 'holdfast_escrow_current{host="db01"}'
+        values: '1x120'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: HoldfastEscrowNotWritten
+        exp_alerts: []
+      - eval_time: 90m
+        alertname: HoldfastEscrowNotWritten
+        exp_alerts:
+          - exp_labels: {severity: ticket, host: web01}
+            exp_annotations:
+              summary: "web01: the escrow file in the bucket does not hold its current repository password (holdfast host show web01)"
+
+  # A decommission due at t=600 that has not run by t=600+1h raises a ticket; one that is done (0) does not.
+  - interval: 1m
+    input_series:
+      - series: 'holdfast_host_decommission_due_timestamp_seconds{host="old01"}'
+        values: '600x120'
+      - series: 'holdfast_host_decommission_due_timestamp_seconds{host="gone01"}'
+        values: '0x120'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: HoldfastDecommissionOverdue
+        exp_alerts: []
+      - eval_time: 90m
+        alertname: HoldfastDecommissionOverdue
+        exp_alerts:
+          - exp_labels: {severity: ticket, host: old01}
+            exp_annotations:
+              summary: "old01: its decommission is overdue; the repository could not be deleted (holdfast host show old01)"
+
   # Drift for 40 minutes alerts; 20 minutes does not.
   - interval: 1m
     input_series:

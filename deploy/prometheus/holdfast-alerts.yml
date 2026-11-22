@@ -168,8 +168,34 @@ groups:
         annotations:
           summary: "{{ $value }} hosts' credentials are in no escrow bundle: export one and store it offline"
 
+      - alert: HoldfastEscrowNotWritten
+        # The bucket's escrow file does not hold the host's current repository password (decision 036): the
+        # write failed, or the maintenance key may not write escrow/ (B012). The server tries every 15 minutes.
+        expr: holdfast_escrow_current == 0
+        for: 1h
+        labels: {severity: ticket}
+        annotations:
+          summary: "{{ $labels.host }}: the escrow file in the bucket does not hold its current repository password (holdfast host show {{ $labels.host }})"
+
+      - alert: HoldfastEscrowNotConfigured
+        # server.yaml names no escrow.age_recipient: repository passwords are only in PostgreSQL and in
+        # manual escrow exports.
+        expr: holdfast_escrow_configured == 0
+        for: 24h
+        labels: {severity: ticket}
+        annotations:
+          summary: "No escrow.age_recipient in server.yaml: repository passwords are not escrowed in the bucket (decision 036)"
+
+      - alert: HoldfastDecommissionOverdue
+        # A decommission was due more than an hour ago and has not run: the delete keeps failing.
+        expr: holdfast_host_decommission_due_timestamp_seconds > 0 and time() - holdfast_host_decommission_due_timestamp_seconds > 3600
+        labels: {severity: ticket}
+        annotations:
+          summary: "{{ $labels.host }}: its decommission is overdue; the repository could not be deleted (holdfast host show {{ $labels.host }})"
+
       - alert: Watchdog
-        # Always firing; route it to an external dead-man's switch outside both sites.
+        # Always firing. Something outside both sites must notice when it stops arriving: that is the dead
+        # man's switch (docs/alerting.md).
         expr: vector(1)
         labels: {severity: none}
         annotations:

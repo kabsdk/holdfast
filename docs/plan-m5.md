@@ -118,6 +118,30 @@ tokens (plan-m4 Q4).
 Items 1 to 7 first: Holdfast becomes installable and operable for real. Then items 8 to 10, the recovery
 features. That split is Q1.
 
+## 4a. Progress
+
+| # | Item | State |
+| --- | --- | --- |
+| 1 | Packages and upgrades | not started |
+| 2 | Run controls | done: retries at 5, 15 and 45 minutes within the gap, `Nice=10` and `IOSchedulingClass=idle` in the unit, `--limit-upload` (spec §4.1) |
+| 3 | Size | done: a daily listing with versions; the host page, `host show` and `holdfast_repository_bytes{versions}` |
+| 4 | Escrow | done: `escrow.age_recipient`; `escrow/<fqdn>.age` at host add, rotate and backfill; B012; the `escrow` problem; `holdfast_escrow_current` and `holdfast_escrow_configured` |
+| 5 | Compromise | done: `holdfast host rotate` (spec §3.5a), [runbooks/compromised-host.md](runbooks/compromised-host.md) |
+| 6 | Alerting | done: [alerting.md](alerting.md), a mailer and a dead man's switch in `deploy/alerting/`, new rules with promtool tests |
+| 7 | Decommission | done: `holdfast host decommission` with `--confirm` and `--cancel`, the new admin permission `host.decommission`, the really-gone date (spec §3.5) |
+
+Choices made inside the accepted proposals, for you to check:
+- **Rotate needs `config.storage`**, like the S3 key it sits next to. **Decommission is a new admin
+  permission, `host.decommission`**, so `host.remove` still never deletes data.
+- **Rotate revokes the token by moving the host back to waiting for enrollment.** The host shows the `enroll`
+  warning until it enrolls with the new code. The old password stops working once its key is removed, so the
+  host's own backups fail meanwhile, which is the point.
+- **A decommissioned host added again starts over** with a new repository password, and needs a new S3 key.
+  A host whose decommission is waiting cannot be added back until it is cancelled.
+- **B012 is tested only when a recipient is set**, so a site without escrow does not fail its storage test.
+- The lab is not yet set up for escrow (its maintenance policy and `server.yaml`); that comes with item 1,
+  when the lab installs the packages.
+
 ## 5. Questions
 
 **Q1. One milestone, or two?** Ten items is a lot for one PR.
