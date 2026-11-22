@@ -6,6 +6,38 @@ rule_files:
 evaluation_interval: 1m
 
 tests:
+  # No nightly export for 2 days raises a ticket (decision 040); one from yesterday does not.
+  - interval: 1m
+    input_series:
+      - series: 'holdfast_export_last_success_timestamp_seconds'
+        values: '0x3000'
+    alert_rule_test:
+      - eval_time: 47h
+        alertname: HoldfastExportStale
+        exp_alerts: []
+      - eval_time: 49h
+        alertname: HoldfastExportStale
+        exp_alerts:
+          - exp_labels: {severity: ticket}
+            exp_annotations:
+              summary: "No nightly export was written for 2 days: a lost server could only be rebuilt from an older one (holdfast export list)"
+
+  # An export written to the bucket but not off-site raises a ticket after 2 hours (plan-m9 Q4).
+  - interval: 1m
+    input_series:
+      - series: 'holdfast_export_offsite_failed'
+        values: '1x200'
+    alert_rule_test:
+      - eval_time: 1h
+        alertname: HoldfastExportOffsiteFailed
+        exp_alerts: []
+      - eval_time: 3h
+        alertname: HoldfastExportOffsiteFailed
+        exp_alerts:
+          - exp_labels: {severity: ticket}
+            exp_annotations:
+              summary: "The nightly export was not written to the off-site bucket (holdfast export list)"
+
   # An off-site copy more than twice the job's longest gap behind primary pages; a small lag does not.
   - interval: 1m
     input_series:

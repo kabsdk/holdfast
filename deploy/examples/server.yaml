@@ -46,9 +46,11 @@ maintenance:
   retention: daily
 
 # Each host's repository password, encrypted to this age public key, in escrow/<fqdn>.age in the bucket
-# (decision 036). Make the key pair offline with age-keygen, keep the private key offline, and put only the
-# public key here. The maintenance key then needs s3:PutObject and s3:DeleteObject on escrow/* (B012,
-# docs/storage.md). Without it nothing is escrowed in the bucket, and every host warns.
+# (decision 036), and the nightly export of the server's database, in meta/<date>.age, which a new server is
+# restored from if this one is lost (decision 040, docs/runbooks/rebuild-holdfast.md). Make the key pair offline
+# with age-keygen, keep the private key offline, and put only the public key here. The maintenance key then needs
+# s3:PutObject and s3:DeleteObject on escrow/* (B012), and s3:GetObject, s3:PutObject and s3:DeleteObject on meta/*
+# (B016, docs/storage.md). Without it nothing is escrowed or exported, and the server warns.
 escrow:
   age_recipient: age1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq   # replace with yours
 

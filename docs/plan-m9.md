@@ -1,8 +1,8 @@
 # Plan for M9: rebuilding Holdfast
 
-Status: proposed, 2026-11-22; revised after M8 for decision 041 (one server program, a gateway, agents identified by
-pinned certificates, off-site copies made by the server and optional). Waiting for your answers to §5 before any
-product code.
+Status: accepted, 2026-11-22; revised after M8 for decision 041 (one server program, a gateway, agents identified by
+pinned certificates, off-site copies made by the server and optional). **You accepted every proposal in §5** ("Go",
+after I offered "accept the proposals"), Q5's open detail included; Q9 no longer applies.
 
 **Scope (decision 042):** one server, no high availability. M9 is the server's whole recovery story: a new server,
 given the same bucket, picks up where the old one was. It is kept to that; nothing here adds a standby, a cluster or a
@@ -16,7 +16,7 @@ read again from the repositories (M2).
 
 | # | Part | From |
 | --- | --- | --- |
-| 1 | **The nightly export**: holdfast-server writes `meta/<date>.age` to its bucket: its database (both schemas, primary's and off-site's) and its config, encrypted to the escrow's age recipient | 040 |
+| 1 | **The nightly export**: holdfast-server writes `meta/<date>.age` to its bucket: its database (both schemas, primary's and off-site's, config revisions included), encrypted to the escrow's age recipient. `server.yaml` is not in it: it may hold the database's password, and the admin keeps it with its key files | 040 |
 | 2 | **Off-site, when `offsite:` is set**: the server writes the same export to the off-site bucket too. Without `offsite:`, nothing about it is shown or checked | 040, 041 |
 | 3 | **Restoring an export** into a new database on a rebuilt server; agents enrolled before the export reconnect by themselves, as the export holds their certificates' pins | 040, 041 |
 | 4 | **`holdfast host import`**: a host back from its escrow file, when there is no export | 040 |
@@ -74,6 +74,8 @@ lab, then the sizing measurement: a backup of a large fixture through the gatewa
 rate the server carried, with its CPU and network use.
 
 ## 5. Questions
+
+> **Answered on 2026-11-22:** every proposal below, as written.
 
 **Q1. The export's format.** Decision 040 says "a PostgreSQL dump".
 - *Proposal:* Holdfast's own: each table as `COPY … TO STDOUT` CSV in a tar, with the schema version, restored by

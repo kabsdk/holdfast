@@ -18,6 +18,22 @@ import (
 // DSN creates a fresh, migrated database and returns its DSN. It is dropped when the test ends.
 func DSN(t testing.TB) string {
 	t.Helper()
+	dsn := EmptyDSN(t)
+	s, err := store.Open(context.Background(), dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err := s.Migrate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	return dsn
+}
+
+// EmptyDSN creates a fresh database with no table in it, as a rebuilt server's is, and returns its DSN. It is dropped
+// when the test ends.
+func EmptyDSN(t testing.TB) string {
+	t.Helper()
 	admin := os.Getenv("HOLDFAST_TEST_PG")
 	if admin == "" {
 		t.Skip("HOLDFAST_TEST_PG is not set (make pg-up prints one)")
@@ -38,16 +54,7 @@ func DSN(t testing.TB) string {
 		_ = conn.Close(context.Background())
 	})
 	cfg, _ := pgx.ParseConfig(admin)
-	dsn := fmt.Sprintf("postgres://%s:%s@%s:%d/%s?sslmode=disable", cfg.User, cfg.Password, cfg.Host, cfg.Port, name)
-	s, err := store.Open(ctx, dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.Close()
-	if err := s.Migrate(ctx); err != nil {
-		t.Fatal(err)
-	}
-	return dsn
+	return fmt.Sprintf("postgres://%s:%s@%s:%d/%s?sslmode=disable", cfg.User, cfg.Password, cfg.Host, cfg.Port, name)
 }
 
 // Store opens a fresh, migrated database.

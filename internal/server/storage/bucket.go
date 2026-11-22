@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"path"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -40,7 +42,25 @@ type Bucket interface {
 	SetAside(ctx context.Context, key string) error
 	// CanReadVersion reads one version's metadata: it needs s3:GetObjectVersion, which copying a version does.
 	CanReadVersion(ctx context.Context, key, versionID string) error
+
+	// The nightly exports, meta/<date>.age (decision 040): written, listed by name, oldest first, read and deleted.
+	PutMeta(ctx context.Context, name string, data []byte) error
+	ListMeta(ctx context.Context) ([]string, error)
+	GetMeta(ctx context.Context, name string) ([]byte, error)
+	DeleteMeta(ctx context.Context, name string) error
 }
+
+// metaName is an export's name under meta/: its UTC date.
+var metaName = regexp.MustCompile(`^[0-9]{4}-[0-9]{2}-[0-9]{2}\.age$`)
+
+// MetaName is the export's name for a time: its UTC date.
+func MetaName(t time.Time) string { return t.UTC().Format("2006-01-02") + ".age" }
+
+// MetaKey is where an export goes.
+func MetaKey(name string) string { return "meta/" + name }
+
+// ValidMetaName says whether name is one Holdfast gives an export.
+func ValidMetaName(name string) bool { return metaName.MatchString(name) }
 
 // ObjectVersion is one version of one object, or a delete marker.
 type ObjectVersion struct {
@@ -197,6 +217,77 @@ func (b S3Bucket) PutEscrow(ctx context.Context, fqdn string, data []byte) error
 	return nil
 }
 
+// PutMeta writes an export.
+func (b S3Bucket) PutMeta(ctx context.Context, name string, data []byte) error {
+	if !ValidMetaName(name) {
+		return fmt.Errorf("%q is not an export's name", name)
+	}
+	c, err := b.client()
+	if err != nil {
+		return err
+	}
+	_, err = c.PutObject(ctx, b.Location.Bucket, MetaKey(name), bytes.NewReader(data), int64(len(data)), minio.PutObjectOptions{ContentType: "application/octet-stream"})
+	if err != nil {
+		return fmt.Errorf("writing %s: %s; the maintenance key needs s3:PutObject on meta/* (docs/storage.md)", MetaKey(name), s3err(err))
+	}
+	return nil
+}
+
+// ListMeta lists the exports, oldest first.
+func (b S3Bucket) ListMeta(ctx context.Context) ([]string, error) {
+	c, err := b.client()
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for o := range c.ListObjects(ctx, b.Location.Bucket, minio.ListObjectsOptions{Prefix: "meta/"}) {
+		if o.Err != nil {
+			return nil, fmt.Errorf("listing meta/: %s", s3err(o.Err))
+		}
+		if n := strings.TrimPrefix(o.Key, "meta/"); ValidMetaName(n) {
+			out = append(out, n)
+		}
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+// GetMeta reads an export.
+func (b S3Bucket) GetMeta(ctx context.Context, name string) ([]byte, error) {
+	if !ValidMetaName(name) {
+		return nil, fmt.Errorf("%q is not an export's name", name)
+	}
+	c, err := b.client()
+	if err != nil {
+		return nil, err
+	}
+	o, err := c.GetObject(ctx, b.Location.Bucket, MetaKey(name), minio.GetObjectOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("reading %s: %s", MetaKey(name), s3err(err))
+	}
+	defer o.Close()
+	data, err := io.ReadAll(o)
+	if err != nil {
+		return nil, fmt.Errorf("reading %s: %s", MetaKey(name), s3err(err))
+	}
+	return data, nil
+}
+
+// DeleteMeta deletes an export: versioning keeps its old version until the lifecycle rule expires it.
+func (b S3Bucket) DeleteMeta(ctx context.Context, name string) error {
+	if !ValidMetaName(name) {
+		return fmt.Errorf("%q is not an export's name", name)
+	}
+	c, err := b.client()
+	if err != nil {
+		return err
+	}
+	if err := c.RemoveObject(ctx, b.Location.Bucket, MetaKey(name), minio.RemoveObjectOptions{}); err != nil {
+		return fmt.Errorf("deleting %s: %s", MetaKey(name), s3err(err))
+	}
+	return nil
+}
+
 // DeleteRepository deletes the current objects, never a version: the maintenance key may not (B009).
 func (b S3Bucket) DeleteRepository(ctx context.Context, fqdn string) (int, error) {
 	c, err := b.client()
@@ -300,6 +391,55 @@ type MemBucket struct {
 	Copies  []string
 	Markers []string
 	Clock   func() time.Time
+	Meta    map[string][]byte // the exports, by name
+	MetaErr error             // when set, every write under meta/ fails with it
+}
+
+func (m *MemBucket) PutMeta(_ context.Context, name string, data []byte) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.MetaErr != nil {
+		return m.MetaErr
+	}
+	if !ValidMetaName(name) {
+		return fmt.Errorf("%q is not an export's name", name)
+	}
+	if m.Meta == nil {
+		m.Meta = map[string][]byte{}
+	}
+	m.Meta[name] = append([]byte(nil), data...)
+	return nil
+}
+
+func (m *MemBucket) ListMeta(context.Context) ([]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := []string{}
+	for n := range m.Meta {
+		out = append(out, n)
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+func (m *MemBucket) GetMeta(_ context.Context, name string) ([]byte, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	b, ok := m.Meta[name]
+	if !ok {
+		return nil, fmt.Errorf("reading %s: NoSuchKey", MetaKey(name))
+	}
+	return append([]byte(nil), b...), nil
+}
+
+func (m *MemBucket) DeleteMeta(_ context.Context, name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.MetaErr != nil {
+		return m.MetaErr
+	}
+	delete(m.Meta, name)
+	return nil
 }
 
 func (m *MemBucket) Versions(_ context.Context, fqdn string) ([]ObjectVersion, error) {

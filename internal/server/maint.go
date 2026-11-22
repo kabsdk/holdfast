@@ -142,6 +142,7 @@ func (s *Server) maintenanceLoop(ctx context.Context) {
 			s.expireCommands(ctx)
 			s.retentionDue(ctx)
 			s.escrowDue(ctx)
+			s.exportDue(ctx)
 			s.measureDue(ctx)
 			s.decommissionDue(ctx)
 			_ = s.st.Q().PurgeSessions(ctx, s.now())

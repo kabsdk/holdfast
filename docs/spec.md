@@ -149,6 +149,25 @@ There are two programs: holdfast-agent and holdfast-server (decision 041).
   again every 15 minutes; a host added before the recipient was set is written at the next pass. Without a
   recipient nothing is written, and every host and `holdfast_escrow_configured` say so.
 - `holdfast escrow export` still writes every host's repository and password to an offline bundle.
+- **The nightly export** (decision 040, plan-m9), what a new server is restored from (§2.2,
+  [runbooks/rebuild-holdfast.md](runbooks/rebuild-holdfast.md)). Every night at 00:30 in the default zone, the server
+  writes `meta/<UTC date>.age` to its bucket with the maintenance key: every table of its database, the off-site
+  instance's too, as CSV in a gzipped tar with a manifest, encrypted to `escrow.age_recipient`. It leaves out the
+  sessions and the gateway's grants. The passwords inside stay sealed with the credentials key, so the export alone
+  opens no repository; `server.yaml` is not in it.
+  - A server that missed 00:30 exports at its next start; a failed export is tried again every hour.
+  - With `offsite:` each export is written to the off-site bucket too, with the off-site key. A failed off-site write
+    leaves the export counted, and is a problem and an alert of its own.
+  - The newest 30 are kept in each bucket; older ones are deleted, and versioning keeps them for the lifecycle
+    rule's days.
+  - `holdfast export now` (an admin's) writes one at once, and `holdfast export list` shows the latest; the UI has an
+    Exports page with both. Each export is audited (`export.written`, `export.failed`, `export.offsite_failed`).
+  - Without an age recipient no export is written, and the server says so. `holdfast status`, the UI and
+    `holdfast_export_last_success_timestamp_seconds` show the server's own problems: `export` and `export_offsite`.
+  - `holdfast-server restore-export -identity <age key> (<file> | -latest)`, as root on a rebuilt server, loads one
+    into a new, empty database, and refuses any other. It is not an API: there is no server yet (spec §3.3).
+  - After a restore, an agent that runs a revision newer than the restored head keeps it: the server sends it no
+    config, and the host shows `ahead`, until a new revision changes the host (plan-m9 Q6).
 - Credentials are never shown in the UI.
 - There is no raw restic console.
 
@@ -207,6 +226,8 @@ retention. See [decision 013](decisions/013-no-rollback.md).
     (decision 034). Both end in the same kind of session.
   - **Off-site copies** (§3.7) are the same UI, API and CLI on the off-site repositories: the pages under
     `#/offsite/`, the API under `/api/v1/offsite/`, the CLI with `--offsite`. UI = API = CLI holds there too.
+  - **Restoring an export** is `holdfast-server restore-export`, as root on a rebuilt server, before it starts
+    (plan-m9 Q5): there is no server to ask yet. Writing and listing exports is UI, API and CLI as usual (§2.3).
 - The API comes first. The UI and the CLI are thin clients of the HTTP API, and all logic, validation and
   checks live behind it (decision 028).
 - Every action is recorded in the host's history and in the audit log.
@@ -527,15 +548,16 @@ errors that cannot be accepted. A host whose storage fails one cannot be added o
 | B004 | The maintenance key cannot write, list or delete under `repos/`. |
 | B005 | The gateway key can delete outside `locks/`. |
 | B006 | The gateway key can delete a version for good. |
-| B007 | The gateway key can use the bucket outside `repos/`, such as the escrow files. |
+| B007 | The gateway key can use the bucket outside `repos/`, such as the escrow files and the nightly exports. |
 | B008 | Bucket versioning is not enabled. |
 | B009 | The maintenance key can delete an object version for good. |
 | B010 | The maintenance key can change the bucket's settings: versioning, the lifecycle rule or the bucket policy. |
 | B011 | No enabled lifecycle rule expires noncurrent versions under `repos/`. |
 | B012 | The maintenance key cannot write and delete under `escrow/`. Tested only when `escrow.age_recipient` is set (decision 036). |
+| B016 | The maintenance key cannot write, read back and delete under `meta/`, where the nightly exports go. Tested only when `escrow.age_recipient` is set (decision 040). |
 
 B014 and B015 tested the read-only keys of M6 and M7; no such key exists since decision 041, and the codes are not
-used again. The off-site bucket passes B004 and B008–B012 with the off-site key.
+used again. B013 was never used. The off-site bucket passes B004, B008–B012 and B016 with the off-site key.
 
 - The accepted codes are stored in the revision and in the audit log.
 - The CLI takes them explicitly, for example `holdfast job set … --accept R102,R104`. Without them it
@@ -677,7 +699,11 @@ host, each with a code:
   opens the repository), and `decommission` when a due decommission could not delete;
 - warnings: `incomplete`, `offline`, `drift`, `restic`, `not_made_by_holdfast`, `catalogue`, `retention`,
   `removing`, `enroll` (waiting to enroll again), `escrow` (no recipient, or the write failed), `size`,
-  `agent_too_old` (§2.4), `decommission` while one waits, and `rollback` while one runs (§3.5b).
+  `agent_too_old` (§2.4), `decommission` while one waits, `rollback` while one runs (§3.5b), and `ahead` (the
+  agent runs a change a restored server lost, §2.3).
+
+The server's own problems, which belong to no host, are on every page of the UI and in `holdfast status`: `export`
+(no recipient, a failed export, or none for 2 days) and `export_offsite` (§2.3).
 
 Paging stays with Prometheus and the alert rules that ship with Holdfast. The storage witness is judged
 there too, apart from the server (decisions 008 and 009).
@@ -702,6 +728,14 @@ Search finds:
    enrollment came with: from then on that certificate is the host, on every connection (mutual TLS). A new
    code and a new enrollment replace it; removing or rotating the host unpins it.
 6. Progress is shown: **waiting → agent connected → first backup done**.
+
+**Import a host from its escrow file** (plan-m9 §2.4, Q7), beside Add host, for an admin on every host:
+`holdfast host import <fqdn> --escrow-file <file>`, or `POST /api/v1/hosts/import`. It is for a host a rebuilt
+server does not know, as the export it was restored from was made before the host was added. The decrypted escrow
+file goes to the server once and is never shown back. The server checks that the file is that host's and names this
+server's repository for it, tests the storage contract, and proves the password opens the repository; it then adds the
+host with that repository and password, its keys as Holdfast's own, no job, and an enrollment code. It refuses a host
+it knows: `holdfast host enroll-code` is for that.
 
 ---
 

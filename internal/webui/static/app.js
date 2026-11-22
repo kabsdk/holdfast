@@ -8,7 +8,7 @@ import { Configure } from './pages/configure.js';
 import { Restores } from './pages/restores.js';
 import { History, PruneNow } from './pages/history.js';
 import { AddHost } from './pages/addhost.js';
-import { Audit, Access, Settings } from './pages/admin.js';
+import { Audit, Access, Settings, Exports } from './pages/admin.js';
 import { Rollback } from './pages/rollback.js';
 
 function Search() {
@@ -40,6 +40,7 @@ function Search() {
 function Shell({ me, settings }) {
   const path = useRoute();
   const hosts = usePoll(() => api.hosts(), []);
+  const status = usePoll(() => api.status(), [], 60000); // the server's own problems, such as its export
   const seg = path.split('/').filter(Boolean).map(decodeURIComponent);
   const attention = (hosts.data || []).filter((h) => (h.problems || []).length > 0);
   const errors = attention.filter((h) => h.problems.some((p) => p.severity === 'error'));
@@ -56,6 +57,7 @@ function Shell({ me, settings }) {
   else if (seg[0] === 'audit') page = html`<${Audit} ...${ctx} />`;
   else if (seg[0] === 'access' && !vault) page = html`<${Access} ...${ctx} />`;
   else if (seg[0] === 'settings') page = html`<${Settings} ...${ctx} />`;
+  else if (seg[0] === 'exports' && !vault) page = html`<${Exports} ...${ctx} />`;
   else if (seg[0] === 'hosts' && seg[1]) {
     const fqdn = seg[1];
     if (seg.length === 2) page = html`<${Host} fqdn=${fqdn} ...${ctx} />`;
@@ -80,6 +82,7 @@ function Shell({ me, settings }) {
       ${nav(link('history'), vault ? 'Off-site history' : 'Config history')}
       ${nav(link('audit'), vault ? 'Off-site audit log' : 'Audit log')}
       ${me.admin_everywhere && !vault && nav(link('access'), 'Access')}
+      ${!vault && nav(link('exports'), 'Exports')}
       ${nav(link('settings'), 'Settings')}
       ${!vault && settings.offsite && html`<div class="section">Off-site</div>${nav(offsiteLink(), 'Off-site copies')}`}
       ${vault && html`<div class="section">The server</div>${nav(primaryLink(), 'Back to the fleet')}`}
@@ -94,6 +97,7 @@ function Shell({ me, settings }) {
         <button class="small" onClick=${async () => { try { await api.logout(); } finally { location.href = '/'; } }}>Log out</button>
       </header>
       ${hosts.error && html`<${ErrorBox} error=${hosts.error} />`}
+      ${!vault && (status.data?.problems || []).map((p) => html`<div class=${'banner ' + (p.severity === 'error' ? 'error' : 'warning')}>${p.message} · <a href=${link('exports')}>Exports</a></div>`)}
       ${page}
     </main>
   </div>`;

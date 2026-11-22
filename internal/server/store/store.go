@@ -111,7 +111,11 @@ func (s *Store) InTx(ctx context.Context, fn func(q *Q) error) error {
 
 // Migrate applies the embedded migrations that have not run yet, under an advisory lock so two
 // servers starting at once do not race.
-func (s *Store) Migrate(ctx context.Context) error {
+func (s *Store) Migrate(ctx context.Context) error { return s.MigrateTo(ctx, 0) }
+
+// MigrateTo applies the migrations that have not run yet up to version max, or all of them when max is 0. Restoring an
+// export migrates to the export's version first, loads it, then migrates on (plan-m9 §2.3).
+func (s *Store) MigrateTo(ctx context.Context, max int) error {
 	names, err := fs.Glob(migrationFS, "migrations/*.sql")
 	if err != nil {
 		return err
@@ -128,6 +132,9 @@ func (s *Store) Migrate(ctx context.Context) error {
 			v, err := strconv.Atoi(strings.SplitN(strings.TrimPrefix(name, "migrations/"), "_", 2)[0])
 			if err != nil {
 				return fmt.Errorf("migration %s: name must start with a number", name)
+			}
+			if max > 0 && v > max {
+				break
 			}
 			var done bool
 			if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE version = $1)`, v).Scan(&done); err != nil {

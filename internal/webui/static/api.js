@@ -49,6 +49,7 @@ export const api = {
   hosts: () => req('GET', '/api/v1/hosts'),
   host: (f) => req('GET', `/api/v1/hosts/${e(f)}`),
   addHost: (body) => req('POST', '/api/v1/hosts', body),
+  importHost: (body) => req('POST', '/api/v1/hosts/import', body),
   removeHost: (f, body) => req('DELETE', `/api/v1/hosts/${e(f)}`, body),
   hostEvents: (f, limit) => req('GET', `/api/v1/hosts/${e(f)}/events${q({ limit })}`),
   enrollmentCode: (f) => req('POST', `/api/v1/hosts/${e(f)}/enrollment-code`),
@@ -95,5 +96,7 @@ export const api = {
   exclude: (f, job, body) => req('POST', `/api/v1/hosts/${e(f)}/jobs/${e(job)}/exclude`, body),
   include: (f, job, body) => req('POST', `/api/v1/hosts/${e(f)}/jobs/${e(job)}/include`, body),
   matchPrimary: (f, job, body) => req('POST', `/api/v1/hosts/${e(f)}/jobs/${e(job)}/match-primary`, body),
+  exports: () => req('GET', '/api/v1/exports'),
+  exportNow: () => req('POST', '/api/v1/exports'),
   logout: () => req('POST', '/auth/logout'),
 };

@@ -19,6 +19,20 @@ import (
 // (an admin DSN), migrates it, and drops it afterwards. Without the variable the test is skipped.
 func testStore(t *testing.T) *Store {
 	t.Helper()
+	s := emptyTestStore(t)
+	ctx := context.Background()
+	if err := s.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Migrate(ctx); err != nil { // idempotent
+		t.Fatal(err)
+	}
+	return s
+}
+
+// emptyTestStore creates a fresh database with no table, as a rebuilt server's is.
+func emptyTestStore(t *testing.T) *Store {
+	t.Helper()
 	admin := os.Getenv("HOLDFAST_TEST_PG")
 	if admin == "" {
 		t.Skip("HOLDFAST_TEST_PG is not set (make pg-up prints one)")
@@ -43,12 +57,6 @@ func testStore(t *testing.T) *Store {
 		_, _ = conn.Exec(ctx, "DROP DATABASE "+name+" WITH (FORCE)")
 		_ = conn.Close(ctx)
 	})
-	if err := s.Migrate(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.Migrate(ctx); err != nil { // idempotent
-		t.Fatal(err)
-	}
 	return s
 }
 

@@ -33,7 +33,36 @@ const (
 	CodeLifecycle         = "B011" // no lifecycle rule expires noncurrent versions under repos/
 	CodeEscrowWrite       = "B012" // the maintenance key cannot write and delete under escrow/ (decision 036)
 	// B014 and B015 tested the read-only keys of M6 and M7, which decision 041 removed. They are not used again.
+	CodeMetaWrite = "B016" // the maintenance key cannot write, read back and delete under meta/ (decision 040)
 )
+
+// probeMeta tests B016 with the maintenance key: the nightly exports go under meta/, and the server reads them back
+// and deletes the old ones. With a gateway key, it also tests that the gateway key can neither write nor read there
+// (B007).
+func probeMeta(ctx context.Context, mc, gc *minio.Client, b, tag string, add func(code, format string, a ...any)) {
+	meta := "meta/" + tag
+	if gc != nil {
+		if _, err := put(ctx, gc, b, meta+"-gateway"); err == nil {
+			add(CodeHostOtherPrefix, "the gateway key wrote %s-gateway, outside repos/: it could replace a nightly export", meta)
+			_ = mc.RemoveObject(ctx, b, meta+"-gateway", minio.RemoveObjectOptions{})
+		}
+	}
+	if _, err := put(ctx, mc, b, meta); err != nil {
+		add(CodeMetaWrite, "the maintenance key cannot write %s: %s; it needs s3:GetObject, s3:PutObject and s3:DeleteObject on meta/* (docs/storage.md)", meta, s3err(err))
+		return
+	}
+	if err := get(ctx, mc, b, meta); err != nil {
+		add(CodeMetaWrite, "the maintenance key cannot read back %s: %s; it needs s3:GetObject on meta/* (docs/storage.md)", meta, s3err(err))
+	}
+	if gc != nil {
+		if err := get(ctx, gc, b, meta); err == nil {
+			add(CodeHostOtherPrefix, "the gateway key read %s, outside repos/: it could read the nightly exports", meta)
+		}
+	}
+	if err := mc.RemoveObject(ctx, b, meta, minio.RemoveObjectOptions{}); err != nil {
+		add(CodeMetaWrite, "the maintenance key cannot delete %s: %s", meta, s3err(err))
+	}
+}
 
 // Finding is one storage check that failed.
 type Finding struct {
@@ -90,7 +119,7 @@ func (p StaticProber) ProbeMaintenance(context.Context) Report {
 	return Report{Findings: append([]Finding{}, p.Findings...)}
 }
 
-// ProbeMaintenance tests what the maintenance key must and must not do: B004, B008–B012.
+// ProbeMaintenance tests what the maintenance key must and must not do: B004, B008–B012 and B016.
 func (p S3Prober) ProbeMaintenance(ctx context.Context) Report {
 	rep := Report{Findings: []Finding{}}
 	add := func(code, format string, a ...any) {
@@ -132,6 +161,7 @@ func (p S3Prober) ProbeMaintenance(ctx context.Context) Report {
 		} else if err := mc.RemoveObject(ctx, b, esc, minio.RemoveObjectOptions{}); err != nil {
 			add(CodeEscrowWrite, "the maintenance key cannot delete %s: %s", esc, s3err(err))
 		}
+		probeMeta(ctx, mc, nil, b, "holdfast-probe-"+randHex(6), add)
 	}
 	return rep
 }
@@ -183,7 +213,8 @@ type S3Prober struct {
 	Location Location
 	Maint    Key
 	Timeout  time.Duration // for the whole test; 60s when zero
-	// Escrow tests B012 too: the server writes escrow files when server.yaml names an age recipient.
+	// Escrow tests B012 and B016 too: the server writes escrow files and the nightly exports when server.yaml names an
+	// age recipient.
 	Escrow bool
 }
 
@@ -286,6 +317,7 @@ func (p S3Prober) Probe(ctx context.Context, fqdn string, gateway Key) Report {
 				add(CodeEscrowWrite, "the maintenance key cannot delete %s: %s", esc, s3err(err))
 			}
 		}
+		probeMeta(ctx, mc, gc, b, tag, add)
 	}
 	return rep
 }

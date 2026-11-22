@@ -92,7 +92,11 @@ func problems(v HostView, now time.Time, retentionFailed, escrowOn bool) []Probl
 	if v.NotMadeByHoldfast > 0 {
 		add("not_made_by_holdfast", "warning", "", "%d snapshots in the repository were not made by Holdfast", v.NotMadeByHoldfast)
 	}
-	if v.State == "enrolled" && v.Online && !v.InSync {
+	switch {
+	case v.AheadOfServer != nil:
+		add("ahead", "warning", "", "the agent runs revision %d, newer than this server's head %d when it was restored from an export: "+
+			"that change was lost here, so make it again; the agent keeps its own config meanwhile", v.Agent.AppliedRevision, *v.AheadOfServer)
+	case v.State == "enrolled" && v.Online && !v.InSync:
 		add("drift", "warning", "", "the agent runs revision %d, not %d", v.Agent.AppliedRevision, v.DesiredRevision)
 	}
 	if v.CatalogueError != "" {

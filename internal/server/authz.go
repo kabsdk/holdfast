@@ -119,7 +119,8 @@ func (s *Server) Routes() []Route {
 	return []Route{
 		r("GET", "/api/v1/status", "", s.apiStatus),
 		r("GET", "/api/v1/hosts", "", s.apiHosts),
-		r("POST", "/api/v1/hosts", "", s.apiAddHost), // config.storage on the new FQDN, in AddHost
+		r("POST", "/api/v1/hosts", "", s.apiAddHost),           // config.storage on the new FQDN, in AddHost
+		r("POST", "/api/v1/hosts/import", "", s.apiImportHost), // admin everywhere, in ImportHost
 		r("GET", "/api/v1/hosts/{fqdn}", access.View, s.apiHost),
 		r("DELETE", "/api/v1/hosts/{fqdn}", access.HostRemove, s.apiRemoveHost),
 		r("DELETE", "/api/v1/hosts/{fqdn}/jobs/{job}", access.HostRemove, s.apiRemoveJob),
@@ -169,6 +170,8 @@ func (s *Server) Routes() []Route {
 		r("GET", "/api/v1/sessions", "", s.apiSessions),              // admin everywhere
 		r("DELETE", "/api/v1/sessions/{user}", "", s.apiEndSessions), // admin everywhere
 		r("GET", "/api/v1/hosts/{fqdn}/offsite", access.View, s.apiOffsiteCopies),
+		r("GET", "/api/v1/exports", "", s.apiExports),
+		r("POST", "/api/v1/exports", "", s.apiExportNow), // admin everywhere, in ExportNow
 		{Method: "POST", Path: "/api/v1/escrow/export", Local: true, h: s.apiEscrow},
 	}
 }

@@ -66,6 +66,31 @@ export function Access({ me }) {
         <td><button class="small" onClick=${() => { if (confirm(`End every session of ${s.username}?`)) end.run(() => api.endSessions(s.username)).then(sessions.reload); }}>End their sessions</button></td></tr>`)}</tbody></table>`}`;
 }
 
+// The nightly export (decision 040): what a new server is restored from if this one is lost (decision 042).
+export function Exports({ me }) {
+  const ex = usePoll(() => api.exports(), [], 30000);
+  const now = useAction();
+  if (ex.error) return html`<${ErrorBox} error=${ex.error} />`;
+  if (!ex.data) return html`<${Loading} />`;
+  const v = ex.data;
+  const size = (n) => (n >= 1 << 20 ? (n / (1 << 20)).toFixed(1) + ' MiB' : (n / 1024).toFixed(1) + ' KiB');
+  return html`<h1>Exports</h1>
+    <p class="muted">Every night at 00:30 the server writes its database, encrypted to the escrow's age key, to <code>meta/</code> in the bucket${v.offsite ? ', and to the off-site bucket too' : ''}.
+      If this server is lost, a new one on the same bucket is restored from the newest (<code>holdfast-server restore-export</code>, docs/runbooks/rebuild-holdfast.md). The newest ${v.keep} are kept.</p>
+    ${!v.on && html`<div class="banner warning">No export is written: server.yaml names no <code>escrow.age_recipient</code>.</div>`}
+    ${v.restored && html`<div class="banner">This server was restored from ${v.restored.export_name} on ${fmtTime(v.restored.restored_at)}, at revision ${v.restored.head}.</div>`}
+    ${v.on && html`<div class="panel row">
+      <span>Last written: ${v.last_good ? fmtTime(v.last_good.started_at) : 'never'}${v.offsite ? ` · off-site: ${v.last_offsite ? fmtTime(v.last_offsite.started_at) : 'never'}` : ''} · next: ${fmtTime(v.next_at)}</span>
+      ${me.admin_everywhere && html`<button class="primary" disabled=${now.busy} onClick=${() => now.run(() => api.exportNow()).then(ex.reload, ex.reload)}>Export now</button>`}
+    </div>`}
+    <${ErrorBox} error=${now.error} />
+    ${now.done && html`<div class=${'banner ' + (now.done.offsite_error ? 'warning' : 'ok')}>Wrote meta/${now.done.name}, ${size(now.done.bytes)}${now.done.offsite ? (now.done.offsite_error ? '; not off-site: ' + now.done.offsite_error : ', off-site too') : ''}.</div>`}
+    <table><thead><tr><th>When</th><th>Object</th><th>Size</th><th>By</th><th>Result</th></tr></thead>
+      <tbody>${v.recent.map((e) => html`<tr><td>${fmtTime(e.started_at)}</td><td class="mono">meta/${e.name}</td><td>${e.error ? '' : size(e.bytes)}</td><td>${e.actor}</td>
+        <td>${e.error ? html`<${Pill} kind="error">failed<//> ${e.error}` : e.offsite && e.offsite_error ? html`<${Pill} kind="warning">not off-site<//> ${e.offsite_error}` : html`<${Pill} kind="ok">written<//>${e.offsite ? ' · off-site too' : ''}`}</td></tr>`)}</tbody></table>
+    <p class="muted">Same: <code>holdfast export list</code>, <code>holdfast export now</code>.</p>`;
+}
+
 export function Settings({ settings }) {
   const s = settings;
   return html`<h1>Settings</h1>

@@ -115,7 +115,8 @@ func (s *Server) apiStatus(w http.ResponseWriter, r *http.Request) {
 		apiError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"head_revision": head.Number, "node": s.set.NodeName, "default_zone": s.set.DefaultZone, "actor": actorOf(r).Name})
+	writeJSON(w, http.StatusOK, map[string]any{"head_revision": head.Number, "node": s.set.NodeName, "default_zone": s.set.DefaultZone, "actor": actorOf(r).Name,
+		"problems": s.serverProblems(r.Context())})
 }
 
 func (s *Server) apiHosts(w http.ResponseWriter, r *http.Request) {

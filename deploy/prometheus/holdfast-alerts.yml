@@ -195,6 +195,25 @@ groups:
         annotations:
           summary: "No escrow.age_recipient in server.yaml: repository passwords are not escrowed in the bucket (decision 036)"
 
+      - alert: HoldfastExportStale
+        # The nightly export (decision 040) is what a new server is restored from if this one is lost (decision
+        # 042). None was written for 2 days: it fails (holdfast export list says why), or the maintenance key may not
+        # write meta/ (B016). Without an age recipient no export is written, and the metric does not exist.
+        expr: time() - holdfast_export_last_success_timestamp_seconds > 2 * 86400
+        for: 10m
+        labels: {severity: ticket}
+        annotations:
+          summary: "No nightly export was written for 2 days: a lost server could only be rebuilt from an older one (holdfast export list)"
+
+      - alert: HoldfastExportOffsiteFailed
+        # With offsite: the export is written to the off-site bucket too (plan-m9 Q4). The last one was written to
+        # the bucket but not off-site; the server tries again every hour.
+        expr: holdfast_export_offsite_failed == 1
+        for: 2h
+        labels: {severity: ticket}
+        annotations:
+          summary: "The nightly export was not written to the off-site bucket (holdfast export list)"
+
       - alert: HoldfastDecommissionOverdue
         # A decommission was due more than an hour ago and has not run: the delete keeps failing.
         expr: holdfast_host_decommission_due_timestamp_seconds > 0 and time() - holdfast_host_decommission_due_timestamp_seconds > 3600

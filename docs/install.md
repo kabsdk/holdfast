@@ -41,6 +41,12 @@ Installing enables nothing, because each service needs its config first:
 The agent's unit runs it at low CPU and I/O priority (`Nice=10`, `IOSchedulingClass=idle`), so a backup
 gives way to the host's own work.
 
+**Keep offline, from the start**, what a rebuilt server needs (decision 042: one server, replaced if lost;
+[runbooks/rebuild-holdfast.md](runbooks/rebuild-holdfast.md)): the escrow's age key, the credentials key,
+`server.yaml` with every file it names, and the agent listener's TLS certificate and key, or at least their CA, which
+the agents pin. The server exports its database every night to `meta/` in the bucket, encrypted to the age key; a
+new server is restored from the newest with `holdfast-server restore-export`.
+
 ## Upgrading
 
 **From a release before M8, every agent enrolls again** (decision 041): it had a bearer token and an S3 key, and
@@ -50,6 +56,9 @@ the printed `holdfast-agent enroll …` on the host. Its repository and password
 at your S3 server once it has backed up through the gateway. An M7 vault is not upgraded: remove its package, and
 give the server `offsite:` with a new, empty bucket and a key for it; the copies start again from the snapshots the
 primary has. The vault's old bucket keeps its copies, with the passwords in its own escrow files.
+
+**From a release before M9**, give the maintenance key `s3:GetObject`, `s3:PutObject` and `s3:DeleteObject` on
+`meta/*` in each bucket ([storage.md](storage.md)): the nightly export goes there, and B016 fails without them.
 
 **Otherwise, upgrade the server first, then the agents, in any order and at any pace.** The agent sends its protocol
 version with every poll, and the server answers with the range it accepts:

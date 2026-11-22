@@ -227,11 +227,11 @@ func (s *Server) Poll(ctx context.Context, fqdn string, req proto.PollRequest, w
 	}
 	deadline := time.Now().Add(wait) // a long-poll waits real time, whatever the server's clock is set to
 	for {
-		resp, changed, err := s.pollAnswer(ctx, fqdn, req, acked)
+		resp, changed, held, err := s.pollAnswer(ctx, fqdn, req, acked)
 		if err != nil {
 			return proto.PollResponse{}, err
 		}
-		if resp.Config == nil {
+		if resp.Config == nil && !held {
 			// The agent runs the config it should. For a removed host that is the empty one: it is done.
 			s.retireIfDone(ctx, fqdn)
 		}
@@ -249,36 +249,41 @@ func (s *Server) Poll(ctx context.Context, fqdn string, req proto.PollRequest, w
 	}
 }
 
-func (s *Server) pollAnswer(ctx context.Context, fqdn string, req proto.PollRequest, acked map[string]bool) (proto.PollResponse, bool, error) {
-	var resp proto.PollResponse
-	changed := false
+// pollAnswer is what the agent gets: its config if it differs, new credentials, and its commands. held says that its
+// config was held back, as it runs a newer revision than a restored server has (plan-m9 Q6).
+func (s *Server) pollAnswer(ctx context.Context, fqdn string, req proto.PollRequest, acked map[string]bool) (resp proto.PollResponse, changed, held bool, err error) {
 	q := s.st.Q()
 	head, err := s.head(ctx, q)
 	if err != nil {
-		return resp, false, err
+		return resp, false, false, err
 	}
 	hc := s.renderHost(head.Config, fqdn)
 	if rev, _, err := q.HostDesired(ctx, fqdn); err == nil {
 		hc.Revision = rev
 	}
 	if hc.SHA256 != req.Applied.SHA256 {
-		resp.Config, changed = &hc, true
+		if held, err = s.aheadOfRestore(ctx, req.Applied.Revision, hc.Revision); err != nil {
+			return resp, false, false, err
+		}
+		if !held {
+			resp.Config, changed = &hc, true
+		}
 	}
 	c, err := q.GetCredentials(ctx, fqdn)
 	if err != nil {
-		return resp, false, err
+		return resp, false, held, err
 	}
 	if c.Version != req.CredentialsVersion {
 		pw, err := s.seal.Open(c.RepoPassword, fqdn)
 		if err != nil {
-			return resp, false, err
+			return resp, false, held, err
 		}
 		resp.Credentials = &proto.Credentials{Version: c.Version, RepoPassword: pw}
 		changed = true
 	}
 	cmds, err := q.PendingCommands(ctx, fqdn)
 	if err != nil {
-		return resp, false, err
+		return resp, false, held, err
 	}
 	for _, c := range cmds {
 		if !acked[c.ID] {
@@ -286,17 +291,17 @@ func (s *Server) pollAnswer(ctx context.Context, fqdn string, req proto.PollRequ
 			if c.Kind == proto.CommandRestore && len(c.Payload) > 0 {
 				pc.Restore = &proto.RestoreSpec{}
 				if err := json.Unmarshal(c.Payload, pc.Restore); err != nil {
-					return resp, false, fmt.Errorf("restore command %s: %w", c.ID, err)
+					return resp, false, held, fmt.Errorf("restore command %s: %w", c.ID, err)
 				}
 				// A restore from another repository: its password, and for a vault's copy its key, sealed for this host.
 				if len(c.Sealed) > 0 {
 					plain, err := s.seal.Open(c.Sealed, fqdn)
 					if err != nil {
-						return resp, false, fmt.Errorf("restore command %s: %w", c.ID, err)
+						return resp, false, held, fmt.Errorf("restore command %s: %w", c.ID, err)
 					}
 					pc.Restore.Source = &proto.RestoreSource{}
 					if err := json.Unmarshal([]byte(plain), pc.Restore.Source); err != nil {
-						return resp, false, fmt.Errorf("restore command %s: %w", c.ID, err)
+						return resp, false, held, fmt.Errorf("restore command %s: %w", c.ID, err)
 					}
 				}
 			}
@@ -310,7 +315,7 @@ func (s *Server) pollAnswer(ctx context.Context, fqdn string, req proto.PollRequ
 			changed = true
 		}
 	}
-	return resp, changed, nil
+	return resp, changed, held, nil
 }
 
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {

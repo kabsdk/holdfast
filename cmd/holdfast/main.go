@@ -41,7 +41,7 @@ func main() {
 	root.PersistentFlags().BoolVar(&asJSON, "json", false, "print the API's JSON answer")
 	root.PersistentFlags().BoolVar(&useOffsite, "offsite", false, "act on the off-site copies: their hosts, retention, history and audit log")
 	root.AddCommand(statusCmd(), hostCmd(), jobCmd(), snapshotCmd(), restoreCmd(), restoresCmd(), searchCmd(), revisionCmd(), auditCmd(), checkCmd(), escrowCmd(),
-		pendingCmd(), prunesCmd(), retentionCmd(), pruneNowCmd(), loginCmd(), logoutCmd(), whoamiCmd(), accessCmd(), settingsCmd(), offsiteCmd())
+		pendingCmd(), prunesCmd(), retentionCmd(), pruneNowCmd(), loginCmd(), logoutCmd(), whoamiCmd(), accessCmd(), settingsCmd(), offsiteCmd(), exportCmd())
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
 	}
@@ -147,6 +147,13 @@ func statusCmd() *cobra.Command {
 			return nil
 		}
 		fmt.Printf("head revision %v · node %v · default zone %v · you are %v\n", st["head_revision"], st["node"], st["default_zone"], st["actor"])
+		// The server's own problems, such as its nightly export (decision 040); a host's are on its page.
+		ps, _ := st["problems"].([]any)
+		for _, p := range ps {
+			if m, ok := p.(map[string]any); ok {
+				fmt.Printf("%v: %v\n", m["severity"], m["message"])
+			}
+		}
 		return nil
 	}}
 }
@@ -394,6 +401,7 @@ func hostCmd() *cobra.Command {
 	removeHost.Flags().StringVarP(&removeMsg, "message", "m", "", "revision message")
 	c.AddCommand(removeHost)
 	c.AddCommand(hostOperatingCmds()...)
+	c.AddCommand(hostImportCmd())
 	c.AddCommand(&cobra.Command{Use: "enroll-code <fqdn>", Short: "Issue a new 15-minute enrollment code (revokes the open one)", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, a []string) error {
 		var e struct {
 			Code           string    `json:"code"`

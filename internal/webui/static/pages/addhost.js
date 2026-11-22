@@ -42,12 +42,36 @@ export function AddHost({ me, settings }) {
       <button class="primary" disabled=${act.busy || !fqdn.trim()} onClick=${submit}>Add host and issue enrollment code</button>
       <${ErrorBox} error=${act.error} />
       ${findings && html`<${Findings} findings=${findings} accepted=${accept} onAccept=${(c, on) => setAccept(on ? [...accept, c] : accept.filter((x) => x !== c))} />`}
-    </div></div>`}
-    ${done && html`<div class="panel">
-      <h2>Run this on ${fqdn} as root</h2>
-      <pre>${done.enrollment.install_command}</pre><${CopyButton} text=${done.enrollment.install_command} />
-      <p class="muted">The code ${done.enrollment.code} is valid until ${fmtTime(done.enrollment.expires_at)}, once. The agent never downloads anything; install its package first.</p>
-      ${done.warning && html`<div class="banner warning">${done.warning}</div>`}
-      <${Progress} fqdn=${fqdn.trim()} />
-    </div>`}`;
+    </div>
+    ${me.admin_everywhere && html`<${ImportHost} />`}</div>`}
+    ${done && html`<${Enroll} fqdn=${fqdn.trim()} done=${done} />`}`;
+}
+
+function Enroll({ fqdn, done }) {
+  return html`<div class="panel">
+    <h2>Run this on ${fqdn} as root</h2>
+    <pre>${done.enrollment.install_command}</pre><${CopyButton} text=${done.enrollment.install_command} />
+    <p class="muted">The code ${done.enrollment.code} is valid until ${fmtTime(done.enrollment.expires_at)}, once. The agent never downloads anything; install its package first.</p>
+    ${done.warning && html`<div class="banner warning">${done.warning}</div>`}
+    <${Progress} fqdn=${fqdn} />
+  </div>`;
+}
+
+// A host back from its escrow file, when the server was rebuilt without an export that has it (plan-m9 §2.4, Q7).
+// The file's contents go to the server once, and are never shown back.
+function ImportHost() {
+  const [fqdn, setFqdn] = useState('');
+  const [file, setFile] = useState('');
+  const act = useAction();
+  if (act.done) return html`<div>
+    <div class="banner ok">Imported ${fqdn.trim()} in r${act.done.revision}: its repository opens with the escrowed password. It has no job yet: add them under Configure.</div>
+    <${Enroll} fqdn=${fqdn.trim()} done=${act.done} /></div>`;
+  return html`<div class="panel">
+    <h3>Or import a host from its escrow file</h3>
+    <p class="muted">For a host the server no longer knows, after a rebuild without an export that has it. Decrypt its escrow file with the offline key (<code>${'age -d -i key.txt escrow/<fqdn>.age'}</code>) and paste it here. Its repository stays; the password must open it. Same: <code>${'holdfast host import <fqdn> --escrow-file -'}</code></p>
+    <label class="field"><span>FQDN</span><input style="width:100%" placeholder="web03.dc1.example.com" value=${fqdn} onInput=${(e) => setFqdn(e.target.value)} /></label>
+    <label class="field"><span>Escrow file, decrypted</span><textarea class="mono" autocomplete="off" spellcheck="false" value=${file} onInput=${(e) => setFile(e.target.value)} placeholder='{"format": "holdfast-escrow-1", …}' /></label>
+    <button class="primary" disabled=${act.busy || !fqdn.trim() || !file.trim()} onClick=${() => act.run(() => api.importHost({ fqdn: fqdn.trim(), escrow_file: file })).then((r) => r && setFile(''))}>Import host and issue enrollment code</button>
+    <${ErrorBox} error=${act.error} />
+  </div>`;
 }

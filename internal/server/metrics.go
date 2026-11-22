@@ -220,6 +220,37 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 			fmt.Fprintf(&b, "holdfast_repository_size_timestamp_seconds{host=%q} %s\n", h.FQDN, ts(&sz.At))
 		}
 	}
+	// The nightly export (decision 040): only with an age recipient, which it is encrypted to.
+	if s.escrowOn() && !s.set.IsVault() {
+		if st, err := q.ExportState(ctx); err == nil {
+			var good *time.Time
+			if st.LastGood != nil {
+				good = &st.LastGood.StartedAt
+			}
+			failed := 0
+			if st.Last != nil && st.Last.Error != "" {
+				failed = 1
+			}
+			gauge("holdfast_export_last_success_timestamp_seconds", "When the last nightly export was written to the bucket; 0 before the first.")
+			fmt.Fprintf(&b, "holdfast_export_last_success_timestamp_seconds %s\n", ts(good))
+			gauge("holdfast_export_failed", "1 if the last attempt at the nightly export failed.")
+			fmt.Fprintf(&b, "holdfast_export_failed %d\n", failed)
+			if s.offsite != nil {
+				var off *time.Time
+				if st.LastOffsite != nil {
+					off = &st.LastOffsite.StartedAt
+				}
+				offFailed := 0
+				if st.Last != nil && st.Last.Error == "" && st.Last.OffsiteError != "" {
+					offFailed = 1
+				}
+				gauge("holdfast_export_offsite_last_success_timestamp_seconds", "When the last nightly export was written to the off-site bucket; 0 before the first.")
+				fmt.Fprintf(&b, "holdfast_export_offsite_last_success_timestamp_seconds %s\n", ts(off))
+				gauge("holdfast_export_offsite_failed", "1 if the last nightly export was written to the bucket but not off-site.")
+				fmt.Fprintf(&b, "holdfast_export_offsite_failed %d\n", offFailed)
+			}
+		}
+	}
 	if s.gw != nil {
 		s.gw.WriteMetrics(&b)
 	}

@@ -56,6 +56,7 @@ type Server struct {
 	repoLock  repoLocks  // a vault's copy, or a forget-or-prune: never both at once
 	oidc      oidcClient // the server's side of the OIDC provider (decision 034)
 	op        operating  // escrow, size and decommission (operating.go)
+	exp       exporting  // the nightly export (rebuild.go)
 	// minProtocol is the oldest agent protocol accepted (protocol.go): proto.MinProtocol, or a test's.
 	minProtocol int
 	vault       vaultState // in the off-site instance only (vault.go)
@@ -777,6 +778,9 @@ type HostView struct {
 	Problems []Problem `json:"problems"`
 	// Offsite is what the off-site instance reports of the host (vaultsrc.go); nil without offsite:.
 	Offsite *HostOffsite `json:"offsite,omitempty"`
+	// AheadOfServer is the head this server was restored at, when the agent runs a newer revision that no revision
+	// since has replaced (plan-m9 Q6): its config is held back, and the host shows it.
+	AheadOfServer *int64 `json:"ahead_of_server,omitempty"`
 }
 
 // OnlineWithin is how recently an agent must have polled to count as online.
@@ -826,6 +830,10 @@ func (s *Server) Hosts(ctx context.Context) ([]HostView, error) {
 		return nil, err
 	}
 	offsite := s.offsiteByHost(ctx)
+	restored, err := q.LastRestoreFromExport(ctx)
+	if err != nil {
+		return nil, err
+	}
 	now := s.now()
 	out := make([]HostView, 0, len(hosts))
 	for _, h := range hosts {
@@ -857,6 +865,10 @@ func (s *Server) Hosts(ctx context.Context) ([]HostView, error) {
 		v.Snapshots, v.NotMadeByHoldfast, v.Disappeared, v.ForeignKeys = c.Snapshots, c.NotMadeByHoldfast, c.Disappeared, foreign[h.FQDN]
 		v.DesiredSHA256 = s.renderHost(head.Config, h.FQDN).SHA256
 		v.InSync = v.Agent != nil && v.Agent.AppliedSHA256 == v.DesiredSHA256
+		if restored != nil && v.Agent != nil && !v.InSync && v.Agent.AppliedRevision > restored.Head && v.DesiredRevision <= restored.Head {
+			at := restored.Head
+			v.AheadOfServer = &at
+		}
 		hc := head.Config.Hosts[h.FQDN]
 		ids := make([]string, 0, len(hc.Jobs))
 		for id := range hc.Jobs {
