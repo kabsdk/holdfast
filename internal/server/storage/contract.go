@@ -80,6 +80,85 @@ func (r Report) Summary() string {
 type Prober interface {
 	Probe(ctx context.Context, fqdn string, host Key) Report
 	ProbeReadOnly(ctx context.Context, fqdn string, key Key) Report
+	// ProbeMaintenance tests the bucket's side alone, with the maintenance key: a vault has no host keys that
+	// write (decision 039).
+	ProbeMaintenance(ctx context.Context) Report
+}
+
+// ProbeMaintenance implements Prober: it returns the same findings as Probe.
+func (p StaticProber) ProbeMaintenance(context.Context) Report {
+	return Report{Findings: append([]Finding{}, p.Findings...)}
+}
+
+// ProbeMaintenance tests what the maintenance key must and must not do: B004, B008–B012.
+func (p S3Prober) ProbeMaintenance(ctx context.Context) Report {
+	rep := Report{Findings: []Finding{}}
+	add := func(code, format string, a ...any) {
+		rep.Findings = append(rep.Findings, Finding{Code: code, Message: fmt.Sprintf(format, a...)})
+	}
+	ctx, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
+	mc, err := p.client(p.Maint, p.Location.Region)
+	if err != nil {
+		add(CodeMaintWrite, "cannot use the S3 endpoint %s: %v", p.Location.Endpoint, err)
+		return rep
+	}
+	b := p.Location.Bucket
+	versioned := p.bucketSettings(ctx, mc, &rep, add)
+	other := "repos/holdfast-probe.invalid/holdfast-probe-" + randHex(6)
+	if info, err := put(ctx, mc, b, other); err != nil {
+		add(CodeMaintWrite, "the maintenance key cannot write %s: %s", other, s3err(err))
+	} else {
+		if err := get(ctx, mc, b, other); err != nil {
+			add(CodeMaintWrite, "the maintenance key cannot read back %s: %s", other, s3err(err))
+		}
+		if versioned && info.VersionID != "" {
+			if err := mc.RemoveObject(ctx, b, other, minio.RemoveObjectOptions{VersionID: info.VersionID}); err == nil {
+				add(CodeMaintVersionDel, "the maintenance key deleted a version of %s for good, so a compromised vault could "+
+					"destroy the copies for good; deny it s3:DeleteObjectVersion (docs/storage.md)", other)
+			}
+		}
+		if err := mc.RemoveObject(ctx, b, other, minio.RemoveObjectOptions{}); err != nil {
+			add(CodeMaintWrite, "the maintenance key cannot delete %s: %s", other, s3err(err))
+		}
+	}
+	if err := list(ctx, mc, b, "repos/"); err != nil {
+		add(CodeMaintWrite, "the maintenance key cannot list repos/: %s", s3err(err))
+	}
+	if p.Escrow {
+		esc := "escrow/holdfast-probe-" + randHex(6)
+		if _, err := put(ctx, mc, b, esc); err != nil {
+			add(CodeEscrowWrite, "the maintenance key cannot write %s: %s; it needs s3:PutObject and s3:DeleteObject on escrow/* (docs/storage.md)", esc, s3err(err))
+		} else if err := mc.RemoveObject(ctx, b, esc, minio.RemoveObjectOptions{}); err != nil {
+			add(CodeEscrowWrite, "the maintenance key cannot delete %s: %s", esc, s3err(err))
+		}
+	}
+	return rep
+}
+
+// bucketSettings tests versioning (B008), that the maintenance key cannot change the bucket's settings (B010) and
+// the lifecycle rule (B011). It says whether versioning is on.
+func (p S3Prober) bucketSettings(ctx context.Context, mc *minio.Client, rep *Report, add func(code, format string, a ...any)) bool {
+	b := p.Location.Bucket
+	versioned := false
+	if v, err := mc.GetBucketVersioning(ctx, b); err != nil {
+		add(CodeVersioning, "the maintenance key cannot read the versioning setting of bucket %s: %s", b, s3err(err))
+	} else if !v.Enabled() {
+		add(CodeVersioning, "versioning is not enabled on bucket %s", b)
+	} else {
+		versioned = true
+		// Setting it to what it already is changes nothing, and shows whether the key could change it.
+		if err := mc.SetBucketVersioning(ctx, b, minio.BucketVersioningConfiguration{Status: "Enabled"}); err == nil {
+			add(CodeMaintSettings, "the maintenance key may change bucket %s's settings (it was allowed to set versioning; "+
+				"the setting was left as it was), so a compromised server could switch off the floor", b)
+		}
+	}
+	if days, err := lifecycleExpires(ctx, mc, b); err != nil {
+		add(CodeLifecycle, "%v", err)
+	} else {
+		rep.NoncurrentDays = days
+	}
+	return versioned
 }
 
 // StaticProber returns the same findings every time. Tests use it where there is no S3 server.
@@ -168,24 +247,7 @@ func (p S3Prober) Probe(ctx context.Context, fqdn string, host Key) Report {
 	own, lock := prefix+tag, prefix+"locks/"+tag
 	other := "repos/holdfast-probe.invalid/" + tag // a reserved name that is no host's prefix
 
-	versioned := false
-	if v, err := mc.GetBucketVersioning(ctx, b); err != nil {
-		add(CodeVersioning, "the maintenance key cannot read the versioning setting of bucket %s: %s", b, s3err(err))
-	} else if !v.Enabled() {
-		add(CodeVersioning, "versioning is not enabled on bucket %s", b)
-	} else {
-		versioned = true
-		// Setting it to what it already is changes nothing, and shows whether the key could change it.
-		if err := mc.SetBucketVersioning(ctx, b, minio.BucketVersioningConfiguration{Status: "Enabled"}); err == nil {
-			add(CodeMaintSettings, "the maintenance key may change bucket %s's settings (it was allowed to set versioning; "+
-				"the setting was left as it was), so a compromised server could switch off the floor", b)
-		}
-	}
-	if days, err := lifecycleExpires(ctx, mc, b); err != nil {
-		add(CodeLifecycle, "%v", err)
-	} else {
-		rep.NoncurrentDays = days
-	}
+	versioned := p.bucketSettings(ctx, mc, &rep, add)
 
 	// The host's own prefix.
 	if info, err := put(ctx, hc, b, own); err != nil {

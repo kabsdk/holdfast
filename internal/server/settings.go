@@ -36,6 +36,26 @@ type Settings struct {
 
 	UI   UISettings   `yaml:"ui"`
 	Auth AuthSettings `yaml:"auth"`
+
+	// Role is "server" (the default) or "vault": holdfast-vault, which copies another site's hosts into this
+	// site's bucket (decisions 027 and 039). Source is then that site's holdfast-server.
+	Role   string         `yaml:"role"`
+	Source SourceSettings `yaml:"source"`
+}
+
+// Roles of a holdfast-server process.
+const (
+	RoleServer = "server"
+	RoleVault  = "vault"
+)
+
+// SourceSettings are, for a vault, the holdfast-server it copies from.
+type SourceSettings struct {
+	Server    string        `yaml:"server"`     // its agent listener, such as https://holdfast.site-a.example:8443
+	CASHA256  string        `yaml:"ca_sha256"`  // its CA's fingerprint, as agents pin it
+	TokenFile string        `yaml:"token_file"` // the token `holdfast vault add` printed, alone in a root-only file
+	Poll      time.Duration `yaml:"poll"`       // how often it syncs and copies; default 5m
+	RcloneBin string        `yaml:"rclone_bin"` // default /usr/libexec/holdfast/rclone, which the vault's package ships
 }
 
 // UISettings are the listener for people: the UI and /api/v1 over HTTPS, with sessions (decision 034). It is
@@ -100,6 +120,9 @@ type EscrowSettings struct {
 	AgeRecipient string `yaml:"age_recipient"`
 }
 
+// IsVault says whether this process is holdfast-vault.
+func (s Settings) IsVault() bool { return s.Role == RoleVault }
+
 // Values of MaintenanceSettings.Check and MaintenanceSettings.Retention.
 const (
 	CheckDaily = "daily"
@@ -152,6 +175,15 @@ func (s *Settings) defaults() {
 	if s.Maintenance.Retention == "" {
 		s.Maintenance.Retention = CheckDaily
 	}
+	if s.Role == "" {
+		s.Role = RoleServer
+	}
+	if s.Source.Poll <= 0 {
+		s.Source.Poll = 5 * time.Minute
+	}
+	if s.Source.RcloneBin == "" {
+		s.Source.RcloneBin = "/usr/libexec/holdfast/rclone"
+	}
 	o := &s.Auth.OIDC
 	if len(o.Scopes) == 0 {
 		o.Scopes = []string{"openid", "profile", "groups"}
@@ -188,6 +220,14 @@ func (s Settings) validate() error {
 	}
 	if c := s.Maintenance.Retention; c != CheckDaily && c != CheckOff {
 		errs = append(errs, fmt.Errorf("maintenance.retention is %q; it must be %q or %q", c, CheckDaily, CheckOff))
+	}
+	switch s.Role {
+	case RoleServer:
+	case RoleVault:
+		need(s.Source.Server, "source.server (role is vault)")
+		need(s.Source.TokenFile, "source.token_file (role is vault)")
+	default:
+		errs = append(errs, fmt.Errorf("role is %q; it must be %q or %q", s.Role, RoleServer, RoleVault))
 	}
 	if r := s.Escrow.AgeRecipient; r != "" {
 		if _, err := age.ParseX25519Recipient(r); err != nil {

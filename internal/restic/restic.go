@@ -57,6 +57,17 @@ type Runner struct {
 	// NoLock reads without creating a lock (--no-lock). The server's reads (snapshot lists, files,
 	// changes, find) use it, so they never wait for an agent's check or delay a backup (plan-m2 Q1).
 	NoLock bool
+	// Options are restic's extended options (-o key=value), such as rclone.program for the vault's source.
+	Options []string
+	// From is a source repository, for init --copy-chunker-params and copy (the vault, decision 039).
+	From *Source
+}
+
+// Source is the repository a copy reads: its location and its password file. Its credentials go in Env
+// (for an rclone: repository, rclone's RCLONE_CONFIG_* variables).
+type Source struct {
+	Repo         string
+	PasswordFile string
 }
 
 // Error carries restic's exit code and the tail of its stderr.
@@ -97,12 +108,18 @@ func (r Runner) env() []string {
 	if r.CacheDir != "" {
 		env = append(env, "RESTIC_CACHE_DIR="+r.CacheDir)
 	}
+	if r.From != nil {
+		env = append(env, "RESTIC_FROM_REPOSITORY="+r.From.Repo, "RESTIC_FROM_PASSWORD_FILE="+r.From.PasswordFile)
+	}
 	return append(env, r.Env...)
 }
 
 // run executes restic and returns stdout; the last 8 KiB of stderr go into the error.
 func (r Runner) run(ctx context.Context, args ...string) ([]byte, error) {
 	// Global flags go before the subcommand: after "--" restic would read them as paths.
+	for _, o := range r.Options {
+		args = append([]string{"-o", o}, args...)
+	}
 	if r.NoLock {
 		args = append([]string{"--no-lock"}, args...)
 	} else if r.RetryLock > 0 {
@@ -153,6 +170,31 @@ func (r Runner) Init(ctx context.Context) (created bool, err error) {
 		return false, err
 	}
 	return true, nil
+}
+
+// InitFrom creates the repository, unless it exists, with the chunker parameters of r.From, so copies from it
+// deduplicate (decision 039). It says whether it created it.
+func (r Runner) InitFrom(ctx context.Context) (created bool, err error) {
+	if r.From == nil {
+		return false, errors.New("InitFrom needs a source repository")
+	}
+	if _, err := r.run(ctx, "cat", "config"); err == nil {
+		return false, nil
+	}
+	if _, err := r.run(ctx, "init", "--copy-chunker-params"); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// Copy copies snapshots of r.From into the repository: restic copy, which skips those copied already. The
+// vault runs it with NoLock, since its key may only read the source (decision 039).
+func (r Runner) Copy(ctx context.Context, ids []string) error {
+	if r.From == nil {
+		return errors.New("Copy needs a source repository")
+	}
+	_, err := r.run(ctx, append([]string{"copy", "--"}, ids...)...)
+	return err
 }
 
 // BackupOptions describes one backup run.
@@ -256,7 +298,8 @@ type Snapshot struct {
 	Tags     []string         `json:"tags"`
 	Paths    []string         `json:"paths"`
 	Parent   string           `json:"parent"`
-	Summary  *SnapshotSummary `json:"summary"` // restic 0.17 and later
+	Original string           `json:"original,omitempty"` // a copy's source snapshot (restic copy)
+	Summary  *SnapshotSummary `json:"summary"`            // restic 0.17 and later
 	// KeptBy is why a forget plan keeps the snapshot, in restic's words, such as "daily snapshot". Only
 	// ForgetPlan fills it in.
 	KeptBy []string `json:"-"`

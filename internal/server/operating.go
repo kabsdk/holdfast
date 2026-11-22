@@ -235,6 +235,9 @@ type RotateResult struct {
 // repository without a password the server has. An old key that could not be removed stays on record and is
 // removed by the next rotation.
 func (s *Server) RotateHost(ctx context.Context, a Actor, fqdn string, in RotateInput) (RotateResult, error) {
+	if s.set.IsVault() {
+		return RotateResult{}, fmt.Errorf("a compromised host is rotated on the source's holdfast-server; a vault's copies are not on the host: %w", ErrConflict)
+	}
 	h, err := s.st.Q().GetHost(ctx, fqdn)
 	if err != nil {
 		return RotateResult{}, fmt.Errorf("host %s: %w", fqdn, err)

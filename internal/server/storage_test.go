@@ -42,6 +42,10 @@ func (p *testProber) ProbeReadOnly(context.Context, string, storage.Key) storage
 	return storage.Report{Findings: []storage.Finding{}}
 }
 
+func (p *testProber) ProbeMaintenance(context.Context) storage.Report {
+	return storage.Report{Findings: []storage.Finding{}}
+}
+
 // TestStorageContractGatesHosts: the admin gives each host's S3 key, and a key that fails the storage
 // contract is refused at host add and at set-key. Enrollment is refused while the storage fails, the
 // daily check tests it again, and the secret never shows (decision 029).

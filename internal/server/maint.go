@@ -66,6 +66,16 @@ func (s *Server) RunChecks(ctx context.Context, a Actor) []CheckResult {
 		} else if !rep.OK() {
 			res.Status, res.Storage, res.Error = "failed", rep.Codes(), "storage: "+rep.Summary()
 		}
+		// A vault checks its copies itself, after its next copy run (vault.go).
+		if s.set.IsVault() {
+			s.vault.mu.Lock()
+			delete(s.vault.checked, h.FQDN)
+			s.vault.mu.Unlock()
+			_ = s.st.Q().Audit(ctx, store.AuditEntry{Actor: a.Name, Source: a.Source, Action: "maintenance.check_requested", FQDN: h.FQDN,
+				Detail: map[string]any{"storage_codes": res.Storage}})
+			out = append(out, res)
+			continue
+		}
 		id := newID()
 		err := s.st.InTx(ctx, func(q *store.Q) error {
 			if err := q.EnqueueCommand(ctx, store.Command{ID: id, FQDN: h.FQDN, Kind: proto.CommandCheckNow, CreatedAt: s.now(), CreatedBy: a.Name}); err != nil {
@@ -89,6 +99,9 @@ func (s *Server) RunChecks(ctx context.Context, a Actor) []CheckResult {
 
 // checkStorage tests a host's storage contract again: an S3 policy can change after the key was given.
 func (s *Server) checkStorage(ctx context.Context, fqdn string) (storage.Report, error) {
+	if s.set.IsVault() {
+		return s.vaultStorageCheck(ctx, fqdn), nil
+	}
 	key, _, err := s.hostKey(ctx, fqdn)
 	if err != nil {
 		return storage.Report{}, err

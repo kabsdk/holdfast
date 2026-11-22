@@ -21,6 +21,7 @@ import (
 var (
 	socketPath string
 	asJSON     bool
+	useVault   bool
 )
 
 func main() {
@@ -29,6 +30,9 @@ func main() {
 			if cmd.Name() == "login" || cmd.Name() == "logout" {
 				return nil
 			}
+			if useVault && !cmd.Flags().Changed("socket") && os.Getenv("HOLDFAST_SOCKET") == "" {
+				socketPath = vaultSocket
+			}
 			var err error
 			current, err = resolveTarget(cmd)
 			return err
@@ -36,8 +40,9 @@ func main() {
 	root.PersistentFlags().StringVar(&socketPath, "socket", envOr("HOLDFAST_SOCKET", "/run/holdfast/api.sock"), "API socket of holdfast-server (root on the server)")
 	root.PersistentFlags().StringVar(&serverURL, "server", os.Getenv("HOLDFAST_SERVER"), "the server's URL, for holdfast login; later commands use the saved login")
 	root.PersistentFlags().BoolVar(&asJSON, "json", false, "print the API's JSON answer")
+	root.PersistentFlags().BoolVar(&useVault, "vault", false, "talk to holdfast-vault on this machine ("+vaultSocket+") rather than holdfast-server")
 	root.AddCommand(statusCmd(), hostCmd(), jobCmd(), snapshotCmd(), restoreCmd(), restoresCmd(), searchCmd(), revisionCmd(), auditCmd(), checkCmd(), escrowCmd(),
-		pendingCmd(), prunesCmd(), retentionCmd(), pruneNowCmd(), loginCmd(), logoutCmd(), whoamiCmd(), accessCmd(), settingsCmd())
+		pendingCmd(), prunesCmd(), retentionCmd(), pruneNowCmd(), loginCmd(), logoutCmd(), whoamiCmd(), accessCmd(), settingsCmd(), vaultCmd(), offsiteCmd())
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
 	}

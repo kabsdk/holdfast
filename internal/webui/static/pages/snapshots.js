@@ -7,6 +7,7 @@ function fate(s) {
   if (s.gone_at && s.deleted_by_holdfast) return { kind: '', text: `deleted by Holdfast ${fmtTime(s.gone_at)}` + (s.really_gone_by ? `; S3's old versions expire by ${fmtDay(s.really_gone_by)}` : '; its data is freed at the next prune') };
   if (s.gone_at) return { kind: 'error', text: `gone from the repository ${fmtTime(s.gone_at)}, without Holdfast deleting it` };
   if (s.deletion_requested_at) return { kind: 'warning', text: `deletion asked ${fmtTime(s.deletion_requested_at)}; it waits 7 days` };
+  if (s.deleted_in_primary_at) return { kind: 'warning', text: `deleted in primary ${fmtTime(s.deleted_in_primary_at)}: an admin there deleted the original. This copy stays unless you delete it here too` };
   if (s.pending_until) return { kind: 'warning', text: `outside the new retention; pending until ${fmtTime(s.pending_until)}` };
   if (s.kept_by && s.kept_by.length) return { kind: 'ok', text: 'kept: ' + s.kept_by.join(', ') };
   if (!s.made_by_holdfast) return { kind: 'warning', text: 'not made by Holdfast; left alone' };
@@ -212,7 +213,7 @@ function DeleteSnapshot({ fqdn, snap, host, onDone }) {
   const act = useAction();
   const short = fqdn.split('.')[0];
   if (!can(host, 'snapshot.delete') || snap.gone_at) return null;
-  return html`<div class="panel"><h3>Delete this snapshot</h3>
+  return html`<div class="panel"><h3>${snap.deleted_in_primary_at ? 'Delete here too' : 'Delete this snapshot'}</h3>
     <p class="muted">restic forgets it after 7 days, unless the deletion is cancelled; its space is freed at the next prune, and S3 keeps the old versions until the bucket's lifecycle rule expires them. Delete now skips the 7 days.</p>
     <label class="field"><span>Why (audit log)</span><input value=${reason} onInput=${(e) => setReason(e.target.value)} /></label>
     <div class="row">
@@ -227,12 +228,14 @@ function DeleteSnapshot({ fqdn, snap, host, onDone }) {
   </div>`;
 }
 
-export function Snapshot({ fqdn, id, tab }) {
+export function Snapshot({ fqdn, id, tab, vault }) {
   const all = usePoll(() => api.snapshots(fqdn, { all: true }), [fqdn], 30000);
-  const host = usePoll(() => api.host(fqdn), [fqdn], 0);
+  const hostPoll = usePoll(() => api.host(fqdn), [fqdn], 0);
   const [only, setOnly] = useState([]);
-  if (all.error || host.error) return html`<${ErrorBox} error=${all.error || host.error} />`;
-  if (!all.data || !host.data) return html`<${Loading} what="the snapshot" />`;
+  if (all.error || hostPoll.error) return html`<${ErrorBox} error=${all.error || hostPoll.error} />`;
+  if (!all.data || !hostPoll.data) return html`<${Loading} what="the snapshot" />`;
+  // A vault restores nothing itself: restores from it are asked on the source's holdfast-server (decision 039).
+  const host = { data: vault ? { ...hostPoll.data, actions: (hostPoll.data.actions || []).filter((a) => !a.startsWith('restore.')) } : hostPoll.data };
   const snap = all.data.find((s) => s.id.startsWith(id));
   if (!snap) return html`<h1>Snapshot ${id}</h1><div class="banner error">No snapshot with this ID exists in this repository.</div>`;
   const older = all.data.filter((s) => s.job_id === snap.job_id && !s.gone_at && s.time < snap.time);
@@ -244,7 +247,8 @@ export function Snapshot({ fqdn, id, tab }) {
     ${f.text && html`<div class=${'banner ' + (f.kind || 'info')}>${f.text}</div>`}
     <dl class="facts"><dt>Host</dt><dd><a href=${link('hosts', fqdn)}>${fqdn}</a></dd><dt>Job</dt><dd>${snap.job_id || html`<span class="muted">none: not made by Holdfast</span>`}</dd>
       <dt>Paths</dt><dd class="mono">${(snap.paths || []).join(' ')}</dd><dt>Taken</dt><dd>${fmtTime(snap.time)}</dd>
-      <dt>Files · size</dt><dd>${snap.total_files ?? '—'} · ${bytes(snap.total_bytes)}</dd><dt>ID</dt><dd class="mono">${snap.id}</dd></dl>
+      <dt>Files · size</dt><dd>${snap.total_files ?? '—'} · ${bytes(snap.total_bytes)}</dd><dt>ID</dt><dd class="mono">${snap.id}</dd>
+      ${snap.original && html`<dt>Copied from</dt><dd class="mono">${snap.original} <span class="muted">· in the source</span></dd>`}</dl>
     ${!snap.gone_at && tabs.length > 0 && html`<div class="tabs">${tabs.map(([k, label]) => html`<a class=${t === k ? 'on' : ''} href=${base + '/' + k}>${label}</a>`)}</div>
       ${t === 'files' && can(host.data, 'browse') && html`<${Files} fqdn=${fqdn} id=${snap.id} host=${host.data} onRestoreOnly=${(p) => { setOnly([p]); go(base.slice(1) + '/restore'); }} />`}
       ${t === 'changes' && can(host.data, 'browse') && html`<${Changes} fqdn=${fqdn} id=${snap.id} host=${host.data} older=${older} />`}
@@ -252,3 +256,4 @@ export function Snapshot({ fqdn, id, tab }) {
     ${!can(host.data, 'browse') && html`<p class="muted">File names are for editors and admins (decision 033).</p>`}
     <${DeleteSnapshot} fqdn=${fqdn} snap=${snap} host=${host.data} onDone=${all.reload} />`;
 }
+

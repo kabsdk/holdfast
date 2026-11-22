@@ -86,6 +86,14 @@ func (s *Server) CheckJob(ctx context.Context, fqdn, jobID string, in JobCheckIn
 	if in.Job.Engine == "" {
 		in.Job.Engine = config.EngineRestic
 	}
+	if s.set.IsVault() { // as SetJob: only the off-site retention is the vault's
+		if old == nil {
+			return JobCheckResult{}, errVaultHosts
+		}
+		j := *old
+		j.Retention = in.Job.Retention
+		in.Job = j
+	}
 	res := JobCheckResult{Problems: orEmpty(withJob(head.Config, fqdn, jobID, in.Job).Validate()), CLI: jobSetCommand(fqdn, jobID, in.Job, in.Accept)}
 	fs := s.jobFindings(ctx, fqdn, jobID, old, in.Job)
 	res.Findings, res.Blocking = fs, orEmpty(checks.Blocking(fs, in.Accept))
@@ -174,6 +182,9 @@ func orEmpty[T any](s []T) []T {
 
 // jobFindings runs every check on job, which replaces old (nil for a new job).
 func (s *Server) jobFindings(ctx context.Context, fqdn, jobID string, old *config.Job, job config.Job) []checks.Finding {
+	if s.set.IsVault() {
+		return s.vaultJobFindings(ctx, fqdn, jobID, old, job)
+	}
 	runs, err := s.st.Q().RunTimes(ctx, fqdn, jobID, 20)
 	if err != nil {
 		s.log.Warn("reading a job's run times for S002", "host", fqdn, "job", jobID, "err", err)

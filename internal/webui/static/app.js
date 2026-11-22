@@ -8,7 +8,7 @@ import { Configure } from './pages/configure.js';
 import { Restores } from './pages/restores.js';
 import { History, PruneNow } from './pages/history.js';
 import { AddHost } from './pages/addhost.js';
-import { Audit, Access, Settings } from './pages/admin.js';
+import { Audit, Access, Settings, Vaults } from './pages/admin.js';
 import { Rollback } from './pages/rollback.js';
 
 function Search() {
@@ -43,17 +43,20 @@ function Shell({ me, settings }) {
   const seg = path.split('/').filter(Boolean).map(decodeURIComponent);
   const attention = (hosts.data || []).filter((h) => (h.problems || []).length > 0);
   const errors = attention.filter((h) => h.problems.some((p) => p.severity === 'error'));
-  const ctx = { me, settings, hosts: hosts.data || [], reloadHosts: hosts.reload };
+  // holdfast-vault is this UI in red, with the vault's actions only (decision 039).
+  const vault = settings.role === 'vault';
+  const ctx = { me, settings, vault, hosts: hosts.data || [], reloadHosts: hosts.reload };
 
   let page;
   if (seg.length === 0) page = html`<${Fleet} ...${ctx} />`;
   else if (seg[0] === 'problems') page = html`<${Problems} ...${ctx} />`;
-  else if (seg[0] === 'restores') page = html`<${Restores} ...${ctx} />`;
+  else if (seg[0] === 'restores' && !vault) page = html`<${Restores} ...${ctx} />`;
   else if (seg[0] === 'history') page = html`<${History} ...${ctx} />`;
   else if (seg[0] === 'add-host') page = html`<${AddHost} ...${ctx} />`;
   else if (seg[0] === 'audit') page = html`<${Audit} ...${ctx} />`;
   else if (seg[0] === 'access') page = html`<${Access} ...${ctx} />`;
   else if (seg[0] === 'settings') page = html`<${Settings} ...${ctx} />`;
+  else if (seg[0] === 'vaults' && !vault) page = html`<${Vaults} ...${ctx} />`;
   else if (seg[0] === 'hosts' && seg[1]) {
     const fqdn = seg[1];
     if (seg.length === 2) page = html`<${Host} fqdn=${fqdn} ...${ctx} />`;
@@ -67,15 +70,17 @@ function Shell({ me, settings }) {
   if (!page) page = html`<h1>Not found</h1><p><a href="#/">Back to the fleet</a></p>`;
 
   const nav = (href, label, extra) => html`<a href=${href} class=${('#' + path) === href || (href !== '#/' && ('#' + path).startsWith(href)) ? 'on' : ''}>${label}${extra}</a>`;
-  return html`<div class="layout">
+  return html`<div class=${'layout' + (vault ? ' vault' : '')}>
     <nav class="side">
-      <a class="brand" href="#/">Holdfast</a>
-      ${nav('#/', 'Fleet')}
+      <a class="brand" href="#/">Holdfast${vault ? ' vault' : ''}</a>
+      ${vault && html`<div class="badge" title=${'Copies from ' + settings.source}>VAULT · SITE B</div>`}
+      ${nav('#/', vault ? 'Copied hosts' : 'Fleet')}
       ${nav('#/problems', 'Problems', errors.length > 0 && html`<span class="count">${errors.length}</span>`)}
-      ${nav('#/restores', 'Restores')}
+      ${!vault && nav('#/restores', 'Restores')}
       ${nav('#/history', 'Config history')}
       ${nav('#/audit', 'Audit log')}
       ${me.admin_everywhere && nav('#/access', 'Access')}
+      ${me.admin_everywhere && !vault && nav('#/vaults', 'Vaults')}
       ${nav('#/settings', 'Settings')}
       ${attention.length > 0 && html`<div class="section">Needs attention</div>
         <div class="attn">${attention.slice(0, 12).map((h) => html`<a href=${link('hosts', h.fqdn)}>${h.fqdn.split('.')[0]}<span class="muted">${h.fqdn.slice(h.fqdn.indexOf('.'))}</span></a>`)}</div>`}

@@ -66,12 +66,45 @@ export function Access({ me }) {
         <td><button class="small" onClick=${() => { if (confirm(`End every session of ${s.username}?`)) end.run(() => api.endSessions(s.username)).then(sessions.reload); }}>End their sessions</button></td></tr>`)}</tbody></table>`}`;
 }
 
+// The vaults that copy this site's hosts to another site (decisions 027 and 039). Their settings are theirs: here
+// they are registered, listed and removed.
+export function Vaults({ me }) {
+  const list = usePoll(() => api.vaults(), [], 30000);
+  const [name, setName] = useState('');
+  const [keyID, setKeyID] = useState('');
+  const [secret, setSecret] = useState('');
+  const [msg, setMsg] = useState('');
+  const add = useAction();
+  const rm = useAction();
+  if (!me.admin_everywhere) return html`<div class="banner warning">Vaults are for admins on every host.</div>`;
+  return html`<h1>Vaults</h1>
+    <p class="muted">A vault, in another site, copies this site's hosts with restic copy and keeps them under its own retention. It connects here; nothing here connects to it or deletes anything there. While it has not copied a snapshot, the daily run here keeps it for up to 7 days.</p>
+    <${ErrorBox} error=${list.error || rm.error} />
+    ${list.data && (list.data.length === 0 ? html`<p class="muted">No vault is registered.</p>` : html`<table>
+      <thead><tr><th>Vault</th><th>Last seen</th><th>Hosts</th><th>Waiting to be copied</th><th>Copy errors</th><th></th></tr></thead>
+      <tbody>${list.data.map((v) => html`<tr><td>${v.name}</td><td>${v.last_seen_at ? fmtTime(v.last_seen_at) : 'never'}</td><td>${v.hosts}</td><td>${v.pending}</td>
+        <td>${v.copy_errors ? html`<${Pill} kind="error">${v.copy_errors}<//>` : '0'}</td>
+        <td><button class="small" onClick=${() => { if (confirm(`Remove vault ${v.name}? Its token stops working; its copies stay in its site.`)) rm.run(() => api.removeVault(v.name, {})).then(list.reload); }}>Remove</button></td></tr>`)}</tbody></table>`)}
+    <div class="panel"><h3>Register a vault</h3>
+      <p class="muted">Make a key at this site's S3 server that may only read <code>repos/</code> (docs/storage.md). It is tested on a host first. The vault's token is shown once.</p>
+      <label class="field"><span>Name</span><input value=${name} onInput=${(e) => setName(e.target.value)} placeholder="site-b" /></label>
+      <label class="field"><span>Read-only key: access key ID</span><input value=${keyID} onInput=${(e) => setKeyID(e.target.value)} autocomplete="off" /></label>
+      <label class="field"><span>Secret access key</span><input type="password" value=${secret} onInput=${(e) => setSecret(e.target.value)} autocomplete="new-password" /></label>
+      <label class="field"><span>Why (audit log)</span><input value=${msg} onInput=${(e) => setMsg(e.target.value)} /></label>
+      <button class="primary" disabled=${add.busy || !name || !keyID || !secret} onClick=${() => add.run(() => api.addVault({ name, s3_key: { access_key_id: keyID, secret_access_key: secret }, message: msg })).then(list.reload)}>Test the key and register</button>
+      <${ErrorBox} error=${add.error} />
+      ${add.done && html`<div class="banner ok">Vault ${add.done.name} is registered. Its token, shown only now: put it alone in the vault's <code>source.token_file</code> (root-only).
+        <pre>${add.done.token}</pre></div>`}
+    </div>`;
+}
+
 export function Settings({ settings }) {
   const s = settings;
   return html`<h1>Settings</h1>
     <p class="muted">What <code>server.yaml</code> says, without secrets. Changing it needs root on the server (spec §3.3).</p>
     <div class="panel"><dl class="facts">
-      <dt>Server</dt><dd>${s.node} · agents connect to ${s.agent_url}${s.ui_url ? ` · people to ${s.ui_url}` : ''}</dd>
+      ${s.role === 'vault' ? html`<dt>Vault</dt><dd>${s.node} · copies from ${s.source}${s.ui_url ? ` · people use ${s.ui_url}` : ''}</dd>`
+        : html`<dt>Server</dt><dd>${s.node} · agents connect to ${s.agent_url}${s.ui_url ? ` · people to ${s.ui_url}` : ''}</dd>`}
       <dt>Default time zone</dt><dd>${s.default_zone}</dd>
       <dt>restic</dt><dd>${s.restic_version}, which the packages ship</dd>
       <dt>Storage</dt><dd>${s.storage.endpoint} · bucket ${s.storage.bucket}${s.storage.region ? ' · ' + s.storage.region : ''}</dd>

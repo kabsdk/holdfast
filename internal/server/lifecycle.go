@@ -32,8 +32,13 @@ func (s *Server) RemoveJob(ctx context.Context, a Actor, fqdn, jobID string, in 
 		if in.Base != nil && *in.Base != head.Number {
 			return ErrConflict
 		}
-		if _, ok := head.Config.Hosts[fqdn].Jobs[jobID]; !ok {
+		j, ok := head.Config.Hosts[fqdn].Jobs[jobID]
+		if !ok {
 			return fmt.Errorf("job %s on %s: %w", jobID, fqdn, ErrNotFound)
+		}
+		// In a vault, a job the source still runs comes back on the next sync: Exclude stops copying it.
+		if s.set.IsVault() && !j.Retired {
+			return fmt.Errorf("job %s on %s is still in the source; exclude it to stop copying it (holdfast offsite exclude): %w", jobID, fqdn, ErrConflict)
 		}
 		doc := head.Config.Clone()
 		delete(doc.Hosts[fqdn].Jobs, jobID)
@@ -68,8 +73,16 @@ func (s *Server) RemoveHost(ctx context.Context, a Actor, fqdn string, in Remove
 		if in.Base != nil && *in.Base != head.Number {
 			return ErrConflict
 		}
-		if _, ok := head.Config.Hosts[fqdn]; !ok {
+		hc, ok := head.Config.Hosts[fqdn]
+		if !ok {
 			return fmt.Errorf("host %s: %w", fqdn, ErrNotFound)
+		}
+		if s.set.IsVault() {
+			for id, j := range hc.Jobs {
+				if !j.Retired {
+					return fmt.Errorf("host %s is still in the source (job %s); a vault removes only a host the source removed: %w", fqdn, id, ErrConflict)
+				}
+			}
 		}
 		doc := head.Config.Clone()
 		delete(doc.Hosts, fqdn)
@@ -80,6 +93,11 @@ func (s *Server) RemoveHost(ctx context.Context, a Actor, fqdn string, in Remove
 		revNum = rev.Number
 		if err := q.MarkRemoved(ctx, fqdn, s.now()); err != nil {
 			return err
+		}
+		if s.set.IsVault() { // no agent to take the empty config: retired at once, so it can be decommissioned
+			if err := q.RetireHost(ctx, fqdn); err != nil {
+				return err
+			}
 		}
 		if err := q.Audit(ctx, store.AuditEntry{Actor: a.Name, Source: a.Source, Action: "host.remove", FQDN: fqdn, Revision: rev.Number,
 			Detail: map[string]any{"message": in.Message}}); err != nil {

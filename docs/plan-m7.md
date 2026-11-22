@@ -67,6 +67,31 @@ settings exist only in the vault, and holdfast-server shows them read-only: spec
   escrow file and the host's S3 key, and adds the host with its existing repository and password.
 - `docs/runbooks/rebuild-holdfast.md`, walked in the lab: a new server VM, the export restored, the agents back.
 
+### Checked first (2026-11-22, restic 0.19.1 and rclone 1.76.0, on MinIO)
+
+As Q3 asked, before anything was built: a repository in bucket A, a key that may only read `repos/` there, a key that
+writes bucket B, and the vault's restic with B through `s3:` and A through `rclone:`.
+- `restic init --from-repo <A> --copy-chunker-params` works with A's read-only key.
+- `restic copy` without `--no-lock` hangs, retrying the lock it may not write in A. **With `--no-lock` it copies**, and
+  A gets no lock file at all. `--no-lock` holds for B too, which is safe: the vault is B's only writer, and runs one
+  thing at a time per host.
+- The copies keep their host name and tags, and name their source snapshot (`original`); a second copy copies nothing;
+  `restic check` on B passes.
+
+### How it is built
+
+**The vault is holdfast-server in a vault role** (`role: vault` in its settings, run as `holdfast-vault`), not a second
+program written again: its revisions, checks, retention with the 7-day protection, Prune now, Delete now, decommission,
+rollback, escrow, size, audit log, sessions, UI, API and CLI are holdfast-server's, on B's bucket. What the role adds:
+- **the source**: it polls site A's holdfast-server, as a registered vault with a token, for the hosts, jobs, primary
+  retention, repositories, passwords, the read-only key, the snapshots deleted in primary, and restore requests; and it
+  reports back what it copied and still wants;
+- **the copier**, in place of agents: each host's B repository is made with `--copy-chunker-params`, and new snapshots
+  of the jobs it copies are copied with `restic --no-lock copy`; each copy is a run in the host's history;
+- **jobs from the source**: a new job is added with its primary retention copied, by a revision of the vault's; a job
+  removed in A is marked Retired; Exclude and Match primary are vault actions; the vault changes only a job's retention;
+- what holdfast-server shows of agents, enrollment, Back up now and restores is not in the vault's UI; its chrome is red.
+
 ## 3. Tests
 
 - **e2e:** two MinIO buckets as sites A and B; the vault copies, keeps its retention, prunes, Delete here too, Exclude,

@@ -16,6 +16,9 @@ import (
 // SettingsView is what server.yaml says, without secrets (plan-m4 §5.2). Changing it needs root on the
 // server (spec §3.3).
 type SettingsView struct {
+	// Role is "server", or "vault" for holdfast-vault, whose UI is red and shows the vault's actions (decision 039).
+	Role          string `json:"role"`
+	Source        string `json:"source,omitempty"` // a vault's source server
 	Node          string `json:"node"`
 	DefaultZone   string `json:"default_zone"`
 	AgentURL      string `json:"agent_url"`
@@ -49,6 +52,10 @@ func (s *Server) SettingsFor(ctx context.Context, a Actor) (SettingsView, error)
 		return SettingsView{}, err
 	}
 	var out SettingsView
+	out.Role = s.set.Role
+	if s.set.IsVault() {
+		out.Source = s.set.Source.Server
+	}
 	out.Node, out.DefaultZone, out.AgentURL, out.UIURL, out.ResticVersion = s.set.NodeName, s.set.DefaultZone, s.set.PublicURL, s.set.UI.PublicURL, restic.PinnedVersion
 	out.Storage.Endpoint, out.Storage.Bucket, out.Storage.Region = s.set.Storage.Endpoint, s.set.Storage.Bucket, s.set.Storage.Region
 	m := s.set.Maintenance

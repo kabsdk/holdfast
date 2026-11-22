@@ -42,6 +42,9 @@ type RestoreInput struct {
 	// host's prefix, which the admin made. Input only, like every S3 key.
 	ToHost string      `json:"to_host,omitempty"`
 	S3Key  *S3KeyInput `json:"s3_key,omitempty"`
+	// FromVault restores the vault's copy of the snapshot, from site B (decision 039). The snapshot is the copy's
+	// ID or the original's here. The vault grants it on its next sync; the restore then runs on the host.
+	FromVault string `json:"from_vault,omitempty"`
 }
 
 // RestoreResult is a queued restore.
@@ -108,6 +111,17 @@ func (s *Server) Restore(ctx context.Context, a Actor, fqdn, snapshotID string, 
 	} else if in.S3Key != nil {
 		return RestoreResult{}, &ValidationError{config.Problems{{Path: "s3_key", Message: "a key goes only with a restore onto another host"}}}
 	}
+	if s.set.IsVault() {
+		return RestoreResult{}, errVaultRestore
+	}
+	if in.FromVault != "" {
+		if in.ToHost != "" {
+			return RestoreResult{}, &ValidationError{config.Problems{{Path: "to_host", Message: "a copy from a vault is restored on its own host"}}}
+		}
+		if in.Target == proto.TargetInPlace {
+			return RestoreResult{}, &ValidationError{config.Problems{{Path: "target", Message: "a copy from a vault is restored into a new or another directory, never in place"}}}
+		}
+	}
 	if in.Target != proto.TargetNew {
 		if err := s.allowed(ctx, a, access.RestoreInPlace, target); err != nil {
 			return RestoreResult{}, err
@@ -120,12 +134,18 @@ func (s *Server) Restore(ctx context.Context, a Actor, fqdn, snapshotID string, 
 	if h.State != "enrolled" {
 		return RestoreResult{}, fmt.Errorf("host %s is %s, not enrolled: %w", target, h.State, ErrConflict)
 	}
-	sn, err := s.snapshot(ctx, fqdn, snapshotID)
-	if err != nil {
+	var sn store.Snapshot
+	var copied proto.VaultCopy
+	if in.FromVault != "" {
+		if copied, err = s.vaultCopy(ctx, in.FromVault, fqdn, snapshotID); err != nil {
+			return RestoreResult{}, err
+		}
+		sn = store.Snapshot{ID: copied.ID, JobID: copied.JobID}
+	} else if sn, err = s.snapshot(ctx, fqdn, snapshotID); err != nil {
 		return RestoreResult{}, err
 	}
 	// A dump is one file: into a new directory only, and loading it is the admin's job (decision 037).
-	dump := slices.ContainsFunc(sn.Tags, func(t string) bool { return strings.HasPrefix(t, "dump=") })
+	dump := copied.Dump || slices.ContainsFunc(sn.Tags, func(t string) bool { return strings.HasPrefix(t, "dump=") })
 	if dump && in.Target != proto.TargetNew {
 		return RestoreResult{}, &ValidationError{config.Problems{{Path: "target", Message: "a dump is restored into a new directory only; load it into the database on the host"}}}
 	}
@@ -182,6 +202,9 @@ func (s *Server) Restore(ctx context.Context, a Actor, fqdn, snapshotID string, 
 		}
 		spec.JobID = "" // the safety backup's job: none on another host, which is why it is never in place
 	}
+	if in.FromVault != "" && (agErr != nil || (proto.Facts{Protocol: ag.Protocol}).AgentProtocol() < proto.ProtocolVault) {
+		return RestoreResult{}, fmt.Errorf("%s's agent does not know restores from a vault: upgrade holdfast-agent there first: %w", target, ErrConflict)
+	}
 	payload, err := json.Marshal(spec)
 	if err != nil {
 		return RestoreResult{}, err
@@ -189,12 +212,21 @@ func (s *Server) Restore(ctx context.Context, a Actor, fqdn, snapshotID string, 
 	now := s.now()
 	res := RestoreResult{Command: newID(), Snapshot: sn.ID, Target: in.Target, ExpiresAt: now.Add(RestoreExpiry)}
 	err = s.st.InTx(ctx, func(q *store.Q) error {
+		detail := map[string]any{"command": res.Command, "snapshot": sn.ID, "target": in.Target, "directory": in.Directory, "dry_run": in.DryRun,
+			"left_out": len(in.Exclude), "only": len(in.Include), "overwrite": in.Overwrite, "message": in.Message}
+		// From a vault, the command waits for its grant: the vault answers on its next sync (vaultsrc.go).
+		if in.FromVault != "" {
+			detail["from_vault"], detail["original"] = in.FromVault, copied.Original
+			if err := q.AddVaultRequest(ctx, store.VaultRequest{ID: res.Command, Vault: in.FromVault, FQDN: fqdn, Snapshot: copied.ID, Original: copied.Original,
+				Spec: payload, RequestedBy: a.Name, RequestedAt: now}); err != nil {
+				return err
+			}
+			return q.Audit(ctx, store.AuditEntry{Actor: a.Name, Source: a.Source, Action: "restore.requested", FQDN: fqdn, JobID: spec.JobID, Detail: detail})
+		}
 		if err := q.EnqueueCommand(ctx, store.Command{ID: res.Command, FQDN: target, Kind: proto.CommandRestore, JobID: spec.JobID, CreatedAt: now,
 			CreatedBy: a.Name, Payload: payload, ExpiresAt: &res.ExpiresAt, Sealed: sealed}); err != nil {
 			return err
 		}
-		detail := map[string]any{"command": res.Command, "snapshot": sn.ID, "target": in.Target, "directory": in.Directory, "dry_run": in.DryRun,
-			"left_out": len(in.Exclude), "only": len(in.Include), "overwrite": in.Overwrite, "message": in.Message}
 		if in.ToHost != "" {
 			detail["from_host"], detail["to_host"] = fqdn, target
 			// The snapshot's own host has it in its history too.
@@ -244,6 +276,8 @@ func (s *Server) sealSource(ctx context.Context, from, target string, in *S3KeyI
 type RestoresView struct {
 	Queued []store.Command `json:"queued"`
 	Done   []store.Event   `json:"done"`
+	// WaitingForVault are restores from a vault that wait for its grant (decision 039).
+	WaitingForVault []store.VaultRequest `json:"waiting_for_vault"`
 }
 
 // Restores returns the restore history of every host.
@@ -263,12 +297,17 @@ func (s *Server) Restores(ctx context.Context, limit int) (RestoresView, error) 
 	if done == nil {
 		done = []store.Event{}
 	}
-	return RestoresView{Queued: queued, Done: done}, nil
+	waiting, err := q.WaitingForVaults(ctx)
+	if err != nil {
+		return RestoresView{}, err
+	}
+	return RestoresView{Queued: queued, Done: done, WaitingForVault: waiting}, nil
 }
 
 // expireCommands cancels queued restores whose host did not pick them up in time. Each is reported in the
 // host's history as a failed restore, and audited (plan-m2 Q6).
 func (s *Server) expireCommands(ctx context.Context) {
+	s.expireVaultRequests(ctx)
 	now := s.now()
 	expired, err := s.st.Q().ExpireCommands(ctx, now)
 	if err != nil {

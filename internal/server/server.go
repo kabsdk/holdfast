@@ -54,6 +54,7 @@ type Server struct {
 	op        operating  // escrow, size and decommission (operating.go)
 	// minProtocol is the oldest agent protocol accepted (protocol.go): proto.MinProtocol, or a test's.
 	minProtocol int
+	vault       vaultState // in the vault role only (vault.go)
 }
 
 // background is the context for work that outlives a request, such as a catalogue refresh.
@@ -118,6 +119,7 @@ func (s *Server) Run(ctx context.Context) {
 	}
 	go s.hub.listen(ctx, s.st.Pool(), s.log)
 	go s.maintenanceLoop(ctx)
+	go s.vaultLoop(ctx) // in the vault role only
 }
 
 // ValidationError lists structural problems; the API answers 422.
@@ -184,7 +186,11 @@ func (s *Server) hostSHAs(doc config.Document) map[string]string {
 func (s *Server) head(ctx context.Context, q *store.Q) (store.Revision, error) {
 	r, err := q.Head(ctx)
 	if errors.Is(err, store.ErrNotFound) {
-		return store.Revision{Number: 0, Config: config.New()}, nil
+		doc := config.New()
+		if s.set.IsVault() {
+			doc.Access = config.VaultAccess()
+		}
+		return store.Revision{Number: 0, Config: doc}, nil
 	}
 	return r, err
 }
@@ -247,6 +253,14 @@ func (s *Server) hostKey(ctx context.Context, fqdn string) (storage.Key, string,
 // prepareKey makes a key that Holdfast generated exist, if a provisioner is configured, and tests the
 // storage contract with it (decision 029).
 func (s *Server) prepareKey(ctx context.Context, fqdn string, key storage.Key, source string) (storage.Report, error) {
+	// In a vault, a host's key is for restores from this site: it must only read (decision 039).
+	if s.set.IsVault() {
+		rep := s.prober.ProbeReadOnly(ctx, fqdn, key)
+		m := s.prober.ProbeMaintenance(ctx)
+		rep.Findings, rep.NoncurrentDays = append(m.Findings, rep.Findings...), m.NoncurrentDays
+		rep.CheckedAt = s.now()
+		return rep, nil
+	}
 	if source == store.KeyByHoldfast && s.prov != nil {
 		if err := s.prov.EnsureHostKey(ctx, fqdn, key); err != nil {
 			return storage.Report{}, err
@@ -362,6 +376,9 @@ func (s *Server) installCommand(fqdn, code string) string {
 // transaction, and initialises the repository. An initialisation failure is reported but not fatal:
 // enrollment does it again before it uses the code.
 func (s *Server) AddHost(ctx context.Context, a Actor, in AddHostInput) (AddHostResult, error) {
+	if s.set.IsVault() {
+		return AddHostResult{}, errVaultHosts
+	}
 	in.FQDN = strings.TrimSpace(in.FQDN)
 	if err := config.ValidFQDN(in.FQDN); err != nil {
 		return AddHostResult{}, &ValidationError{config.Problems{{Path: "fqdn", Message: err.Error()}}}
@@ -629,6 +646,9 @@ func (s *Server) SetS3Key(ctx context.Context, a Actor, fqdn string, in SetS3Key
 // IssueEnrollmentCode gives a host a new 15-minute code and revokes the open one. It also serves
 // re-enrollment of a host that was enrolled before (plan-m1 Q9): the repository and its password stay.
 func (s *Server) IssueEnrollmentCode(ctx context.Context, a Actor, fqdn string) (Enrollment, error) {
+	if s.set.IsVault() {
+		return Enrollment{}, fmt.Errorf("no agent enrolls with a vault: its hosts' agents run in the source's site: %w", ErrConflict)
+	}
 	now := s.now()
 	code := creds.NewEnrollmentCode()
 	expires := now.Add(EnrollmentTTL)
@@ -691,6 +711,15 @@ func (s *Server) SetJob(ctx context.Context, a Actor, fqdn, jobID string, in Set
 	var old *config.Job
 	if j, ok := h.Jobs[jobID]; ok {
 		old = &j
+	}
+	// In a vault only the off-site retention is the vault's to set; the rest of the job is the source's.
+	if s.set.IsVault() {
+		if old == nil {
+			return SetJobResult{}, errVaultHosts
+		}
+		j := *old
+		j.Retention = in.Job.Retention
+		in.Job = j
 	}
 	if p := withJob(before.Config, fqdn, jobID, in.Job).Validate(); len(p) > 0 {
 		return SetJobResult{}, &ValidationError{p}
@@ -762,6 +791,9 @@ func withJob(doc config.Document, fqdn, jobID string, j config.Job) config.Docum
 
 // RunNow queues "back up now" for one job.
 func (s *Server) RunNow(ctx context.Context, a Actor, fqdn, jobID string) (string, error) {
+	if s.set.IsVault() {
+		return "", fmt.Errorf("a vault backs nothing up: it copies what the source's agents back up, every source.poll: %w", ErrConflict)
+	}
 	id := newID()
 	err := s.st.InTx(ctx, func(q *store.Q) error {
 		head, err := s.head(ctx, q)
@@ -799,6 +831,13 @@ type JobView struct {
 	StaleAfter     string           `json:"stale_after"`
 	Status         *store.JobStatus `json:"status,omitempty"`
 	Stale          bool             `json:"stale"` // no success for more than StaleAfter
+	// In a vault (decision 039): the source's retention, Exclude and Retired, and how far the newest copy is behind
+	// the source's newest snapshot. Lagging is that lag past StaleAfter, which alerts.
+	Primary  *config.Retention `json:"primary_retention,omitempty"`
+	Excluded bool              `json:"excluded,omitempty"`
+	Retired  bool              `json:"retired,omitempty"`
+	BehindS  *int64            `json:"behind_s,omitempty"`
+	Lagging  bool              `json:"lagging,omitempty"`
 }
 
 // HostView is one host as the API shows it.
@@ -828,6 +867,10 @@ type HostView struct {
 	Actions []string `json:"actions"`
 	// Problems are what the server knows is wrong with the host (problems.go).
 	Problems []Problem `json:"problems"`
+	// Offsite is what each vault reports of the host (vaultsrc.go), read-only here.
+	Offsite []HostOffsite `json:"offsite,omitempty"`
+	// RestoreKeyMissing is, in a vault, a host with no read-only key yet, so no restore from here can be granted.
+	RestoreKeyMissing bool `json:"restore_key_missing,omitempty"`
 }
 
 // OnlineWithin is how recently an agent must have polled to count as online.
@@ -876,10 +919,11 @@ func (s *Server) Hosts(ctx context.Context) ([]HostView, error) {
 	if err != nil {
 		return nil, err
 	}
+	offsite := s.offsiteByHost(ctx)
 	now := s.now()
 	out := make([]HostView, 0, len(hosts))
 	for _, h := range hosts {
-		v := HostView{Host: h, Jobs: []JobView{}, RollingBack: rolling[h.FQDN]}
+		v := HostView{Host: h, Jobs: []JobView{}, RollingBack: rolling[h.FQDN], Offsite: offsite[h.FQDN]}
 		switch {
 		case h.FirstBackupAt != nil:
 			v.Progress = "first_backup_done"
@@ -931,7 +975,22 @@ func (s *Server) Hosts(ctx context.Context) ([]HostView, error) {
 				since = jv.Status.LastSuccessAt
 			}
 			jv.Stale = h.State == "enrolled" && since != nil && now.Sub(*since) > j.Schedule.StaleAfter()
+			if s.set.IsVault() {
+				// A vault's jobs lag rather than go stale: the source's agents back them up (decision 039).
+				jv.Primary, jv.Excluded, jv.Retired, jv.Stale = j.Primary, j.Excluded, j.Retired, false
+				if _, behind := s.copyState(h.FQDN); behind != nil {
+					if b, ok := behind[id]; ok {
+						secs := int64(b / time.Second)
+						jv.BehindS, jv.Lagging = &secs, !j.Excluded && !j.Retired && b > j.Schedule.StaleAfter()
+					}
+				}
+			}
 			v.Jobs = append(v.Jobs, jv)
+		}
+		if s.set.IsVault() && h.State == "enrolled" {
+			if c, err := q.GetCredentials(ctx, h.FQDN); err == nil && c.S3AccessKeyID == "" {
+				v.RestoreKeyMissing = true
+			}
 		}
 		v.Problems = problems(v, now, retentionFailed[h.FQDN], s.escrowOn())
 		out = append(out, v)

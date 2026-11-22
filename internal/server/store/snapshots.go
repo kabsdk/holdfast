@@ -29,6 +29,10 @@ type Snapshot struct {
 	DeletedByUs    bool       `json:"deleted_by_holdfast,omitempty"`
 	MadeByHoldfast bool       `json:"made_by_holdfast"` // an agent reported this snapshot ID (decision 032)
 	Acknowledged   *time.Time `json:"acknowledged_at,omitempty"`
+	// In the vault (decision 039): the snapshot in the source site this one is a copy of, and when the source
+	// deleted it, if it did (decision 031's "Deleted in primary").
+	Original         string     `json:"original,omitempty"`
+	DeletedInPrimary *time.Time `json:"deleted_in_primary_at,omitempty"`
 	// Filled in by the server's snapshot list (decision 031): when an admin asked to delete it, and, once
 	// Holdfast deleted it and pruned, when S3's old versions of its data expire.
 	DeletionRequestedAt *time.Time `json:"deletion_requested_at,omitempty"`
@@ -47,11 +51,11 @@ func (q *Q) SyncSnapshots(ctx context.Context, fqdn string, listed []Snapshot, n
 	for _, s := range listed {
 		ids = append(ids, s.ID)
 		tag, err := q.db.Exec(ctx, `INSERT INTO snapshots (fqdn, id, short_id, time, hostname, job_id, tags, paths, parent,
-			total_files, total_bytes, data_added, first_seen)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+			total_files, total_bytes, data_added, first_seen, original)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
 			ON CONFLICT (fqdn, id) DO UPDATE SET gone_at = NULL, acknowledged_at = NULL WHERE snapshots.gone_at IS NOT NULL`,
 			fqdn, s.ID, s.ShortID, s.Time, s.Hostname, s.JobID, nonNil(s.Tags), nonNil(s.Paths), s.Parent,
-			s.TotalFiles, s.TotalBytes, s.DataAdded, now)
+			s.TotalFiles, s.TotalBytes, s.DataAdded, now, s.Original)
 		if err != nil {
 			return 0, 0, err
 		}
@@ -75,12 +79,13 @@ func (q *Q) RecordCatalogueError(ctx context.Context, fqdn, msg string) error {
 
 const snapshotCols = `s.fqdn, s.id, s.short_id, s.time, s.hostname, s.job_id, s.tags, s.paths, s.parent, s.total_files, s.total_bytes,
 	s.data_added, s.first_seen, s.gone_at, s.deleted_by_holdfast, s.acknowledged_at,
-	EXISTS (SELECT 1 FROM events e WHERE e.fqdn = s.fqdn AND e.snapshot_id = s.id)`
+	EXISTS (SELECT 1 FROM events e WHERE e.fqdn = s.fqdn AND e.snapshot_id = s.id), s.original,
+	(SELECT p.deleted_at FROM primary_deleted p WHERE p.fqdn = s.fqdn AND p.original = s.original AND s.original <> '')`
 
 func scanSnapshot(row pgx.Row) (Snapshot, error) {
 	var s Snapshot
 	err := row.Scan(&s.FQDN, &s.ID, &s.ShortID, &s.Time, &s.Hostname, &s.JobID, &s.Tags, &s.Paths, &s.Parent, &s.TotalFiles, &s.TotalBytes,
-		&s.DataAdded, &s.FirstSeen, &s.GoneAt, &s.DeletedByUs, &s.Acknowledged, &s.MadeByHoldfast)
+		&s.DataAdded, &s.FirstSeen, &s.GoneAt, &s.DeletedByUs, &s.Acknowledged, &s.MadeByHoldfast, &s.Original, &s.DeletedInPrimary)
 	return s, notFound(err)
 }
 

@@ -50,6 +50,7 @@ type PolicyInForce struct {
 const (
 	PendingCut      = "retention_cut" // the current policy drops it, an older one in force keeps it
 	PendingDeletion = "deletion"      // an admin asked to delete it (decision 031)
+	PendingOffsite  = "offsite_copy"  // a vault has not copied it yet: held while it is younger than 7 days (decision 039)
 )
 
 // PendingSnapshot is a snapshot that waits out the 7 days before it is forgotten.
@@ -143,11 +144,13 @@ func (s *Server) retentionPlan(ctx context.Context, fqdn string) (RetentionPlan,
 				return plan, err
 			}
 			defer cleanup()
+			wanted := s.vaultsWant(ctx, fqdn)
 			for _, id := range ids {
 				jr, err := s.jobRetention(ctx, r, fqdn, id, revs)
 				if err != nil {
 					return plan, fmt.Errorf("the retention of job %s: %w", id, err)
 				}
+				s.holdForVaults(ctx, fqdn, &jr, wanted, now)
 				plan.Jobs = append(plan.Jobs, jr)
 				plan.Forget = append(plan.Forget, jr.Forget...)
 				plan.Pending = append(plan.Pending, jr.Pending...)
@@ -403,8 +406,17 @@ func (s *Server) maintain(ctx context.Context, run *store.MaintenanceRun, pick p
 		forgotten, err := s.forget(ctx, r, run.FQDN, ids)
 		run.Forgotten = forgotten
 		if len(forgotten) > 0 {
+			// A deletion an admin asked for, done; or none. A vault shows those as deleted in primary (decision 031).
+			var onRequest []string
 			for _, id := range forgotten {
-				_ = q.RemovePendingDeletion(ctx, run.FQDN, id) // a deletion request, done; or none
+				if q.RemovePendingDeletion(ctx, run.FQDN, id) == nil || run.Kind == store.RunDeleteNow {
+					onRequest = append(onRequest, id)
+				}
+			}
+			if len(onRequest) > 0 {
+				if err := q.MarkDeletedOnRequest(ctx, run.FQDN, onRequest, s.now()); err != nil {
+					s.log.Error("recording deletions", "host", run.FQDN, "err", err)
+				}
 			}
 			action := map[string]string{store.RunPruneNow: "retention.prune_now_forgot", store.RunDeleteNow: "snapshot.deleted"}[run.Kind]
 			if action == "" {

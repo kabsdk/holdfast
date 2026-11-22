@@ -28,7 +28,7 @@ HOLDFAST_VERSION := $(shell sh scripts/version.sh)
 endif
 # Static binaries, so one package runs on every distribution; the agent reports its version.
 export CGO_ENABLED ?= 0
-LDFLAGS := -X github.com/kabsdk/holdfast/internal/agent.Version=$(HOLDFAST_VERSION)
+LDFLAGS := -X github.com/kabsdk/holdfast/internal/agent.Version=$(HOLDFAST_VERSION) -X github.com/kabsdk/holdfast/internal/server.Version=$(HOLDFAST_VERSION)
 
 # The login and UI tests (M4): a real OIDC provider, and a headless browser driven over the DevTools
 # protocol. Both pinned by digest; both on the host network, on loopback only.

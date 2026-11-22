@@ -23,6 +23,8 @@ func (s *Server) AgentHandler() http.Handler {
 	mux.HandleFunc("POST "+proto.Base+"/enroll", s.handleEnroll)
 	mux.HandleFunc("POST "+proto.Base+"/poll", s.agentAuth(s.handlePoll))
 	mux.HandleFunc("POST "+proto.Base+"/events", s.agentAuth(s.handleEvents))
+	mux.HandleFunc("POST "+proto.VaultBase+"/sync", s.vaultAuth(s.handleVaultSync))
+	mux.HandleFunc("POST "+proto.VaultBase+"/grant", s.vaultAuth(s.handleVaultGrant))
 	mux.HandleFunc("GET /metrics", s.handleMetrics)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		if err := s.st.Pool().Ping(r.Context()); err != nil {

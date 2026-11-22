@@ -1,4 +1,4 @@
-import { html, useState, useEffect, usePoll, useAction, link, go, fmtTime, dur, TIERS, Findings, ErrorBox, Loading, can } from '../lib.js';
+import { html, useState, useEffect, usePoll, useAction, link, go, fmtTime, dur, TIERS, Findings, ErrorBox, Loading, can, retentionText } from '../lib.js';
 import { api } from '../api.js';
 
 const UNITS = { within: ['hours', 'days', 'weeks'], hourly: ['hours', 'days'], daily: ['days', 'weeks', 'months'], weekly: ['weeks', 'months'], monthly: ['months', 'years'], yearly: ['years'] };
@@ -47,7 +47,7 @@ function RetentionEditor({ r, set }) {
   <p class="muted">Windows are times, never counts (spec §4.2). restic decides what each window keeps.</p>`;
 }
 
-function Editor({ fqdn, jobID, saved, base, isNew, defaults, dumps }) {
+function Editor({ fqdn, jobID, saved, base, isNew, defaults, dumps, vault, primary }) {
   const [id, setID] = useState(isNew ? 'new-job' : jobID);
   const [job, setJob] = useState(() => clone(saved || defaults));
   const [paths, setPaths] = useState((job.paths || []).join('\n'));
@@ -72,7 +72,9 @@ function Editor({ fqdn, jobID, saved, base, isNew, defaults, dumps }) {
   const blocked = check && (check.blocking.length > 0 || (check.problems || []).length > 0);
   const cut = check && check.findings.some((f) => f.code === 'R104') && accept.includes('R104');
   return html`<div class="grid2"><div>
-    <div class="panel"><h3>What · job ${isNew ? 'new' : jobID}</h3>
+    ${vault && html`<div class="panel"><h3>Off-site retention · job ${jobID}</h3>
+      <p class="muted">The rest of the job is the source's. Primary retention there 🔒: ${primary ? retentionText(primary) : '—'}. Keeping less here is warning O101, which you accept.</p></div>`}
+    ${!vault && html`<div class="panel"><h3>What · job ${isNew ? 'new' : jobID}</h3>
       ${isNew && html`<label class="field"><span>Job ID (lower-case letters, digits, dashes; the snapshot tag job=…)</span><input value=${id} onInput=${(e) => setID(e.target.value)} /></label>`}
       <div class="row"><label><input type="radio" checked=${what === 'paths'} onChange=${() => setWhat('paths')} /> Paths</label>
         <label><input type="radio" checked=${what === 'dump'} onChange=${() => setWhat('dump')} /> A dump the host defines</label></div>
@@ -84,12 +86,12 @@ function Editor({ fqdn, jobID, saved, base, isNew, defaults, dumps }) {
         <p class="muted">${(dumps || []).length ? 'The command is the host’s own: root on it defines each dump in agent.yaml, and the job only names one. Its output is one file in the snapshot; a restore writes it into a new directory.' : 'This host’s agent reports no dumps: root on it defines them in agent.yaml (dumps:).'}</p>`}
     </div>
     <div class="panel"><h3>When it runs</h3><${ScheduleEditor} s=${job.schedule} set=${(schedule) => setJob({ ...job, schedule })} />
-      ${check && check.gets.next_runs && html`<p class="muted">Next runs: ${check.gets.next_runs.map(fmtTime).join(', ')}${job.schedule.spread?.enabled ? ` (each + random 0–${job.schedule.spread.minutes} min)` : ''}</p>`}</div>
-    <div class="panel"><h3>How long to keep</h3><${RetentionEditor} r=${job.retention} set=${(retention) => setJob({ ...job, retention })} /></div>
-    <div class="panel"><h3>Run controls</h3>
+      ${check && check.gets.next_runs && html`<p class="muted">Next runs: ${check.gets.next_runs.map(fmtTime).join(', ')}${job.schedule.spread?.enabled ? ` (each + random 0–${job.schedule.spread.minutes} min)` : ''}</p>`}</div>`}
+    <div class="panel"><h3>How long to keep${vault ? ' here' : ''}</h3><${RetentionEditor} r=${job.retention} set=${(retention) => setJob({ ...job, retention })} /></div>
+    ${!vault && html`<div class="panel"><h3>Run controls</h3>
       <p class="row"><label>Cap the upload at <input type="number" min="0" style="width:7rem" value=${job.limit_upload_kib || 0}
         onInput=${(e) => setJob({ ...job, limit_upload_kib: +e.target.value || undefined })} /> KiB/s</label> <span class="muted">0 for no limit (restic --limit-upload)</span></p>
-      <p class="muted">A failed backup is retried after 5, 15 and 45 minutes, while that is before its next run. The agent runs restic at low CPU and disk priority.</p></div>
+      <p class="muted">A failed backup is retried after 5, 15 and 45 minutes, while that is before its next run. The agent runs restic at low CPU and disk priority.</p></div>`}
     <div class="panel"><h3>Checks</h3>
       <${ErrorBox} error=${checkErr} />
       ${!check ? html`<${Loading} what="the checks" />` : html`
@@ -121,7 +123,7 @@ function Editor({ fqdn, jobID, saved, base, isNew, defaults, dumps }) {
   </div></div>`;
 }
 
-export function Configure({ fqdn, job, settings }) {
+export function Configure({ fqdn, job, settings, vault }) {
   const host = usePoll(() => api.host(fqdn), [fqdn], 0);
   const status = usePoll(() => api.status(), [fqdn], 0);
   if (host.error) return html`<${ErrorBox} error=${host.error} />`;
@@ -134,7 +136,8 @@ export function Configure({ fqdn, job, settings }) {
   return html`<h1>Configure · ${fqdn}</h1>
     <p class="muted">Every save is a revision in PostgreSQL. Schedule and retention are checked together: errors block the save, warnings must be accepted one by one.</p>
     <div class="tabs">${h.jobs.map((j) => html`<a class=${j.id === job ? 'on' : ''} href=${link('hosts', fqdn, 'configure', j.id)}>${j.id}</a>`)}
-      <a class=${!saved ? 'on' : ''} href=${link('hosts', fqdn, 'configure')}>+ Add job</a></div>
-    <${Editor} key=${job || 'new'} fqdn=${fqdn} jobID=${job} saved=${asJob(saved)} isNew=${!saved} base=${status.data.head_revision} defaults=${settings.default_job}
-      dumps=${h.agent?.dumps || []} />`;
+      ${!vault && html`<a class=${!saved ? 'on' : ''} href=${link('hosts', fqdn, 'configure')}>+ Add job</a>`}</div>
+    ${vault && !saved ? html`<div class="banner info">A vault's jobs come from its source: choose one above to set its off-site retention.</div>`
+      : html`<${Editor} key=${job || 'new'} fqdn=${fqdn} jobID=${job} saved=${asJob(saved)} isNew=${!saved} base=${status.data.head_revision} defaults=${settings.default_job}
+      dumps=${h.agent?.dumps || []} vault=${vault} primary=${saved?.primary_retention} />`}`;
 }

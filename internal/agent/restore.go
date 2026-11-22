@@ -51,13 +51,16 @@ func (a *Agent) runRestore(ctx context.Context, c proto.Command) bool {
 
 	// Another host's snapshot (plan-m6 §2.2): only if this host allows it, never in place, and with that
 	// host's password and read-only key, which live in root-only files for this one restore.
+	// A source with this host's own name is a vault's copy of its own snapshots, in site B (decision 039): that is
+	// no other host's data, so allow_other_hosts does not apply, but it is still never restored in place.
 	owner := a.cfg.FQDN
+	otherHost := spec.Source != nil && spec.Source.FQDN != a.cfg.FQDN
 	if src := spec.Source; src != nil {
-		if !a.cfg.Restore.AllowOtherHosts {
+		if otherHost && !a.cfg.Restore.AllowOtherHosts {
 			return fail("refused by this host: restores from other hosts are not allowed (agent.yaml restore.allow_other_hosts)")
 		}
 		if spec.Target == proto.TargetInPlace {
-			return fail("refused: another host's snapshot is restored into a directory, never in place")
+			return fail("refused: a snapshot from another repository is restored into a directory, never in place")
 		}
 		other, cleanup, err := a.sourceRunner(c.ID, *src)
 		if err != nil {
@@ -146,7 +149,7 @@ func (a *Agent) runRestore(ctx context.Context, c proto.Command) bool {
 	opts := restic.RestoreOptions{Target: target, Include: spec.Include, Exclude: spec.Exclude, DryRun: spec.DryRun, Overwrite: spec.Overwrite}
 	// A dump's file has no SELinux label in the snapshot, and another host's labels belong to its policy: the
 	// restored files keep the label this host gives them (found in the lab, on el9 and ol9).
-	if spec.Dump || isDump(sn) || spec.Source != nil {
+	if spec.Dump || isDump(sn) || otherHost {
 		opts.ExcludeXattr = []string{"security.selinux"}
 	}
 	sum, err := r.RestoreWith(rctx, sn.ID, opts)

@@ -38,7 +38,8 @@ type catalogueRefresher struct {
 var snapshotIDPattern = regexp.MustCompile(`^[0-9a-f]{8,64}$`)
 
 func toCatalogueRow(fqdn string, sn restic.Snapshot) store.Snapshot {
-	row := store.Snapshot{FQDN: fqdn, ID: sn.ID, ShortID: sn.ShortID, Time: sn.Time, Hostname: sn.Hostname, Tags: sn.Tags, Paths: sn.Paths, Parent: sn.Parent}
+	row := store.Snapshot{FQDN: fqdn, ID: sn.ID, ShortID: sn.ShortID, Time: sn.Time, Hostname: sn.Hostname, Tags: sn.Tags, Paths: sn.Paths, Parent: sn.Parent,
+		Original: sn.Original}
 	for _, t := range sn.Tags {
 		if id, ok := strings.CutPrefix(t, "job="); ok {
 			row.JobID = id

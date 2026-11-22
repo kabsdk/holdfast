@@ -87,5 +87,12 @@ export const api = {
   setAccess: (body) => req('PUT', '/api/v1/access', body),
   sessions: () => req('GET', '/api/v1/sessions'),
   endSessions: (user) => req('DELETE', `/api/v1/sessions/${e(user)}`),
+  vaults: () => req('GET', '/api/v1/vaults'),
+  addVault: (body) => req('POST', '/api/v1/vaults', body),
+  removeVault: (name, body) => req('DELETE', `/api/v1/vaults/${e(name)}`, body),
+  offsiteCopies: (f) => req('GET', `/api/v1/hosts/${e(f)}/offsite`),
+  exclude: (f, job, body) => req('POST', `/api/v1/hosts/${e(f)}/jobs/${e(job)}/exclude`, body),
+  include: (f, job, body) => req('POST', `/api/v1/hosts/${e(f)}/jobs/${e(job)}/include`, body),
+  matchPrimary: (f, job, body) => req('POST', `/api/v1/hosts/${e(f)}/jobs/${e(job)}/match-primary`, body),
   logout: () => req('POST', '/auth/logout'),
 };

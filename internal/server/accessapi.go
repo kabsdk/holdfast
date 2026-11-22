@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"slices"
 	"strings"
@@ -39,6 +40,7 @@ func (s *Server) WhoAmI(ctx context.Context, a Actor) (Me, error) {
 			m.AddHosts = true
 		}
 	}
+	m.AddHosts = m.AddHosts && !s.set.IsVault() // a vault's hosts come from its source
 	hosts, err := s.st.Q().ListHosts(ctx)
 	if err != nil {
 		return Me{}, err
@@ -89,6 +91,13 @@ func (s *Server) SetAccess(ctx context.Context, a Actor, in SetAccessInput) (int
 	}
 	if in.Bindings == nil {
 		in.Bindings = []config.Binding{}
+	}
+	if s.set.IsVault() { // admins and viewers only (decision 039)
+		for i, b := range in.Bindings {
+			if b.Role != "admin" && b.Role != "viewer" {
+				return 0, &ValidationError{config.Problems{{Path: fmt.Sprintf("bindings[%d].role", i), Message: "a vault has two roles, admin and viewer"}}}
+			}
+		}
 	}
 	var revNum int64
 	err := s.st.InTx(ctx, func(q *store.Q) error {

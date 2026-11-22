@@ -7,8 +7,6 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
-	"crypto/tls"
-	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -17,7 +15,6 @@ import (
 	"log/slog"
 	"math/big"
 	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -27,6 +24,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kabsdk/holdfast/internal/pin"
 	"github.com/kabsdk/holdfast/internal/proto"
 	"github.com/kabsdk/holdfast/internal/restic"
 	"github.com/kabsdk/holdfast/internal/schedule"
@@ -112,54 +110,11 @@ func New(cfg Config, log *slog.Logger) (*Agent, error) {
 }
 
 // httpClient pins the server when a fingerprint is given. Without one, the system's roots apply.
-func httpClient(server, pin string) (*http.Client, error) {
-	tr := http.DefaultTransport.(*http.Transport).Clone()
-	if pin != "" {
-		u, err := url.Parse(server)
-		if err != nil || u.Hostname() == "" {
-			return nil, fmt.Errorf("server %q is not a URL", server)
-		}
-		host := u.Hostname()
-		pin = strings.ToLower(strings.ReplaceAll(pin, ":", ""))
-		tr.TLSClientConfig = &tls.Config{
-			InsecureSkipVerify: true, // the standard verification is replaced by verifyPinned
-			VerifyConnection: func(cs tls.ConnectionState) error {
-				return verifyPinned(cs.PeerCertificates, pin, host)
-			},
-		}
-	}
-	return &http.Client{Transport: tr}, nil
+func httpClient(server, fingerprint string) (*http.Client, error) {
+	return pin.Client(server, fingerprint)
 }
 
-// verifyPinned accepts a server whose own certificate chains to the pinned certificate and names host.
-//
-// The pin is the sha256 of one certificate in the chain the server sends: normally its CA's, or its own
-// if it is self-signed. That certificate becomes the only trusted root. Finding the pin somewhere in the
-// chain is not enough on its own. A CA's certificate is public, so a man in the middle could send it
-// along with a certificate of his own (decision 030).
-func verifyPinned(chain []*x509.Certificate, pin, host string) error {
-	if len(chain) == 0 {
-		return errors.New("the server sent no certificate")
-	}
-	roots, intermediates := x509.NewCertPool(), x509.NewCertPool()
-	found := false
-	for _, c := range chain {
-		sum := sha256.Sum256(c.Raw)
-		if hex.EncodeToString(sum[:]) == pin {
-			roots.AddCert(c)
-			found = true
-		} else {
-			intermediates.AddCert(c)
-		}
-	}
-	if !found {
-		return errors.New("the server's certificate chain does not match the pinned fingerprint")
-	}
-	if _, err := chain[0].Verify(x509.VerifyOptions{Roots: roots, Intermediates: intermediates, DNSName: host}); err != nil {
-		return fmt.Errorf("the server's certificate does not chain to the pinned certificate for %s: %w", host, err)
-	}
-	return nil
-}
+var verifyPinned = pin.Verify
 
 func (a *Agent) path(name string) string { return filepath.Join(a.cfg.StateDir, name) }
 

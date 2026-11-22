@@ -260,6 +260,47 @@ func RetentionCut(oldKeep, newKeep []string) *Finding {
 		Message: fmt.Sprintf("the change cuts retention: %d of today's %d kept snapshots would go, after the 7-day protection", len(oldKeep)-len(newKeep), len(oldKeep))}
 }
 
+// Shorter says where an off-site retention keeps less than primary: each window that is shorter, or missing, and
+// the newest N if it is fewer. Empty when it keeps at least as much everywhere.
+func Shorter(offsite, primary config.Retention) []string {
+	var out []string
+	pt, ot := tiers(primary), tiers(offsite)
+	for i := range pt {
+		if pt[i].d == nil {
+			continue
+		}
+		p := Length(*pt[i].d)
+		switch {
+		case ot[i].d == nil:
+			out = append(out, fmt.Sprintf("%s: none, against %s", pt[i].name, human(p)))
+		case Length(*ot[i].d) < p:
+			out = append(out, fmt.Sprintf("%s: %s, against %s", pt[i].name, human(Length(*ot[i].d)), human(p)))
+		}
+	}
+	if offsite.KeepLast < primary.KeepLast {
+		out = append(out, fmt.Sprintf("the newest %d, against %d", offsite.KeepLast, primary.KeepLast))
+	}
+	return out
+}
+
+// Offsite is O101 (decision 039): a vault's retention for a job keeps less than the job's primary retention in
+// site A. The vault's admin decides site B's retention, so it is a warning to accept, not an error. nil otherwise.
+func Offsite(offsite, primary config.Retention) *Finding {
+	short := Shorter(offsite, primary)
+	if len(short) == 0 {
+		return nil
+	}
+	msg := "the off-site retention keeps less than primary"
+	for i, s := range short {
+		sep := "; "
+		if i == 0 {
+			sep = ": "
+		}
+		msg += sep + s
+	}
+	return &Finding{Code: "O101", Severity: Warning, Path: "retention", Message: msg}
+}
+
 // Blocking returns the errors, and the warnings not in accepted. A save goes ahead only when it is empty.
 func Blocking(fs []Finding, accepted []string) []Finding {
 	var out []Finding

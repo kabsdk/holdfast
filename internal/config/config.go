@@ -40,6 +40,13 @@ type Job struct {
 	// Dump names a dump defined in the host's agent.yaml (decision 037). A job backs up either paths or a
 	// dump, never both.
 	Dump string `json:"dump,omitempty"`
+
+	// In a vault only (decisions 027 and 039): Retention is then the off-site retention, the vault's own;
+	// Primary is the source's, which the vault shows and never sets; Excluded stops copying and keeps the
+	// data; Retired is a job the source removed, whose copies the vault keeps under its retention.
+	Primary  *Retention `json:"primary,omitempty"`
+	Excluded bool       `json:"excluded,omitempty"`
+	Retired  bool       `json:"retired,omitempty"`
 }
 
 // IsDump says whether the job backs up a dump rather than paths.
@@ -75,6 +82,15 @@ func DefaultAccess() Access {
 		{Group: "holdfast-admins", Role: "admin", Hosts: all},
 		{Group: "holdfast-editors", Role: "editor", Hosts: all},
 		{Group: "holdfast-viewers", Role: "viewer", Hosts: all},
+	}}
+}
+
+// VaultAccess returns a vault's default bindings: it has admins and viewers only (decision 039).
+func VaultAccess() Access {
+	all := []string{"*"}
+	return Access{Bindings: []Binding{
+		{Group: "holdfast-vault-admins", Role: "admin", Hosts: all},
+		{Group: "holdfast-vault-viewers", Role: "viewer", Hosts: all},
 	}}
 }
 

@@ -311,6 +311,9 @@ type Host struct {
 	SizeTriedAt     *time.Time    `json:"-"`
 	RepoKeyRetiring string        `json:"repo_key_retiring,omitempty"`
 	Decommission    *Decommission `json:"decommission,omitempty"`
+	// In a vault (M7): its last copy from the source, and why the last attempt failed, if it did.
+	CopiedAt  *time.Time `json:"copied_at,omitempty"`
+	CopyError string     `json:"copy_error,omitempty"`
 }
 
 // MarkRemoved records that a host was removed. A host that never enrolled has no agent to tell, so it is
@@ -351,7 +354,7 @@ const hostCols = `fqdn, state, added_revision, added_at, connected_at, first_bac
 	(SELECT c.version FROM host_credentials c WHERE c.fqdn = hosts.fqdn), escrowed_version, escrowed_at, escrow_tried_at, escrow_error,
 	size_at, size_tried_at, size_current_bytes, size_noncurrent_bytes, size_objects, size_error, repo_key_retiring,
 	decommission_requested_at, decommission_requested_by, decommission_due_at, decommission_tried_at, decommission_error,
-	decommissioned_at, decommissioned_objects`
+	decommissioned_at, decommissioned_objects, copied_at, copy_error`
 
 func scanHost(row pgx.Row) (Host, error) {
 	var h Host
@@ -366,7 +369,7 @@ func scanHost(row pgx.Row) (Host, error) {
 		&days, &h.CatalogueRefreshedAt, &h.CatalogueError, &h.PruneNeeded, &h.RemovedAt,
 		&credVersion, &h.Escrow.Version, &h.Escrow.At, &h.Escrow.TriedAt, &h.Escrow.Error,
 		&sizeAt, &h.SizeTriedAt, &sz.Current, &sz.Noncurrent, &sz.Objects, &h.SizeError, &h.RepoKeyRetiring,
-		&dReq, &d.RequestedBy, &dDue, &d.TriedAt, &d.Error, &d.DoneAt, &d.Objects)
+		&dReq, &d.RequestedBy, &dDue, &d.TriedAt, &d.Error, &d.DoneAt, &d.Objects, &h.CopiedAt, &h.CopyError)
 	if err != nil {
 		return h, notFound(err)
 	}

@@ -6,6 +6,28 @@ rule_files:
 evaluation_interval: 1m
 
 tests:
+  # A vault's copy more than twice the job's longest gap behind site A pages; a small lag does not.
+  - interval: 1m
+    input_series:
+      - series: 'holdfast_offsite_behind_seconds{host="web01",job_id="data"}'
+        values: '180000x30'
+      - series: 'holdfast_job_longest_gap_seconds{host="web01",job_id="data"}'
+        values: '86400x30'
+      - series: 'holdfast_offsite_behind_seconds{host="db01",job_id="data"}'
+        values: '3600x30'
+      - series: 'holdfast_job_longest_gap_seconds{host="db01",job_id="data"}'
+        values: '86400x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: HoldfastOffsiteLag
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: HoldfastOffsiteLag
+        exp_alerts:
+          - exp_labels: {severity: page, host: web01, job_id: data}
+            exp_annotations:
+              summary: "web01/data: its off-site copy is 2d 2h 0m 0s behind site A"
+
   # A restic password added outside Holdfast pages at once.
   - interval: 1m
     input_series:

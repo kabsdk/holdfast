@@ -23,7 +23,7 @@ type restoreEvent struct {
 }
 
 func restoreCmd() *cobra.Command {
-	var to, overwrite, msg, toHost, keyFile string
+	var to, overwrite, msg, toHost, keyFile, fromVault string
 	var inPlace, dryRun, wait bool
 	var leaveOut, only []string
 	c := &cobra.Command{Use: "restore <fqdn> <snapshot>", Short: "Restore a snapshot on its host, or onto another one (--to-host), through the agent (a new root-only directory by default)",
@@ -48,6 +48,9 @@ func restoreCmd() *cobra.Command {
 				}
 				in["to_host"], in["s3_key"], runsOn = toHost, key, toHost
 			}
+			if fromVault != "" {
+				in["from_vault"] = fromVault
+			}
 			var res struct {
 				Command   string    `json:"command"`
 				ExpiresAt time.Time `json:"expires_at"`
@@ -59,6 +62,11 @@ func restoreCmd() *cobra.Command {
 			if !wait {
 				if asJSON {
 					printJSON(raw)
+					return nil
+				}
+				if fromVault != "" {
+					fmt.Printf("restore %s asked of vault %s: it grants it on its next sync, then %s restores it, by %s\nholdfast restores shows its result\n",
+						res.Command, fromVault, runsOn, res.ExpiresAt.Local().Format("2006-01-02 15:04"))
 					return nil
 				}
 				fmt.Printf("restore %s queued for %s; the host must pick it up by %s\nholdfast restores shows its result\n", res.Command, runsOn, res.ExpiresAt.Local().Format("2006-01-02 15:04"))
@@ -103,6 +111,7 @@ func restoreCmd() *cobra.Command {
 	c.Flags().StringVarP(&msg, "message", "m", "", "why, for the audit log")
 	c.Flags().StringVar(&toHost, "to-host", "", "admin: restore onto this other host, which must allow it (agent.yaml restore.allow_other_hosts)")
 	c.Flags().StringVar(&keyFile, "s3-key-file", "", "with --to-host: a read-only key for the snapshot's host's prefix, as for host add, or - for stdin")
+	c.Flags().StringVar(&fromVault, "from-vault", "", "restore the copy this vault holds, from the other site (holdfast offsite copies lists them)")
 	c.AddCommand(restorePairCmd())
 	return c
 }

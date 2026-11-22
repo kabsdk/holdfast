@@ -24,6 +24,12 @@ nav.side a:hover, nav.side a.on { background: #26304a; color: #fff; text-decorat
 nav.side .count { background: var(--err); color: #fff; border-radius: 9px; padding: 0 .45rem; font-size: 12px; }
 nav.side .section { margin: 1rem .5rem .35rem; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: #8792a8; }
 nav.side .attn a { font-size: 13px; }
+/* holdfast-vault: the same UI in red, so a vault is never taken for the server (decision 039) */
+.layout.vault nav.side { background: #3b0d0c; }
+.layout.vault nav.side a:hover, .layout.vault nav.side a.on { background: #6b1a17; }
+.layout.vault header.top { border-bottom: 3px solid var(--err); }
+nav.side .badge { margin: -.6rem .5rem 1rem; padding: .15rem .45rem; display: inline-block; border-radius: 4px; background: var(--err); color: #fff;
+  font-size: 11px; font-weight: 700; letter-spacing: .06em; }
 main { padding: 0 1.5rem 3rem; min-width: 0; }
 header.top { display: flex; gap: 1rem; align-items: center; padding: .75rem 0; border-bottom: 1px solid var(--line); margin-bottom: 1rem; }
 header.top .crumbs { flex: 1; color: var(--muted); }

@@ -18,11 +18,15 @@ const Base = "/agent/v1"
 
 // Protocol is the version of the agent protocol this build speaks (plan-m5 item 1). It goes up only when
 // a change needs both sides to know of it; a field the other side may ignore does not change it. Agents
-// before M5 sent none, and speak 1. 2 (M6): dump jobs, restores from another host, pause and resume.
-const Protocol = 2
+// before M5 sent none, and speak 1. 2 (M6): dump jobs, restores from another host, pause and resume. 3 (M7):
+// restores of the host's own snapshots from a vault's copies.
+const Protocol = 3
 
 // ProtocolRecovery is the first protocol with M6's dump jobs, restores from another host, and pausing.
 const ProtocolRecovery = 2
+
+// ProtocolVault is the first protocol whose agents restore their own snapshots from a vault (decision 039).
+const ProtocolVault = 3
 
 // MinProtocol is the oldest agent protocol this server accepts. A server can then be upgraded before its
 // agents, and the agents one by one. An older agent's polls are refused with 426 and the range; it keeps
