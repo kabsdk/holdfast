@@ -4,6 +4,11 @@ Status: decided, 2026-11-22. You asked me to make the choice; it is [decision 04
 This plan is how it is built. §6 lists what I chose inside that, so you can overrule any of it; nothing waits on an
 answer.
 
+**Built, 2026-11-22.** Parts 1 to 3 in `4833ef6`, part 4 in `987f0a5` and `5beb9e9`, part 5 in `3a20f62`. The e2e suite
+passes, 26 of 26, with no S3 key on any host and no vault. On the Ubuntu, AlmaLinux and Oracle Linux VMs with Ceph RGW,
+the lab's fidelity test keeps 39 of 39, the recovery tests pass 4 of 4, and the off-site test passes 6 of 6, a restore
+from off-site included (lab/README.md).
+
 ## 1. Where it ends
 
 | | Before M8 | After M8 |
