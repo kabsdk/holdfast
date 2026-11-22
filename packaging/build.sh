@@ -6,14 +6,15 @@
 #   HOLDFAST_VERSION     the packages' version, such as 0.5.0 (required)
 #   RESTIC_BINARY        the pinned restic, checked (scripts/fetch-restic.sh)
 #   RESTIC_VERSION       its version
+#   RCLONE_BINARY        the pinned rclone, for the vault, checked (scripts/fetch-rclone.sh)
 #   NFPM_IMAGE           nfpm's image, pinned by digest
 #   HOLDFAST_MAINTAINER  the packages' maintainer field
 set -euo pipefail
 cd "$(dirname "$0")/.."
-: "${HOLDFAST_VERSION:?}" "${RESTIC_BINARY:?}" "${RESTIC_VERSION:?}" "${NFPM_IMAGE:?}"
+: "${HOLDFAST_VERSION:?}" "${RESTIC_BINARY:?}" "${RESTIC_VERSION:?}" "${RCLONE_BINARY:?}" "${NFPM_IMAGE:?}"
 export HOLDFAST_MAINTAINER="${HOLDFAST_MAINTAINER:-Holdfast maintainers}"
 
-for b in holdfast-agent holdfast-server holdfast holdfast-freshness; do
+for b in holdfast-agent holdfast-server holdfast holdfast-freshness holdfast-vault; do
   [ -x "bin/$b" ] || { echo "bin/$b is missing: make build first" >&2; exit 1; }
 done
 
@@ -21,9 +22,11 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 mkdir -p dist "$work/scripts"
 cp "$RESTIC_BINARY" "$work/restic"
+cp "$RCLONE_BINARY" "$work/rclone"
 
 # Each package's scripts name its own unit.
-declare -A unit=([holdfast-agent]=holdfast-agent.service [holdfast-server]=holdfast-server.service [holdfast-freshness]=holdfast-freshness.service)
+declare -A unit=([holdfast-agent]=holdfast-agent.service [holdfast-server]=holdfast-server.service [holdfast-freshness]=holdfast-freshness.service
+  [holdfast-vault]=holdfast-vault.service)
 for pkg in "${!unit[@]}"; do
   for s in postinstall preremove; do
     sed -e "s/@PACKAGE@/$pkg/g" -e "s/@UNIT@/${unit[$pkg]}/g" "packaging/$s.sh.in" >"$work/scripts/$s-$pkg.sh"
@@ -31,12 +34,13 @@ for pkg in "${!unit[@]}"; do
 done
 
 # The configs' ${...} are filled in here: nfpm expands variables in some fields only.
-for pkg in holdfast-restic holdfast-agent holdfast-server holdfast-cli holdfast-freshness; do
+for pkg in holdfast-restic holdfast-agent holdfast-server holdfast-cli holdfast-freshness holdfast-vault; do
   cfg="packaging/nfpm-${pkg#holdfast-}.yaml"
   sed -e "s#packaging/scripts/postinstall.sh#$work/scripts/postinstall-$pkg.sh#" \
       -e "s#packaging/scripts/preremove.sh#$work/scripts/preremove-$pkg.sh#" \
       -e "s#\${HOLDFAST_VERSION}#$HOLDFAST_VERSION#g" -e "s#\${HOLDFAST_MAINTAINER}#$HOLDFAST_MAINTAINER#g" \
-      -e "s#\${RESTIC_VERSION}#$RESTIC_VERSION#g" -e "s#\${RESTIC_BINARY}#$work/restic#g" "$cfg" >"$work/$pkg.yaml"
+      -e "s#\${RESTIC_VERSION}#$RESTIC_VERSION#g" -e "s#\${RESTIC_BINARY}#$work/restic#g" \
+      -e "s#\${RCLONE_BINARY}#$work/rclone#g" "$cfg" >"$work/$pkg.yaml"
   for fmt in deb rpm; do
     docker run --rm -u "$(id -u):$(id -g)" -v "$PWD:$PWD" -v "$work:$work" -w "$PWD" \
       "$NFPM_IMAGE" package --config "$work/$pkg.yaml" --packager "$fmt" --target dist/ >/dev/null

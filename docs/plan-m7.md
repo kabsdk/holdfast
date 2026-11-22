@@ -92,6 +92,35 @@ rollback, escrow, size, audit log, sessions, UI, API and CLI are holdfast-server
   removed in A is marked Retired; Exclude and Match primary are vault actions; the vault changes only a job's retention;
 - what holdfast-server shows of agents, enrollment, Back up now and restores is not in the vault's UI; its chrome is red.
 
+Details settled while building it, within the decisions above (spec §3.7 has the whole of it):
+- **holdfast-vault is its own binary and package**, `cmd/holdfast-vault`, sharing holdfast-server's main
+  (`internal/serverd`), so a machine can run both. It refuses settings without `role: vault`, and holdfast-server
+  refuses them with it. Its defaults are `:8444`, `/var/lib/holdfast-vault` and `/run/holdfast-vault/api.sock`;
+  `holdfast --vault` is its CLI.
+- **The vault grants a restore by itself**, on its next sync, when it holds the copy and the host's restore key; it
+  refuses otherwise, and both programs audit it. A restore from a vault is never in place, as a restore from another
+  host's repository (plan-m6 §2.2). It is agent protocol 3: the agent needs no `allow_other_hosts` for its own data.
+- **Site A works out what a vault wants**, from its own snapshots of the jobs the vault copies and the copies the
+  vault reports, rather than the vault saying it. The hold then holds while the vault is down, or while site B's
+  storage fails and the vault's copy hangs in restic's retries for many minutes: the e2e test found that a list the
+  vault reported went stale then. A copy the vault deleted counts as wanted again, which holds the original at most
+  until it is 7 days old.
+- **Syncing and copying are two loops**, for the same reason: a hanging copy must not stop the reports or the
+  grants.
+- **"Deleted in primary" is a deletion an admin asked for** (Delete, Delete now), not a forget by retention.
+- **The vault rotates no passwords** and adds no hosts: rotation is for a compromised host, which is site A's to do.
+- **The vault checks each copied repository once a day**, after a copy, as agents do theirs.
+
+### Progress
+
+| Part | State |
+| --- | --- |
+| Source side: vault add/list/remove, sync and grant, the hold, restore from a vault | built; unit tests |
+| Vault role: jobs from the source, copies, retention, Exclude, Match primary, O101, grants, daily check | built; unit tests |
+| CLI, UI, metrics, alert rules (with promtool tests), packages | built |
+| e2e: copies, the hold, Deleted in primary, Delete here too, not copied again, Exclude, restore from B, copies with site A's server down | see below |
+| Lab: site B's bucket and the vault on hfsrv, a restore from B | to do |
+
 ## 3. Tests
 
 - **e2e:** two MinIO buckets as sites A and B; the vault copies, keeps its retention, prunes, Delete here too, Exclude,

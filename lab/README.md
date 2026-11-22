@@ -313,6 +313,21 @@ denied`. A dump's file has no SELinux label in its snapshot, so restic tried to 
 SELinux refuses. A dump's restore, and a restore from another host, now leave that label alone
 (`--exclude-xattr security.selinux`); other restores still restore labels exactly, as the fidelity test checks.
 
+### M7's lab test: the vault
+
+Then `lab/lab test m1` runs `lab/test-vault.sh` (plan-m7 §3). The lab has one RGW, so **site B is a second bucket on
+it**, `holdfast-offsite`, not another realm or cluster as docs/storage.md recommends; and **holdfast-vault runs on hfsrv**,
+beside holdfast-server, with a database of its own there, `holdfast_vault`. It:
+- makes the vault's keys once in the lab's state: `holdfast-vault-read` (site A, read only, `repos/`, in site A's bucket
+  policy through `/root/hf-lab/readers`), `holdfast-vault-maint` (site B's maintenance key) and `hfb-<vm>` (each host's
+  restore key in site B), and lays site B's bucket out with `lab/rgw-vault-layout.sh`;
+- registers the vault on site A (`holdfast vault add site-b`, the key on stdin; again on each run, so the token is
+  new), writes `/etc/holdfast-vault/vault.yaml` (poll 30s) and starts `holdfast-vault.service`;
+- waits for each agent's newest fidelity snapshot to be copied, made by Holdfast, and for site A's host view to show it;
+- gives one VM's restore key to the vault (`HF_VAULT_VM`, default the first agent), restores the copy from site B
+  through that agent (`holdfast restore --from-vault site-b --wait`), and compares it with the fixture
+  (`hf-fidelity compare`, 13 properties).
+
 **What the run found in the product.** Both bugs are fixed; see `docs/plan-m2.md`.
 - The agent and the server now default `restic_bin` to `/usr/libexec/holdfast/restic`.
 - A repository Holdfast initialises, the first time or again, has its keys recorded as known, and the event is

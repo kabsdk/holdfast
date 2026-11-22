@@ -22,6 +22,8 @@
 # that is missing is made with that key, and one that lacks it is given it. No key is printed.
 # Plain RGW users, no account: the bucket-policy grant is what lets the maintenance user read the host's
 # objects (docs/storage.md, "If B003 fails").
+# A vault's read user (M7, docs/storage.md "The vault's keys"): each line "<user>" of /root/hf-lab/readers, with its
+# key in /root/hf-lab/<user>.env, may list the bucket and read repos/, and nothing else. lab/test-vault.sh writes it.
 set -euo pipefail
 keep=0
 case $# in
@@ -51,7 +53,15 @@ if [[ -f hosts ]]; then
 		[[ -z $u || $u == \#* ]] || hosts+=("$u $f")
 	done <hosts
 fi
-for h in "${hosts[@]}"; do
+readers=()
+if [[ -f readers ]]; then
+	while read -r u _; do
+		[[ -z $u || $u == \#* ]] || readers+=("$u")
+	done <readers
+fi
+users=("${hosts[@]}")
+for u in "${readers[@]}"; do users+=("$u repos"); done
+for h in "${users[@]}"; do
 	read -r u f <<<"$h"
 	[[ $u =~ ^[a-z0-9][a-z0-9-]*$ && $f =~ ^[a-z0-9][a-z0-9.-]*$ ]] || { echo "refused: '$u $f' is not '<user> <fqdn>' (/root/hf-lab/hosts)" >&2; exit 1; }
 	[[ -s $u.env ]] || { echo "refused: no key for $u: /root/hf-lab/$u.env is missing" >&2; exit 1; }
@@ -112,7 +122,9 @@ as holdfast-bucket-owner aws --endpoint-url "$RGW" s3api put-bucket-lifecycle-co
 # The maintenance statements, then docs/storage.md's four host statements for each host user, on its own prefix.
 python3 -I -c '
 import json, sys
-b, hosts = sys.argv[1], [h.split() for h in sys.argv[2:]]
+b, rest = sys.argv[1], sys.argv[2:]
+hosts = [h.split() for h in rest if not h.startswith("reader:")]
+readers = [h[len("reader:"):] for h in rest if h.startswith("reader:")]
 m = {"AWS": ["arn:aws:iam:::user/holdfast-maint"]}
 st = [
     {"Sid": "MaintBucket", "Effect": "Allow", "Principal": m,
@@ -139,9 +151,17 @@ for user, fqdn in hosts:
         {"Sid": "HostLocks" + sid, "Effect": "Allow", "Principal": h, "Action": ["s3:DeleteObject"],
          "Resource": [f"arn:aws:s3:::{b}/{p}/locks/*"]},
     ]
+for user in readers:
+    r, sid = {"AWS": [f"arn:aws:iam:::user/{user}"]}, "".join(w.capitalize() for w in user.split("-"))
+    st += [
+        {"Sid": "ReaderBucket" + sid, "Effect": "Allow", "Principal": r, "Action": ["s3:GetBucketLocation", "s3:ListBucket"],
+         "Resource": [f"arn:aws:s3:::{b}"]},
+        {"Sid": "ReaderObjects" + sid, "Effect": "Allow", "Principal": r, "Action": ["s3:GetObject"], "Resource": [f"arn:aws:s3:::{b}/repos/*"]},
+    ]
 json.dump({"Version": "2012-10-17", "Statement": st}, sys.stdout, indent=1)
 print()
-' "$B" "${hosts[@]}" >documented-policy.json </dev/null
+' "$B" "${hosts[@]}" "${readers[@]/#/reader:}" >documented-policy.json </dev/null
 as holdfast-bucket-owner aws --endpoint-url "$RGW" s3api put-bucket-policy --bucket "$B" --policy file://documented-policy.json
 echo "bucket $B: owner $(radosgw-admin bucket stats --bucket "$B" </dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["owner"])'), versioning $(as holdfast-bucket-owner aws --endpoint-url "$RGW" s3api get-bucket-versioning --bucket "$B" --query Status --output text)"
 echo "bucket policy: holdfast-maint, and the host users $(for h in "${hosts[@]}"; do read -r u f <<<"$h"; printf '%s (repos/%s/) ' "$u" "$f"; done)"
+((${#readers[@]} == 0)) || echo "bucket policy: the read users ${readers[*]} (repos/, read only)"

@@ -50,6 +50,7 @@ type Server struct {
 	runCtx    context.Context // set by Run; background work stops with it
 	refresher catalogueRefresher
 	maintBusy busyHosts  // one forget-or-prune at a time per host
+	repoLock  repoLocks  // a vault's copy, or a forget-or-prune: never both at once
 	oidc      oidcClient // the server's side of the OIDC provider (decision 034)
 	op        operating  // escrow, size and decommission (operating.go)
 	// minProtocol is the oldest agent protocol accepted (protocol.go): proto.MinProtocol, or a test's.
@@ -978,7 +979,7 @@ func (s *Server) Hosts(ctx context.Context) ([]HostView, error) {
 			if s.set.IsVault() {
 				// A vault's jobs lag rather than go stale: the source's agents back them up (decision 039).
 				jv.Primary, jv.Excluded, jv.Retired, jv.Stale = j.Primary, j.Excluded, j.Retired, false
-				if _, behind := s.copyState(h.FQDN); behind != nil {
+				if behind := s.copyState(h.FQDN); behind != nil {
 					if b, ok := behind[id]; ok {
 						secs := int64(b / time.Second)
 						jv.BehindS, jv.Lagging = &secs, !j.Excluded && !j.Retired && b > j.Schedule.StaleAfter()

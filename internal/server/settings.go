@@ -154,11 +154,19 @@ func LoadSettings(path string) (Settings, error) {
 }
 
 func (s *Settings) defaults() {
+	// A vault may share a machine with its site's holdfast-server: its defaults differ.
+	vault := s.Role == RoleVault
 	if s.Listen == "" {
 		s.Listen = ":8443"
+		if vault {
+			s.Listen = ":8444"
+		}
 	}
 	if s.StateDir == "" {
 		s.StateDir = "/var/lib/holdfast-server"
+		if vault {
+			s.StateDir = "/var/lib/holdfast-vault"
+		}
 	}
 	if s.DefaultZone == "" {
 		s.DefaultZone = "UTC"

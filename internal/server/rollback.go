@@ -215,6 +215,9 @@ func (s *Server) runRollback(r store.Rollback, pause bool) {
 		return
 	}
 	defer s.maintBusy.release(r.FQDN)
+	lock := s.repoLock.get(r.FQDN) // in a vault, a copy that runs finishes first
+	lock.Lock()
+	defer lock.Unlock()
 
 	if pause {
 		id, err := s.pauseAgent(ctx, r.FQDN, r.Actor)

@@ -610,8 +610,8 @@
     lab_deploy: false
     is_server: "{{ inventory_hostname in groups['server'] }}"
     is_debian: "{{ images[vms[inventory_hostname].image].family == 'debian' }}"
-    hf_packages: "{{ ['holdfast-restic', 'holdfast-cli', 'holdfast-server', 'holdfast-freshness'] if is_server else ['holdfast-restic', 'holdfast-agent'] }}"
-    hf_units: "{{ ['holdfast-server.service', 'holdfast-freshness.service'] if is_server else ['holdfast-agent.service'] }}"
+    hf_packages: "{{ ['holdfast-restic', 'holdfast-cli', 'holdfast-server', 'holdfast-freshness', 'holdfast-vault'] if is_server else ['holdfast-restic', 'holdfast-agent'] }}"
+    hf_units: "{{ ['holdfast-server.service', 'holdfast-freshness.service', 'holdfast-vault.service'] if is_server else ['holdfast-agent.service'] }}"
     hf_version: "{{ hostvars['localhost'].lab_pkg_version }}"
     hf_suffix: "{{ ('_' ~ hf_version ~ '_amd64.deb') if is_debian else ('-' ~ hf_version ~ '.x86_64.rpm') }}"
     hf_files: "{{ hf_packages | product([hf_suffix]) | map('join') | list }}"

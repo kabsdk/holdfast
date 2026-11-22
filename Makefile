@@ -17,6 +17,7 @@ S3_PASS     ?= hfroot-e2e-secret
 GO_IMAGE    ?= golang:1.26
 TOOLS       ?= $(HOME)/.cache/holdfast
 RESTIC_VERSION ?= 0.19.1
+RCLONE_VERSION ?= 1.76.0
 
 PROM_IMAGE  ?= prom/prometheus:v2.53.0
 
@@ -50,7 +51,7 @@ build:
 # The .deb and .rpm packages, with SHA256SUMS, in dist/ (packaging/build.sh). Unsigned (plan-m5 Q2).
 packages: build
 	@HOLDFAST_VERSION='$(HOLDFAST_VERSION)' RESTIC_VERSION=$(RESTIC_VERSION) NFPM_IMAGE=$(NFPM_IMAGE) \
-		RESTIC_BINARY=$$(scripts/fetch-restic.sh $(RESTIC_VERSION)) bash packaging/build.sh
+		RESTIC_BINARY=$$(scripts/fetch-restic.sh $(RESTIC_VERSION)) RCLONE_BINARY=$$(scripts/fetch-rclone.sh $(RCLONE_VERSION)) bash packaging/build.sh
 
 fmt:
 	gofmt -w ./cmd ./internal
@@ -98,9 +99,10 @@ browser-up:
 browser-down:
 	-docker rm -f $(BROWSER_NAME)
 
-# restic (checksum-verified) and mc (taken from the pinned client image) for the e2e tests.
+# restic and rclone (checksum-verified) and mc (taken from the pinned client image) for the e2e tests.
 tools:
 	@scripts/fetch-restic.sh $(RESTIC_VERSION) >/dev/null
+	@scripts/fetch-rclone.sh $(RCLONE_VERSION) >/dev/null
 	@test -x $(TOOLS)/mc || { id=$$(docker create $(MC_IMAGE)); docker cp $$id:/usr/bin/mc $(TOOLS)/mc; docker rm $$id >/dev/null; }
 
 # The end-to-end suite, as root in a privileged container (the metadata tests need root), on an ext4
@@ -117,6 +119,6 @@ e2e: tools pg-up minio-up authelia-up browser-up e2e-image
 		-v $(TOOLS):/tools:ro -e TMPDIR=/work -e GOFLAGS=-buildvcs=false \
 		-e "HOLDFAST_TEST_PG=$(HOLDFAST_TEST_PG)" -e HOLDFAST_S3_ENDPOINT=http://127.0.0.1:$(MINIO_PORT) \
 		-e HOLDFAST_S3_ROOT_USER=$(S3_USER) -e HOLDFAST_S3_ROOT_PASSWORD=$(S3_PASS) \
-		-e HOLDFAST_RESTIC=/tools/restic-$(RESTIC_VERSION) -e HOLDFAST_MC=/tools/mc \
+		-e HOLDFAST_RESTIC=/tools/restic-$(RESTIC_VERSION) -e HOLDFAST_MC=/tools/mc -e HOLDFAST_RCLONE=/tools/rclone-$(RCLONE_VERSION) \
 		-e HOLDFAST_OIDC_DIR=/tools/authelia-e2e -e HOLDFAST_BROWSER=http://127.0.0.1:$(BROWSER_PORT) \
 		$(E2E_IMAGE) go test ./test/e2e/ -count=1 -v -timeout 60m $(E2E_ARGS)

@@ -1,0 +1,43 @@
+# holdfast-vault: off-site copies of another site's hosts (decision 039), with the pinned rclone it reads that site
+# through. Not enabled at install: write /etc/holdfast-vault/vault.yaml first (the example is
+# /usr/share/holdfast/vault.yaml.example). An upgrade restarts it if it runs; it migrates its database itself.
+name: holdfast-vault
+arch: amd64
+platform: linux
+version: ${HOLDFAST_VERSION}
+version_schema: none
+release: "1"
+section: admin
+priority: optional
+maintainer: ${HOLDFAST_MAINTAINER}
+homepage: https://github.com/kabsdk/holdfast
+description: |-
+  Holdfast vault
+   Off-site copies of another site's hosts, with restic copy, under their own retention.
+depends:
+  - holdfast-restic (= ${HOLDFAST_VERSION}-1)
+  - holdfast-cli (= ${HOLDFAST_VERSION}-1)
+overrides:
+  rpm:
+    depends:
+      - holdfast-restic = ${HOLDFAST_VERSION}-1
+      - holdfast-cli = ${HOLDFAST_VERSION}-1
+contents:
+  - src: bin/holdfast-vault
+    dst: /usr/bin/holdfast-vault
+    file_info: {mode: 0755}
+  - src: ${RCLONE_BINARY}
+    dst: /usr/libexec/holdfast/rclone
+    file_info: {mode: 0755}
+  - src: deploy/systemd/holdfast-vault.service
+    dst: /usr/lib/systemd/system/holdfast-vault.service
+    file_info: {mode: 0644}
+  - src: deploy/examples/vault.yaml
+    dst: /usr/share/holdfast/vault.yaml.example
+    file_info: {mode: 0644}
+  - dst: /etc/holdfast-vault
+    type: dir
+    file_info: {mode: 0700}
+scripts:
+  postinstall: packaging/scripts/postinstall.sh
+  preremove: packaging/scripts/preremove.sh

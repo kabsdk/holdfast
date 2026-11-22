@@ -92,14 +92,15 @@ func TestVaultSourceSide(t *testing.T) {
 	}, now); err != nil {
 		t.Fatal(err)
 	}
-	rep := proto.VaultSync{Hosts: []proto.VaultHostReport{{FQDN: fqdn, Pending: []string{young, old},
+	rep := proto.VaultSync{Hosts: []proto.VaultHostReport{{FQDN: fqdn,
 		Copies: []proto.VaultCopy{{ID: copyOfOld, Original: old, Time: now.Add(-10 * 24 * time.Hour), JobID: "etc"}},
 		Jobs:   []proto.VaultJobReport{{ID: "etc", Retention: job().Retention, Copies: 1}}}}}
 	if _, err := s.VaultSync(ctx, v, []byte(mustJSON(t, rep))); err != nil {
 		t.Fatal(err)
 	}
 	h, _ := s.Host(ctx, fqdn)
-	if len(h.Offsite) != 1 || h.Offsite[0].Vault != "site-b" || h.Offsite[0].Copies != 1 || h.Offsite[0].Pending != 2 {
+	// What it wants is worked out here, from this site's snapshots and the vault's copies: the young one.
+	if len(h.Offsite) != 1 || h.Offsite[0].Vault != "site-b" || h.Offsite[0].Copies != 1 || h.Offsite[0].Pending != 1 {
 		t.Fatalf("the host's off-site view: %+v", h.Offsite)
 	}
 

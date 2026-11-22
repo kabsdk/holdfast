@@ -137,12 +137,44 @@ func (s *Server) Vaults(ctx context.Context, a Actor) ([]VaultView, error) {
 				continue
 			}
 			v.Hosts++
-			v.Pending += len(h.Pending)
+			if w, err := s.wanted(ctx, h); err == nil {
+				v.Pending += len(w)
+			}
 			if h.CopyError != "" {
 				v.CopyErrors++
 			}
 		}
 		out = append(out, v)
+	}
+	return out, nil
+}
+
+// wanted returns the snapshots here, of the jobs a vault copies, that it holds no copy of: what it still wants, as
+// far as this site knows. A copy the vault deleted counts as wanted again, which holds the original back at most
+// until it is 7 days old.
+func (s *Server) wanted(ctx context.Context, h proto.VaultHostReport) ([]store.Snapshot, error) {
+	jobs := map[string]bool{}
+	for _, j := range h.Jobs {
+		if !j.Excluded && !j.Retired {
+			jobs[j.ID] = true
+		}
+	}
+	if len(jobs) == 0 {
+		return nil, nil
+	}
+	have := map[string]bool{}
+	for _, c := range h.Copies {
+		have[c.Original] = true
+	}
+	rows, err := s.st.Q().ListSnapshots(ctx, h.FQDN, store.SnapshotFilter{})
+	if err != nil {
+		return nil, err
+	}
+	var out []store.Snapshot
+	for _, r := range rows {
+		if jobs[r.JobID] && !have[r.ID] {
+			out = append(out, r)
+		}
 	}
 	return out, nil
 }
@@ -199,8 +231,9 @@ func (s *Server) offsiteByHost(ctx context.Context) map[string][]HostOffsite {
 			if jobs == nil {
 				jobs = []proto.VaultJobReport{}
 			}
+			w, _ := s.wanted(ctx, h)
 			out[h.FQDN] = append(out[h.FQDN], HostOffsite{Vault: r.Name, ReportedAt: r.ReportedAt, LastCopy: h.LastCopy, CopyError: h.CopyError,
-				Copies: len(h.Copies), Pending: len(h.Pending), Jobs: jobs})
+				Copies: len(h.Copies), Pending: len(w), Jobs: jobs})
 		}
 	}
 	return out
@@ -284,10 +317,15 @@ func (s *Server) vaultsWant(ctx context.Context, fqdn string) map[string]bool {
 	}
 	for _, r := range reports {
 		for _, h := range r.sync.Hosts {
-			if h.FQDN == fqdn {
-				for _, id := range h.Pending {
-					out[id] = true
-				}
+			if h.FQDN != fqdn {
+				continue
+			}
+			w, err := s.wanted(ctx, h)
+			if err != nil {
+				s.log.Warn("working out what a vault wants", "vault", r.Name, "host", fqdn, "err", err)
+			}
+			for _, sn := range w {
+				out[sn.ID] = true
 			}
 		}
 	}

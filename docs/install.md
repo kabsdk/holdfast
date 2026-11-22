@@ -10,6 +10,7 @@ signed yet (plan-m5 Q2): check them against `dist/SHA256SUMS` before you install
 | `holdfast-server` | `/usr/bin/holdfast-server`, `holdfast-server.service`, the example `server.yaml`, the alert rules and scripts | `holdfast-restic` and `holdfast-cli` of the same version |
 | `holdfast-cli` | `/usr/bin/holdfast` | |
 | `holdfast-freshness` | `/usr/bin/holdfast-freshness`, the storage witness, and its unit | |
+| `holdfast-vault` | `/usr/bin/holdfast-vault`, `holdfast-vault.service`, the example `vault.yaml`, and the pinned rclone at `/usr/libexec/holdfast/rclone` | `holdfast-restic` and `holdfast-cli` of the same version |
 
 The binaries are static, so the same packages run on Ubuntu, Debian, RHEL, Oracle Linux and their
 relatives. The lab installs them on Ubuntu, RHEL and Oracle Linux (`lab/README.md`).
@@ -29,13 +30,26 @@ Installing enables nothing, because each service needs its config first:
 - **An agent:** run the command `holdfast host add` printed, as root on the host:
   `holdfast-agent enroll --server … --fqdn … --code …`. Then `systemctl enable --now holdfast-agent`.
 - **The witness:** see `holdfast-freshness.service`'s comments.
+- **A vault**, in the other site (spec §3.7), with a PostgreSQL and a bucket of its own there:
+  1. on site A's server, as root: `holdfast vault add site-b --s3-key-file <site A read key>` (docs/storage.md). It
+     prints the vault's token once;
+  2. on the vault's machine: put the token alone in a root-only file, run `holdfast-vault keygen
+     /etc/holdfast-vault/credentials.key`, and write `/etc/holdfast-vault/vault.yaml` from
+     `/usr/share/holdfast/vault.yaml.example`: `role: vault`, site B's bucket and maintenance key, and `source:` with
+     site A's agent URL, its CA fingerprint and the token file;
+  3. `systemctl enable --now holdfast-vault`. Its CLI is `holdfast --vault`, as root on that machine;
+  4. for restores from site B, give each copied host its restore key: `holdfast --vault host set-key <fqdn>
+     --s3-key-file <key>`.
+
+  A vault may run on the same machine as its site's own holdfast-server; their ports, state and sockets differ.
 
 The agent's unit runs it at low CPU and I/O priority (`Nice=10`, `IOSchedulingClass=idle`), so a backup
 gives way to the host's own work.
 
 ## Upgrading
 
-**Upgrade the server first, then the agents, in any order and at any pace.** The agent sends its protocol
+**Upgrade the server first, then the agents, in any order and at any pace.** Upgrade a vault after its source's
+server. The agent sends its protocol
 version with every poll, and the server answers with the range it accepts:
 - a server accepts every agent from its `MinProtocol` on, so agents can be upgraded one by one, after it;
 - an agent that is too old is refused with that range, and logs "the server needs a newer agent". It keeps

@@ -23,11 +23,9 @@ type VaultSync struct {
 // VaultHostReport is what the vault has of one host.
 type VaultHostReport struct {
 	FQDN string `json:"fqdn"`
-	// Copies are the copies the vault holds now, newest first.
-	Copies []VaultCopy `json:"copies"`
-	// Pending are the source snapshots the vault wants and has not copied yet: the source's daily run holds them
-	// back for up to 7 days (decision 039).
-	Pending   []string         `json:"pending"`
+	// Copies are the copies the vault holds now. From them and its own snapshots the source works out what the vault
+	// still wants, which its daily run holds back for up to 7 days (decision 039), whether the vault copies or not.
+	Copies    []VaultCopy      `json:"copies"`
 	Jobs      []VaultJobReport `json:"jobs"`
 	LastCopy  *time.Time       `json:"last_copy,omitempty"`
 	CopyError string           `json:"copy_error,omitempty"`

@@ -98,6 +98,35 @@ the restore is done.
 ]}
 ```
 
+## The vault's keys (off-site copies, decision 039)
+
+A vault in site B (spec §3.7) needs three kinds of key, all made by the storage admins with their own tools:
+
+| Where | Key | May |
+| --- | --- | --- |
+| site A | the vault's read key, given to `holdfast vault add` on site A | read and list `repos/` in site A's bucket, and nothing else |
+| site B | the vault's maintenance key, in `vault.yaml` | what a maintenance key may in site B's bucket (above), with the same deny |
+| site B | one restore key per copied host, given with `holdfast --vault host set-key` | read and list `repos/<fqdn>/` in site B's bucket: as for a restore onto another host |
+
+The read key in site A:
+
+```json
+{"Version": "2012-10-17", "Statement": [
+  {"Effect": "Allow", "Action": ["s3:GetBucketLocation", "s3:ListBucket"], "Resource": ["arn:aws:s3:::holdfast"]},
+  {"Effect": "Allow", "Action": ["s3:GetObject"], "Resource": ["arn:aws:s3:::holdfast/repos/*"]}
+]}
+```
+
+- The vault reads site A through restic's `rclone:` backend with this key, and writes site B through `s3:` with its
+  own. restic takes one set of S3 credentials for both repositories of a copy, so this keeps the key that can write
+  site B out of site A (decision 039). Both are used with `--no-lock`: site A's key may not write a lock.
+- `holdfast vault add` tests the read key on one of site A's hosts (B014, B015).
+- Site B's bucket needs versioning and a lifecycle rule, as site A's: the vault tests B004 and B008–B012 with its
+  maintenance key, and each restore key with B014 and B015. A separate cluster for site B, or at least a separate
+  realm, is recommended; Holdfast cannot test that.
+- The restore key is given, with the repository's password, to the host's agent for each restore from site B. Make
+  a new one when a host's root should no longer read site B.
+
 ## If B003 fails: who owns an object
 
 On some S3 servers, an object belongs to the user who uploaded it, and other users cannot read it, even the

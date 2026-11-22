@@ -18,7 +18,9 @@
 #                            named) back up the metadata fixture and restore it through Holdfast, enrolling the agent
 #                            first, and compare the 13 properties; the table is in <state>/test-fidelity.txt. Then M6's
 #                            (lab/test-recovery.sh): the bare-metal runbook's first path on one VM, and the dump test with
-#                            each OS's PostgreSQL; the results are in <state>/test-recovery.txt
+#                            each OS's PostgreSQL; the results are in <state>/test-recovery.txt. Then M7's
+#                            (lab/test-vault.sh): holdfast-vault on hfsrv, site B a second bucket on the RGW, each
+#                            agent's snapshot copied there, and one restored from it; in <state>/test-vault.txt
 #   status <lab> [--json]    the lab's state: absent, off, ready or broken, with its VMs, what each answered, the RGW
 #                            endpoint, the credentials' files and why it is not ready
 #   ssh <lab> <vm> [command] SSH to a VM as root with the lab's key
@@ -269,6 +271,8 @@ test)
 	bash lab/test-fidelity.sh "$lab" "$@" || rc=$?
 	step "M6: the bare-metal runbook's first path and the dump test: lab/test-recovery.sh $lab $*"
 	bash lab/test-recovery.sh "$lab" "$@" || rc=1
+	step "M7: the vault, site B's copies and a restore from them: lab/test-vault.sh $lab $*"
+	bash lab/test-vault.sh "$lab" "$@" || rc=1
 	exit $rc ;;
 isolation)
 	out=$(probe)

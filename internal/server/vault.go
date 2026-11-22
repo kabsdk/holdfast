@@ -46,12 +46,12 @@ const (
 	sourceAlias = "hfa" // rclone's name for site A's S3
 )
 
-// vaultState is what the copier knows between its runs: what it still wants of each host, how far each job is
-// behind, and when each repository was last checked. It is worked out again from the repositories on every run.
+// vaultState is what the copier knows between its runs: how far each job is behind, and when each repository was last
+// checked. It is worked out again from the repositories on every run.
 type vaultState struct {
 	mu      sync.Mutex
 	client  *http.Client
-	pending map[string][]string                 // fqdn → the source snapshots wanted and not copied yet
+	feed    *proto.VaultFeed                    // the latest, from the source or the database
 	behind  map[string]map[string]time.Duration // fqdn → job → how far its newest copy is behind the source's newest
 	checked map[string]time.Time                // fqdn → the last daily check
 }
@@ -62,13 +62,29 @@ var vaultSync = Actor{Name: vaultActor, Source: "system"}
 // Version is set at build time, as the agent's is.
 var Version = "dev"
 
-// vaultLoop syncs and copies every source.poll, from when the vault starts.
+// vaultLoop syncs, and copies, every source.poll from when the vault starts. They are two loops: a copy can take
+// hours, or hang while this site's storage fails and restic retries, and the source must still get the reports, by
+// which it holds back what the vault has not copied, and the grants.
 func (s *Server) vaultLoop(ctx context.Context) {
 	if !s.set.IsVault() {
 		return
 	}
+	go s.every(ctx, s.syncOnce)
+	for s.currentFeed() == nil { // the first copy right after the first sync
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(time.Second):
+		}
+	}
+	s.every(ctx, s.copyAll)
+}
+
+func (s *Server) every(ctx context.Context, f func(context.Context)) {
 	for {
-		s.vaultTick(ctx)
+		if s.isLeader() {
+			f(ctx)
+		}
 		select {
 		case <-ctx.Done():
 			return
@@ -77,13 +93,14 @@ func (s *Server) vaultLoop(ctx context.Context) {
 	}
 }
 
-// VaultTick is one sync-and-copy, which the loop runs every source.poll. Tests call it directly.
-func (s *Server) VaultTick(ctx context.Context) { s.vaultTick(ctx) }
+func (s *Server) currentFeed() *proto.VaultFeed {
+	s.vault.mu.Lock()
+	defer s.vault.mu.Unlock()
+	return s.vault.feed
+}
 
-func (s *Server) vaultTick(ctx context.Context) {
-	if !s.isLeader() {
-		return
-	}
+// syncOnce reports to the source and takes its feed: hosts and jobs, then the grants.
+func (s *Server) syncOnce(ctx context.Context) {
 	feed, fresh, err := s.syncSource(ctx)
 	if err != nil {
 		s.log.Warn("the sync with the source failed; copying from its last feed", "source", s.set.Source.Server, "err", err)
@@ -91,23 +108,28 @@ func (s *Server) vaultTick(ctx context.Context) {
 	if feed == nil {
 		return
 	}
+	s.vault.mu.Lock()
+	s.vault.feed = feed
+	s.vault.mu.Unlock()
 	if err := s.applyFeed(ctx, *feed); err != nil {
 		s.log.Error("applying the source's feed", "err", err)
 	}
 	if fresh {
 		s.grantRequests(ctx, *feed)
 	}
+}
+
+// copyAll copies every host of the latest feed, one at a time.
+func (s *Server) copyAll(ctx context.Context) {
+	feed := s.currentFeed()
+	if feed == nil {
+		return
+	}
 	for _, h := range feed.Hosts {
 		if ctx.Err() != nil {
 			return
 		}
 		s.copyHost(ctx, feed.Source, h)
-	}
-	// The report again, so the source sees this run's copies now rather than a poll later.
-	if fresh {
-		if _, _, err := s.syncSource(ctx); err != nil {
-			s.log.Warn("reporting to the source", "err", err)
-		}
 	}
 }
 
@@ -419,13 +441,15 @@ func (s *Server) copyHost(ctx context.Context, src proto.VaultSource, fh proto.V
 		}
 	}
 	if len(jobs) == 0 {
-		s.setCopyState(fh.FQDN, nil, nil)
+		s.setCopyState(fh.FQDN, nil)
 		return
 	}
-	if !s.maintBusy.acquire(fh.FQDN) {
-		return // the next run copies it
+	// Not while a forget or prune waits or runs: the next run copies it.
+	lock := s.repoLock.get(fh.FQDN)
+	if s.maintBusy.isBusy(fh.FQDN) || !lock.TryLock() {
+		return
 	}
-	defer s.maintBusy.release(fh.FQDN)
+	defer lock.Unlock()
 	ctx, cancel := context.WithTimeout(ctx, copyTimeout)
 	defer cancel()
 	err = s.copyOnce(ctx, src, fh, jobs)
@@ -458,6 +482,8 @@ func (s *Server) copyOnce(ctx context.Context, src proto.VaultSource, fh proto.V
 	if err != nil {
 		return fmt.Errorf("listing the source's snapshots: %w", err)
 	}
+	// How far behind each job is, before the copy too: so it shows while this site's storage fails.
+	s.updateCopyState(ctx, fh.FQDN, listed, jobs)
 	created, err := b.InitFrom(ctx)
 	if err != nil {
 		return fmt.Errorf("initialising the repository in this site with the source's chunker parameters: %w", err)
@@ -558,8 +584,7 @@ func (s *Server) recordCopies(ctx context.Context, fqdn string, want []restic.Sn
 	}
 }
 
-// updateCopyState works out, from the source's listing and the catalogue, what the host still wants and how far
-// behind each job is.
+// updateCopyState works out, from the source's listing and the catalogue, how far behind each job is.
 func (s *Server) updateCopyState(ctx context.Context, fqdn string, listed []restic.Snapshot, jobs map[string]bool) {
 	known, err := s.st.Q().ListSnapshots(ctx, fqdn, store.SnapshotFilter{WithGone: true})
 	if err != nil {
@@ -576,7 +601,6 @@ func (s *Server) updateCopyState(ctx context.Context, fqdn string, listed []rest
 			newestCopy[k.JobID] = k.Time
 		}
 	}
-	pending := []string{}
 	newest, oldestWanted := map[string]time.Time{}, map[string]time.Time{}
 	for _, sn := range listed {
 		job := jobOf(sn.Tags)
@@ -587,7 +611,6 @@ func (s *Server) updateCopyState(ctx context.Context, fqdn string, listed []rest
 			newest[job] = sn.Time
 		}
 		if !copied[sn.ID] {
-			pending = append(pending, sn.ID)
 			if o, ok := oldestWanted[job]; !ok || sn.Time.Before(o) {
 				oldestWanted[job] = sn.Time
 			}
@@ -605,22 +628,22 @@ func (s *Server) updateCopyState(ctx context.Context, fqdn string, listed []rest
 			behind[job] = now.Sub(oldestWanted[job]) // nothing copied yet: how long the oldest has waited
 		}
 	}
-	s.setCopyState(fqdn, pending, behind)
+	s.setCopyState(fqdn, behind)
 }
 
-func (s *Server) setCopyState(fqdn string, pending []string, behind map[string]time.Duration) {
+func (s *Server) setCopyState(fqdn string, behind map[string]time.Duration) {
 	s.vault.mu.Lock()
 	defer s.vault.mu.Unlock()
-	if s.vault.pending == nil {
-		s.vault.pending, s.vault.behind = map[string][]string{}, map[string]map[string]time.Duration{}
+	if s.vault.behind == nil {
+		s.vault.behind = map[string]map[string]time.Duration{}
 	}
-	s.vault.pending[fqdn], s.vault.behind[fqdn] = pending, behind
+	s.vault.behind[fqdn] = behind
 }
 
-func (s *Server) copyState(fqdn string) ([]string, map[string]time.Duration) {
+func (s *Server) copyState(fqdn string) map[string]time.Duration {
 	s.vault.mu.Lock()
 	defer s.vault.mu.Unlock()
-	return s.vault.pending[fqdn], s.vault.behind[fqdn]
+	return s.vault.behind[fqdn]
 }
 
 // dailyCheck checks a copied repository once a day, reading 1/check_cycle_days of its data, as an agent checks its
@@ -679,8 +702,8 @@ func (s *Server) vaultReport(ctx context.Context) (proto.VaultSync, error) {
 		if err != nil {
 			return rep, err
 		}
-		pending, behind := s.copyState(h.FQDN)
-		hr := proto.VaultHostReport{FQDN: h.FQDN, Copies: []proto.VaultCopy{}, Pending: append([]string{}, pending...), Jobs: []proto.VaultJobReport{},
+		behind := s.copyState(h.FQDN)
+		hr := proto.VaultHostReport{FQDN: h.FQDN, Copies: []proto.VaultCopy{}, Jobs: []proto.VaultJobReport{},
 			LastCopy: h.CopiedAt, CopyError: h.CopyError, Retired: len(hc.Jobs) > 0}
 		count, newest := map[string]int{}, map[string]time.Time{}
 		for _, r := range rows {

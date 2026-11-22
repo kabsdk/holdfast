@@ -214,6 +214,7 @@ type env struct {
 	// escrowKey is the offline age key: server.yaml names its recipient, so the server writes each host's
 	// escrow file (decision 036), and only this key reads them.
 	escrowKey *age.X25519Identity
+	maintKey  string // a vault's maintenance key's access key ID (vault_test.go)
 }
 
 // envOpts change one test environment.

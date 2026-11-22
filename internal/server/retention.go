@@ -341,6 +341,32 @@ func (b *busyHosts) release(fqdn string) {
 	delete(b.busy, fqdn)
 }
 
+func (b *busyHosts) isBusy(fqdn string) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.busy[fqdn]
+}
+
+// repoLocks are one mutex per repository, which a vault's copy (vault.go) and a forget or prune both take: a copy
+// runs with --no-lock, so restic's own lock does not keep a prune away from it. A forget or prune waits for a copy
+// that runs; a copy is skipped while one waits or runs.
+type repoLocks struct {
+	mu sync.Mutex
+	m  map[string]*sync.Mutex
+}
+
+func (r *repoLocks) get(fqdn string) *sync.Mutex {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.m == nil {
+		r.m = map[string]*sync.Mutex{}
+	}
+	if r.m[fqdn] == nil {
+		r.m[fqdn] = &sync.Mutex{}
+	}
+	return r.m[fqdn]
+}
+
 // RunStarted is a forget-and-prune that started in the background. Its outcome is in the list of prunes.
 type RunStarted struct {
 	Run  int64  `json:"run"`
@@ -368,6 +394,9 @@ type pickFunc func(ctx context.Context) ([]string, error)
 // prunes it if something waits for a prune. It records the outcome on the run.
 func (s *Server) runMaintenance(id int64, fqdn, kind string, a Actor, pick pickFunc) store.MaintenanceRun {
 	defer s.maintBusy.release(fqdn)
+	lock := s.repoLock.get(fqdn)
+	lock.Lock() // a vault's copy that runs finishes first
+	defer lock.Unlock()
 	ctx, cancel := context.WithTimeout(s.background(), retentionTimeout)
 	defer cancel()
 	run := store.MaintenanceRun{ID: id, FQDN: fqdn, Kind: kind, Actor: a.Name, Status: "success", Forgotten: []string{}}
