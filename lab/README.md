@@ -328,6 +328,21 @@ beside holdfast-server, with a database of its own there, `holdfast_vault`. It:
   through that agent (`holdfast restore --from-vault site-b --wait`), and compares it with the fixture
   (`hf-fidelity compare`, 13 properties).
 
+**Result, 2026-11-22** (M7, Holdfast 0.5.0~dev52, restic 0.19.1, rclone 1.76.0, Ceph 19.2.3; the first run):
+
+```
+PASS   storage                        site B is bucket holdfast-offsite; the vault's read user may only read site A's repos/
+PASS   vault set-up                   registered on site A; holdfast-vault runs on hfsrv, copying every 30s
+PASS   ub24 copy                      9d73fc17 copied to site B as 2516200b; site A sees 17 copies
+PASS   el9 copy                       741a4159 copied to site B as 20527dc6; site A sees 14 copies
+PASS   ol9 copy                       ddd9d0b8 copied to site B as 2a603427; site A sees 14 copies
+PASS   ub24 restore from B            restored from site B into /var/restore/20261122-130616-root-2516200b: 13 of 13 properties kept
+```
+
+Each host's whole history was copied (the fidelity and dump jobs' snapshots of earlier runs), site B's storage passed its
+checks with the vault's maintenance key and ub24's restore key, the vault logged no warning, and no job was behind.
+el9 and ol9 show `restore_key`: only ub24 was given one.
+
 **What the run found in the product.** Both bugs are fixed; see `docs/plan-m2.md`.
 - The agent and the server now default `restic_bin` to `/usr/libexec/holdfast/restic`.
 - A repository Holdfast initialises, the first time or again, has its keys recorded as known, and the event is

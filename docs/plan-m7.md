@@ -118,8 +118,12 @@ Details settled while building it, within the decisions above (spec §3.7 has th
 | Source side: vault add/list/remove, sync and grant, the hold, restore from a vault | built; unit tests |
 | Vault role: jobs from the source, copies, retention, Exclude, Match primary, O101, grants, daily check | built; unit tests |
 | CLI, UI, metrics, alert rules (with promtool tests), packages | built |
-| e2e: copies, the hold, Deleted in primary, Delete here too, not copied again, Exclude, restore from B, copies with site A's server down | see below |
-| Lab: site B's bucket and the vault on hfsrv, a restore from B | to do |
+| e2e: copies, the hold, Deleted in primary, Delete here too, not copied again, Exclude, restore from B, copies with site A's server down | passes (`TestVault`, 82 s) |
+| Lab: site B's bucket and the vault on hfsrv, a restore from B | passes (`lab/test-vault.sh`, 6 of 6; lab/README.md) |
+
+**M7 is done** (2026-11-22): the full e2e suite passes (25 tests, 24 minutes), and `lab/lab test m1` passes
+end to end (fidelity 39 of 39, M6 4 of 4, the vault 6 of 6). The lab has one RGW, so its site B is a second bucket,
+not a second realm.
 
 ## 3. Tests
 
