@@ -49,7 +49,10 @@ func day(t *time.Time) string {
 }
 
 func pendingCmd() *cobra.Command {
-	return &cobra.Command{Use: "pending <fqdn>", Short: "What waits out the 7 days before it is forgotten: retention cuts and deletions", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, a []string) error {
+	return &cobra.Command{Use: "pending [fqdn]", Short: "What waits out the 7 days before it is forgotten; without a host, the retention cuts of every host", Args: cobra.MaximumNArgs(1), RunE: func(_ *cobra.Command, a []string) error {
+		if len(a) == 0 {
+			return retentionCuts()
+		}
 		var p struct {
 			Forget  []string      `json:"forget"`
 			Pending []pendingSnap `json:"pending"`
@@ -92,6 +95,51 @@ func pendingCmd() *cobra.Command {
 				fmt.Printf("job %s: %d snapshots that Holdfast did not make are left alone\n", j.JobID, n)
 			}
 		}
+		return nil
+	}}
+}
+
+// retentionCuts lists the retention cuts of the last 7 days, from the revisions.
+func retentionCuts() error {
+	var cuts []struct {
+		FQDN         string    `json:"fqdn"`
+		JobID        string    `json:"job_id"`
+		Revision     int64     `json:"revision"`
+		ChangedBy    string    `json:"changed_by"`
+		ChangedAt    time.Time `json:"changed_at"`
+		PrunableFrom time.Time `json:"prunable_from"`
+	}
+	raw, err := call("GET", "/api/v1/retention-cuts", nil, &cuts)
+	if err != nil {
+		return err
+	}
+	if asJSON {
+		printJSON(raw)
+		return nil
+	}
+	if len(cuts) == 0 {
+		fmt.Println("no retention cut is waiting out the 7 days")
+		return nil
+	}
+	w := table()
+	fmt.Fprintln(w, "HOST\tJOB\tREVISION\tBY\tCUT ON\tFROM THEN ON")
+	for _, c := range cuts {
+		fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%s\t%s\n", c.FQDN, c.JobID, c.Revision, c.ChangedBy, c.ChangedAt.Local().Format("2006-01-02 15:04"), c.PrunableFrom.Local().Format("2006-01-02 15:04"))
+	}
+	if err := w.Flush(); err != nil {
+		return err
+	}
+	fmt.Println("\nholdfast pending <fqdn> shows the snapshots that wait; holdfast job keep-longer brings the old retention back")
+	return nil
+}
+
+func settingsCmd() *cobra.Command {
+	return &cobra.Command{Use: "settings", Short: "What server.yaml says, without secrets (changing it needs root on the server)", Args: cobra.NoArgs, RunE: func(*cobra.Command, []string) error {
+		raw, err := call("GET", "/api/v1/settings", nil, nil)
+		if err != nil {
+			return err
+		}
+		printJSON(raw)
 		return nil
 	}}
 }

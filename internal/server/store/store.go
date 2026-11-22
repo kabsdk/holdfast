@@ -301,6 +301,30 @@ type Host struct {
 	CatalogueError       string     `json:"catalogue_error,omitempty"`
 	// PruneNeeded is set when snapshots were forgotten and not pruned yet (M3).
 	PruneNeeded bool `json:"prune_needed"`
+	// RemovedAt is when the host was removed (M4). It is retired once its agent has applied the empty
+	// config, or at once if it never enrolled.
+	RemovedAt *time.Time `json:"removed_at,omitempty"`
+}
+
+// MarkRemoved records that a host was removed. A host that never enrolled has no agent to tell, so it is
+// retired at once.
+func (q *Q) MarkRemoved(ctx context.Context, fqdn string, now time.Time) error {
+	_, err := q.db.Exec(ctx, `UPDATE hosts SET retired_at = $2, state = CASE WHEN state = 'awaiting_enrollment' THEN 'retired' ELSE state END
+		WHERE fqdn = $1`, fqdn, now)
+	return err
+}
+
+// RetireHost retires a removed host. Its agent's token stops working: only enrolled hosts' tokens do.
+func (q *Q) RetireHost(ctx context.Context, fqdn string) error {
+	_, err := q.db.Exec(ctx, `UPDATE hosts SET state = 'retired' WHERE fqdn = $1 AND retired_at IS NOT NULL`, fqdn)
+	return err
+}
+
+// ReviveHost brings a removed host back, waiting for a new enrollment. Its credentials and its catalogue
+// stay.
+func (q *Q) ReviveHost(ctx context.Context, fqdn string, rev int64) error {
+	_, err := q.db.Exec(ctx, `UPDATE hosts SET state = 'awaiting_enrollment', retired_at = NULL, added_revision = $2 WHERE fqdn = $1`, fqdn, rev)
+	return err
 }
 
 // CreateHost records a new host. A host that exists already (even retired) is refused.
@@ -313,7 +337,7 @@ func (q *Q) CreateHost(ctx context.Context, fqdn string, rev int64, now time.Tim
 }
 
 const hostCols = `fqdn, state, added_revision, added_at, connected_at, first_backup_at, storage_checked_at, storage_findings,
-	storage_noncurrent_days, catalogue_refreshed_at, catalogue_error, prune_needed`
+	storage_noncurrent_days, catalogue_refreshed_at, catalogue_error, prune_needed, retired_at`
 
 func scanHost(row pgx.Row) (Host, error) {
 	var h Host
@@ -321,7 +345,7 @@ func scanHost(row pgx.Row) (Host, error) {
 	var findings []byte
 	var days int
 	err := row.Scan(&h.FQDN, &h.State, &h.AddedRevision, &h.AddedAt, &h.ConnectedAt, &h.FirstBackupAt, &checked, &findings,
-		&days, &h.CatalogueRefreshedAt, &h.CatalogueError, &h.PruneNeeded)
+		&days, &h.CatalogueRefreshedAt, &h.CatalogueError, &h.PruneNeeded, &h.RemovedAt)
 	if err == nil && checked != nil {
 		h.Storage = &storage.Report{CheckedAt: *checked, Findings: []storage.Finding{}, NoncurrentDays: days}
 		if len(findings) > 0 {
@@ -640,6 +664,8 @@ type Event struct {
 	ResticExit   int               `json:"restic_exit"`
 	Error        string            `json:"error,omitempty"`
 	Detail       map[string]string `json:"detail,omitempty"`
+	// InitiatedBy is who asked for the run, such as "Back up now"; empty for a scheduled one (M4).
+	InitiatedBy string `json:"initiated_by,omitempty"`
 }
 
 // InsertEvent stores an event once. It returns false if the event was stored before (a re-sent
@@ -715,14 +741,29 @@ func (q *Q) ListEvents(ctx context.Context, fqdn string, limit int) ([]Event, er
 	return q.queryEvents(ctx, `WHERE fqdn = $1 ORDER BY finished_at DESC, received_at DESC LIMIT $2`, fqdn, limit)
 }
 
+// RestoreEvent returns the result of the restore that a command asked for, or ErrNotFound while it has not
+// been reported.
+func (q *Q) RestoreEvent(ctx context.Context, fqdn, commandID string) (Event, error) {
+	evs, err := q.queryEvents(ctx, `WHERE fqdn = $1 AND command_id = $2 AND kind = 'restore' ORDER BY finished_at DESC LIMIT 1`, fqdn, commandID)
+	if err != nil {
+		return Event{}, err
+	}
+	if len(evs) == 0 {
+		return Event{}, ErrNotFound
+	}
+	return evs[0], nil
+}
+
 // ListRestores returns the restores of every host, newest first (spec §5.5).
 func (q *Q) ListRestores(ctx context.Context, limit int) ([]Event, error) {
 	return q.queryEvents(ctx, `WHERE kind = 'restore' ORDER BY finished_at DESC, received_at DESC LIMIT $1`, limit)
 }
 
 func (q *Q) queryEvents(ctx context.Context, where string, args ...any) ([]Event, error) {
+	// Who started a run: the person whose command it ran, or nobody for a scheduled one.
 	rows, err := q.db.Query(ctx, `SELECT fqdn, id, kind, job_id, command_id, status, scheduled_for, spread_delay_s, started_at, finished_at,
-		revision, snapshot_id, files_new, files_changed, bytes_added, total_files, total_bytes, restic_exit, error, detail
+		revision, snapshot_id, files_new, files_changed, bytes_added, total_files, total_bytes, restic_exit, error, detail,
+		COALESCE((SELECT c.created_by FROM commands c WHERE c.id::text = events.command_id AND events.command_id <> ''), '')
 		FROM events `+where, args...)
 	if err != nil {
 		return nil, err
@@ -733,7 +774,8 @@ func (q *Q) queryEvents(ctx context.Context, where string, args ...any) ([]Event
 		var e Event
 		var detail []byte
 		if err := rows.Scan(&e.FQDN, &e.ID, &e.Kind, &e.JobID, &e.CommandID, &e.Status, &e.ScheduledFor, &e.SpreadDelayS, &e.Started, &e.Finished,
-			&e.Revision, &e.SnapshotID, &e.FilesNew, &e.FilesChanged, &e.BytesAdded, &e.TotalFiles, &e.TotalBytes, &e.ResticExit, &e.Error, &detail); err != nil {
+			&e.Revision, &e.SnapshotID, &e.FilesNew, &e.FilesChanged, &e.BytesAdded, &e.TotalFiles, &e.TotalBytes, &e.ResticExit, &e.Error, &detail,
+			&e.InitiatedBy); err != nil {
 			return nil, err
 		}
 		if len(detail) > 2 {
@@ -937,13 +979,28 @@ func (q *Q) Audit(ctx context.Context, e AuditEntry) error {
 
 // ListAudit returns the newest entries, optionally for one host.
 func (q *Q) ListAudit(ctx context.Context, fqdn string, limit int) ([]AuditEntry, error) {
+	return q.ListAuditFiltered(ctx, AuditFilter{FQDN: fqdn, Limit: limit})
+}
+
+// AuditFilter narrows ListAuditFiltered.
+type AuditFilter struct {
+	FQDN   string   // one host; empty for all
+	Action string   // one action; empty for all
+	Hosts  []string // nil: every entry; otherwise only these hosts' entries, and none that belong to no host
+	Before int64    // entries older than this ID, for paging; 0 for the newest
+	Limit  int
+}
+
+// ListAuditFiltered returns audit entries, newest first.
+func (q *Q) ListAuditFiltered(ctx context.Context, f AuditFilter) ([]AuditEntry, error) {
 	rows, err := q.db.Query(ctx, `SELECT id, at, actor, source, action, fqdn, job_id, revision, detail FROM audit_log
-		WHERE $1 = '' OR fqdn = $1 ORDER BY id DESC LIMIT $2`, fqdn, limit)
+		WHERE ($1 = '' OR fqdn = $1) AND ($2 = '' OR action = $2) AND ($3::text[] IS NULL OR fqdn = ANY($3)) AND ($4 = 0 OR id < $4)
+		ORDER BY id DESC LIMIT $5`, f.FQDN, f.Action, f.Hosts, f.Before, f.Limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []AuditEntry
+	out := []AuditEntry{}
 	for rows.Next() {
 		var e AuditEntry
 		var detail []byte

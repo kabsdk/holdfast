@@ -33,6 +33,10 @@ type Snapshot struct {
 	// Holdfast deleted it and pruned, when S3's old versions of its data expire.
 	DeletionRequestedAt *time.Time `json:"deletion_requested_at,omitempty"`
 	ReallyGoneBy        *time.Time `json:"really_gone_by,omitempty"`
+	// Filled in for one job's list on request (spec §5.2): why the current retention keeps it, in restic's
+	// words, or, if only an older policy still keeps it, from when the daily run may forget it.
+	KeptBy       []string   `json:"kept_by,omitempty"`
+	PendingUntil *time.Time `json:"pending_until,omitempty"`
 }
 
 // SyncSnapshots makes the catalogue of a host match a fresh listing of its repository. A listed snapshot

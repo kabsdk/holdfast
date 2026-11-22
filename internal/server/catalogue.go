@@ -173,6 +173,9 @@ type SnapshotQuery struct {
 	Month   string // YYYY-MM, in the fleet's zone
 	All     bool   // with tombstones
 	Refresh bool   // read the repository first
+	// Retention adds, for one job, why each snapshot is kept and until when a pending one stays. It asks
+	// restic, with --dry-run and no lock.
+	Retention bool
 }
 
 // Snapshots lists a host's snapshots, newest first (spec §5.2).
@@ -201,6 +204,22 @@ func (s *Server) Snapshots(ctx context.Context, fqdn string, in SnapshotQuery) (
 	list, err := s.st.Q().ListSnapshots(ctx, fqdn, f)
 	if err != nil {
 		return nil, err
+	}
+	if in.Retention && in.JobID != "" {
+		jr, err := s.jobRetentionNow(ctx, fqdn, in.JobID)
+		if err != nil {
+			return nil, err
+		}
+		pending := map[string]time.Time{}
+		for _, p := range jr.Pending {
+			pending[p.ID] = p.PrunableAt
+		}
+		for i := range list {
+			list[i].KeptBy = jr.KeptBy[list[i].ID]
+			if t, ok := pending[list[i].ID]; ok {
+				list[i].PendingUntil = &t
+			}
+		}
 	}
 	return list, s.deletionDates(ctx, fqdn, list)
 }

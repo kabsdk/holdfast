@@ -3,14 +3,10 @@
 package main
 
 import (
-	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"net"
-	"net/http"
 	"net/url"
 	"os"
 	"slices"
@@ -28,11 +24,20 @@ var (
 )
 
 func main() {
-	root := &cobra.Command{Use: "holdfast", Short: "Holdfast command line (a client of the Holdfast API)", SilenceUsage: true}
-	root.PersistentFlags().StringVar(&socketPath, "socket", envOr("HOLDFAST_SOCKET", "/run/holdfast/api.sock"), "API socket of holdfast-server")
+	root := &cobra.Command{Use: "holdfast", Short: "Holdfast command line (a client of the Holdfast API)", SilenceUsage: true,
+		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+			if cmd.Name() == "login" || cmd.Name() == "logout" {
+				return nil
+			}
+			var err error
+			current, err = resolveTarget(cmd)
+			return err
+		}}
+	root.PersistentFlags().StringVar(&socketPath, "socket", envOr("HOLDFAST_SOCKET", "/run/holdfast/api.sock"), "API socket of holdfast-server (root on the server)")
+	root.PersistentFlags().StringVar(&serverURL, "server", os.Getenv("HOLDFAST_SERVER"), "the server's URL, for holdfast login; later commands use the saved login")
 	root.PersistentFlags().BoolVar(&asJSON, "json", false, "print the API's JSON answer")
 	root.AddCommand(statusCmd(), hostCmd(), jobCmd(), snapshotCmd(), restoreCmd(), restoresCmd(), searchCmd(), revisionCmd(), auditCmd(), checkCmd(), escrowCmd(),
-		pendingCmd(), prunesCmd(), retentionCmd(), pruneNowCmd())
+		pendingCmd(), prunesCmd(), retentionCmd(), pruneNowCmd(), loginCmd(), logoutCmd(), whoamiCmd(), accessCmd(), settingsCmd())
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
 	}
@@ -46,12 +51,6 @@ func envOr(k, d string) string {
 }
 
 /* ---------------- API client ---------------- */
-
-func client() *http.Client {
-	return &http.Client{Timeout: 10 * time.Minute, Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-		return (&net.Dialer{}).DialContext(ctx, "unix", socketPath)
-	}}}
-}
 
 type apiError struct {
 	Error    string `json:"error"`
@@ -121,22 +120,9 @@ func readS3Key(path string) (map[string]string, error) {
 
 // call sends a request and decodes the answer into out. It returns the raw body for --json.
 func call(method, path string, in, out any) ([]byte, error) {
-	var body io.Reader
-	if in != nil {
-		b, err := json.Marshal(in)
-		if err != nil {
-			return nil, err
-		}
-		body = bytes.NewReader(b)
-	}
-	req, err := http.NewRequest(method, "http://holdfast"+path, body)
+	resp, err := current.do(method, path, in)
 	if err != nil {
 		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := client().Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("cannot reach holdfast-server on %s: %w", socketPath, err)
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(resp.Body)
@@ -423,6 +409,26 @@ func hostCmd() *cobra.Command {
 		fmt.Printf("acknowledged on %s: %d disappeared snapshots (their record stays), %d repository keys added outside Holdfast (now accepted)\n", a[0], res.Snapshots, res.Keys)
 		return nil
 	}})
+	var removeMsg string
+	removeHost := &cobra.Command{Use: "remove <fqdn>", Short: "Remove a host (a new revision): its agent stops, its repository stays; adding it again brings it back",
+		Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, a []string) error {
+			var res struct {
+				Revision int64 `json:"revision"`
+			}
+			raw, err := call("DELETE", "/api/v1/hosts/"+url.PathEscape(a[0]), map[string]any{"message": removeMsg}, &res)
+			if err != nil {
+				return err
+			}
+			if asJSON {
+				printJSON(raw)
+				return nil
+			}
+			fmt.Printf("removed in revision %d. Its agent gets an empty config and stops backing up; the host is then retired.\n"+
+				"Its repository and snapshots stay. Delete its S3 key at your S3 server when you no longer need it.\n", res.Revision)
+			return nil
+		}}
+	removeHost.Flags().StringVarP(&removeMsg, "message", "m", "", "revision message")
+	c.AddCommand(removeHost)
 	c.AddCommand(&cobra.Command{Use: "enroll-code <fqdn>", Short: "Issue a new 15-minute enrollment code (revokes the open one)", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, a []string) error {
 		var e struct {
 			Code           string    `json:"code"`
@@ -613,21 +619,43 @@ func jobCmd() *cobra.Command {
 		var res struct {
 			Findings []finding `json:"findings"`
 			Blocking []finding `json:"blocking"`
+			Problems []struct {
+				Path    string `json:"path"`
+				Message string `json:"message"`
+			} `json:"problems"`
+			Gets struct {
+				LongestGap    string `json:"longest_gap"`
+				WorstCaseLoss string `json:"worst_case_loss"`
+				StaleAfter    string `json:"stale_after"`
+				RestorePoints int    `json:"restore_points"`
+				Oldest        string `json:"oldest"`
+			} `json:"gets"`
 		}
 		raw, err := call("POST", "/api/v1/hosts/"+url.PathEscape(a[0])+"/jobs/"+url.PathEscape(a[1])+"/check", map[string]any{"job": job, "accept": cf.accept}, &res)
 		if err != nil {
 			return err
 		}
+		refused := len(res.Blocking) > 0 || len(res.Problems) > 0
 		if asJSON {
 			printJSON(raw)
-			if len(res.Blocking) > 0 {
+			if refused {
 				return errors.New("job set would refuse this change")
 			}
 			return nil
 		}
-		if len(res.Findings) == 0 {
+		for _, p := range res.Problems {
+			fmt.Printf("  %s: %s\n", p.Path, p.Message)
+		}
+		if g := res.Gets; g.LongestGap != "" {
+			fmt.Printf("what you get: about %d restore points, the oldest about %s old; worst-case loss %s; stale alert after %s\n",
+				g.RestorePoints, g.Oldest, g.WorstCaseLoss, g.StaleAfter)
+		}
+		if len(res.Findings) == 0 && len(res.Problems) == 0 {
 			fmt.Println("every check passed")
 			return nil
+		}
+		if len(res.Findings) == 0 {
+			return errors.New("job set would refuse this change")
 		}
 		blocked := map[string]bool{}
 		for _, b := range res.Blocking {
@@ -648,6 +676,24 @@ func jobCmd() *cobra.Command {
 	}}
 	cf.register(check)
 	c.AddCommand(check, keepLongerCmd())
+	var rmMsg string
+	remove := &cobra.Command{Use: "remove <fqdn> <job>", Short: "Remove a job (a new revision); its snapshots stay", Args: cobra.ExactArgs(2), RunE: func(_ *cobra.Command, a []string) error {
+		var res struct {
+			Revision int64 `json:"revision"`
+		}
+		raw, err := call("DELETE", "/api/v1/hosts/"+url.PathEscape(a[0])+"/jobs/"+url.PathEscape(a[1]), map[string]any{"message": rmMsg}, &res)
+		if err != nil {
+			return err
+		}
+		if asJSON {
+			printJSON(raw)
+			return nil
+		}
+		fmt.Printf("removed in revision %d; its snapshots stay, and the daily retention no longer touches them\n", res.Revision)
+		return nil
+	}}
+	remove.Flags().StringVarP(&rmMsg, "message", "m", "", "revision message")
+	c.AddCommand(remove)
 	c.AddCommand(&cobra.Command{Use: "run <fqdn> <job>", Short: "Back up now", Args: cobra.ExactArgs(2), RunE: func(_ *cobra.Command, a []string) error {
 		var res struct {
 			Command string `json:"command"`

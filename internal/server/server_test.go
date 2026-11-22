@@ -66,7 +66,7 @@ func job(paths ...string) *config.Job {
 		Retention: config.Retention{Daily: &config.Duration{N: 14, Unit: config.Days}, Monthly: &config.Duration{N: 12, Unit: config.Months}, KeepLast: 3}}
 }
 
-var root = Actor{Name: "local:root", Source: "cli"}
+var root = Actor{Name: "local:root", Source: "cli", Everywhere: true}
 
 func TestHostLifecycle(t *testing.T) {
 	s, ctx := newTestServer(t), context.Background()

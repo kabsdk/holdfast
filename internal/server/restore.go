@@ -6,11 +6,14 @@ import (
 	"fmt"
 	"path"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
+	"github.com/kabsdk/holdfast/internal/access"
 	"github.com/kabsdk/holdfast/internal/config"
 	"github.com/kabsdk/holdfast/internal/proto"
+	"github.com/kabsdk/holdfast/internal/restic"
 	"github.com/kabsdk/holdfast/internal/server/store"
 )
 
@@ -29,6 +32,11 @@ type RestoreInput struct {
 	Exclude   []string `json:"exclude,omitempty"`
 	Include   []string `json:"include,omitempty"`
 	DryRun    bool     `json:"dry_run,omitempty"`
+	// Overwrite is restic's --overwrite, for a file that exists already: always, if-changed, if-newer or never.
+	// Empty: restic's default. A new directory is empty, so it applies to the other targets only.
+	Overwrite string `json:"overwrite,omitempty"`
+	// Message is why, for the audit log: the "Reason" in the UI.
+	Message string `json:"message,omitempty"`
 }
 
 // RestoreResult is a queued restore.
@@ -67,6 +75,16 @@ func absPaths(field string, paths []string) error {
 
 // Restore queues a restore of a snapshot on its host, and audits the request.
 func (s *Server) Restore(ctx context.Context, a Actor, fqdn, snapshotID string, in RestoreInput) (RestoreResult, error) {
+	if in.Target == "" {
+		in.Target = proto.TargetNew
+	}
+	// A new directory under the host's restore root is restore.new_dir, which the route checks. In place, or
+	// another directory, writes outside it: restore.in_place, an admin's (spec §6.2).
+	if in.Target != proto.TargetNew {
+		if err := s.allowed(ctx, a, access.RestoreInPlace, fqdn); err != nil {
+			return RestoreResult{}, err
+		}
+	}
 	h, err := s.st.Q().GetHost(ctx, fqdn)
 	if err != nil {
 		return RestoreResult{}, fmt.Errorf("host %s: %w", fqdn, err)
@@ -77,9 +95,6 @@ func (s *Server) Restore(ctx context.Context, a Actor, fqdn, snapshotID string, 
 	sn, err := s.snapshot(ctx, fqdn, snapshotID)
 	if err != nil {
 		return RestoreResult{}, err
-	}
-	if in.Target == "" {
-		in.Target = proto.TargetNew
 	}
 	switch in.Target {
 	case proto.TargetNew, proto.TargetInPlace:
@@ -103,6 +118,14 @@ func (s *Server) Restore(ctx context.Context, a Actor, fqdn, snapshotID string, 
 	if err := absPaths("include", in.Include); err != nil {
 		return RestoreResult{}, err
 	}
+	if in.Overwrite != "" {
+		if !slices.Contains(restic.OverwriteModes, in.Overwrite) {
+			return RestoreResult{}, &ValidationError{config.Problems{{Path: "overwrite", Message: "overwrite is one of restic's: " + strings.Join(restic.OverwriteModes, ", ")}}}
+		}
+		if in.Target == proto.TargetNew {
+			return RestoreResult{}, &ValidationError{config.Problems{{Path: "overwrite", Message: "a new directory is empty, so there is nothing to overwrite"}}}
+		}
+	}
 	if ag, err := s.st.Q().GetAgent(ctx, fqdn); err == nil && ag.RestoreBounds != nil {
 		switch b := ag.RestoreBounds; {
 		case in.Target == proto.TargetInPlace && !b.AllowInPlace:
@@ -112,7 +135,7 @@ func (s *Server) Restore(ctx context.Context, a Actor, fqdn, snapshotID string, 
 		}
 	}
 	spec := proto.RestoreSpec{Snapshot: sn.ID, Target: in.Target, Directory: in.Directory, Exclude: in.Exclude, Include: in.Include,
-		DryRun: in.DryRun, JobID: sn.JobID, User: restoreUser(a)}
+		DryRun: in.DryRun, JobID: sn.JobID, User: restoreUser(a), Overwrite: in.Overwrite}
 	payload, err := json.Marshal(spec)
 	if err != nil {
 		return RestoreResult{}, err
@@ -126,7 +149,7 @@ func (s *Server) Restore(ctx context.Context, a Actor, fqdn, snapshotID string, 
 		}
 		if err := q.Audit(ctx, store.AuditEntry{Actor: a.Name, Source: a.Source, Action: "restore.requested", FQDN: fqdn, JobID: sn.JobID,
 			Detail: map[string]any{"command": res.Command, "snapshot": sn.ID, "target": in.Target, "directory": in.Directory, "dry_run": in.DryRun,
-				"left_out": len(in.Exclude), "only": len(in.Include)}}); err != nil {
+				"left_out": len(in.Exclude), "only": len(in.Include), "overwrite": in.Overwrite, "message": in.Message}}); err != nil {
 			return err
 		}
 		return q.NotifyHost(ctx, fqdn)

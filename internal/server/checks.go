@@ -45,10 +45,26 @@ type JobCheckInput struct {
 	Accept []string   `json:"accept,omitempty"`
 }
 
-// JobCheckResult is every check that fired on a job, and the ones that would block saving it.
+// JobCheckResult is every check that fired on a job, the ones that would block saving it, and what the
+// job gets, so the UI shows them without working anything out itself (decision 028).
 type JobCheckResult struct {
 	Findings []checks.Finding `json:"findings"`
 	Blocking []checks.Finding `json:"blocking"`
+	// Problems are structural ones, such as a path that is not absolute. They block the save as well.
+	Problems config.Problems `json:"problems"`
+	Gets     JobGets         `json:"gets"`
+	Changes  []Change        `json:"changes"` // against the saved job; all of it for a new one
+	CLI      string          `json:"cli"`     // the holdfast job set command for this change
+}
+
+// JobGets is what a job's schedule and retention give (spec §4.1).
+type JobGets struct {
+	NextRuns      []time.Time `json:"next_runs"`
+	LongestGap    string      `json:"longest_gap"`
+	WorstCaseLoss string      `json:"worst_case_loss"`
+	StaleAfter    string      `json:"stale_after"`
+	checks.Expect
+	ResticFlags []string `json:"restic_flags"` // the restic forget flags the retention maps to (spec §4.2)
 }
 
 // CheckJob runs every check on a job as SetJob would, and saves nothing.
@@ -68,8 +84,80 @@ func (s *Server) CheckJob(ctx context.Context, fqdn, jobID string, in JobCheckIn
 	if in.Job.Engine == "" {
 		in.Job.Engine = config.EngineRestic
 	}
+	res := JobCheckResult{Problems: orEmpty(withJob(head.Config, fqdn, jobID, in.Job).Validate()), CLI: jobSetCommand(fqdn, jobID, in.Job, in.Accept)}
 	fs := s.jobFindings(ctx, fqdn, jobID, old, in.Job)
-	return JobCheckResult{Findings: fs, Blocking: orEmpty(checks.Blocking(fs, in.Accept))}, nil
+	res.Findings, res.Blocking = fs, orEmpty(checks.Blocking(fs, in.Accept))
+	if err := in.Job.Schedule.Validate(); err == nil {
+		loc, _ := in.Job.Schedule.Location(s.zone)
+		res.Gets = JobGets{NextRuns: in.Job.Schedule.NextN(s.now(), 5, loc), LongestGap: in.Job.Schedule.LongestGap().String(),
+			WorstCaseLoss: in.Job.Schedule.WorstCaseLoss().String(), StaleAfter: in.Job.Schedule.StaleAfter().String()}
+	}
+	res.Gets.Expect, res.Gets.ResticFlags = checks.Estimate(in.Job), orEmpty(in.Job.Retention.ForgetArgs())
+	var before any = map[string]any{}
+	if old != nil {
+		before = toAny(*old)
+	}
+	res.Changes = diffValues(before, toAny(in.Job))
+	return res, nil
+}
+
+// jobSetCommand is the holdfast job set command that makes this change: the UI shows it, so people can
+// script what they did (decision 014).
+func jobSetCommand(fqdn, jobID string, j config.Job, accept []string) string {
+	args := []string{"holdfast", "job", "set", fqdn, jobID}
+	for _, p := range j.Paths {
+		args = append(args, "--path", shellWord(p))
+	}
+	for _, e := range j.Excludes {
+		args = append(args, "--exclude", shellWord(e))
+	}
+	sc := j.Schedule
+	switch {
+	case sc.Daily != nil:
+		times := make([]string, 0, len(sc.Daily.Times))
+		for _, t := range sc.Daily.Times {
+			times = append(times, string(t))
+		}
+		args = append(args, "--daily", strings.Join(times, ","))
+	case sc.Every != nil:
+		args = append(args, "--every", fmt.Sprintf("%d%s", sc.Every.N, map[string]string{"minutes": "m", "hours": "h"}[sc.Every.Unit]))
+		if sc.Every.From != "" && sc.Every.From != "00:00" {
+			args = append(args, "--from", string(sc.Every.From))
+		}
+	case sc.Weekly != nil:
+		args = append(args, "--weekly", strings.Join(sc.Weekly.Days, ","), "--at", string(sc.Weekly.At))
+	}
+	if sc.Spread.Minutes > 0 {
+		args = append(args, "--spread", fmt.Sprint(sc.Spread.Minutes))
+		if !sc.Spread.Enabled {
+			args = append(args, "--no-spread")
+		}
+	}
+	if sc.Zone != "" {
+		args = append(args, "--zone", sc.Zone)
+	}
+	r := j.Retention
+	for _, t := range []struct {
+		flag string
+		d    *config.Duration
+	}{{"--keep-within", r.Within}, {"--keep-hourly", r.Hourly}, {"--keep-daily", r.Daily}, {"--keep-weekly", r.Weekly}, {"--keep-monthly", r.Monthly}, {"--keep-yearly", r.Yearly}} {
+		if t.d != nil {
+			args = append(args, t.flag, fmt.Sprintf("%d%s", t.d.N, map[config.Unit]string{config.Hours: "h", config.Days: "d", config.Weeks: "w", config.Months: "mo", config.Years: "y"}[t.d.Unit]))
+		}
+	}
+	args = append(args, "--keep-last", fmt.Sprint(r.KeepLast))
+	if len(accept) > 0 {
+		args = append(args, "--accept", strings.Join(accept, ","))
+	}
+	return strings.Join(args, " ")
+}
+
+// shellWord quotes a word for a shell when it needs it.
+func shellWord(s string) string {
+	if s != "" && strings.Trim(s, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/._-:,=+@") == "" {
+		return s
+	}
+	return shellQuote(s)
 }
 
 func orEmpty[T any](s []T) []T {

@@ -242,6 +242,9 @@ type Snapshot struct {
 	Paths    []string         `json:"paths"`
 	Parent   string           `json:"parent"`
 	Summary  *SnapshotSummary `json:"summary"` // restic 0.17 and later
+	// KeptBy is why a forget plan keeps the snapshot, in restic's words, such as "daily snapshot". Only
+	// ForgetPlan fills it in.
+	KeptBy []string `json:"-"`
 }
 
 // SnapshotSummary is what restic recorded about the backup that made a snapshot.
@@ -453,8 +456,12 @@ func (r Runner) ForgetPlan(ctx context.Context, tag string, policy []string) (ke
 		return nil, nil, err
 	}
 	var groups []struct {
-		Keep   []Snapshot `json:"keep"`
-		Remove []Snapshot `json:"remove"`
+		Keep    []Snapshot `json:"keep"`
+		Remove  []Snapshot `json:"remove"`
+		Reasons []struct {
+			Snapshot Snapshot `json:"snapshot"`
+			Matches  []string `json:"matches"`
+		} `json:"reasons"`
 	}
 	if len(bytes.TrimSpace(out)) > 0 {
 		if err := json.Unmarshal(out, &groups); err != nil {
@@ -463,7 +470,14 @@ func (r Runner) ForgetPlan(ctx context.Context, tag string, policy []string) (ke
 	}
 	keep, remove = []Snapshot{}, []Snapshot{}
 	for _, g := range groups {
-		keep = append(keep, g.Keep...)
+		why := map[string][]string{}
+		for _, r := range g.Reasons {
+			why[r.Snapshot.ID] = r.Matches
+		}
+		for _, sn := range g.Keep {
+			sn.KeptBy = why[sn.ID]
+			keep = append(keep, sn)
+		}
 		remove = append(remove, g.Remove...)
 	}
 	return keep, remove, nil
@@ -522,11 +536,15 @@ func parsePrune(out string) PruneReport {
 
 // RestoreOptions describe one restore through the agent (plan-m2 §3).
 type RestoreOptions struct {
-	Target  string
-	Include []string // restore only these
-	Exclude []string // leave these out
-	DryRun  bool
+	Target    string
+	Include   []string // restore only these
+	Exclude   []string // leave these out
+	DryRun    bool
+	Overwrite string // restic's --overwrite: always, if-changed, if-newer or never; empty: restic's default
 }
+
+// OverwriteModes are restic's own choices for a file that exists already.
+var OverwriteModes = []string{"always", "if-changed", "if-newer", "never"}
 
 // RestoreSummary is restic restore's JSON summary.
 type RestoreSummary struct {
@@ -551,6 +569,9 @@ func (r Runner) RestoreWith(ctx context.Context, snapshot string, o RestoreOptio
 	}
 	for _, p := range o.Exclude {
 		args = append(args, "--exclude", p)
+	}
+	if o.Overwrite != "" {
+		args = append(args, "--overwrite", o.Overwrite)
 	}
 	out, err := r.run(ctx, args...)
 	var sum RestoreSummary

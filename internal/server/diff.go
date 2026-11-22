@@ -26,9 +26,14 @@ func (s *Server) Diff(ctx context.Context, a, b int64) ([]Change, error) {
 	if err != nil {
 		return nil, err
 	}
+	return diffValues(toAny(ra.Config), toAny(rb.Config)), nil
+}
+
+// diffValues compares two JSON values, path by path.
+func diffValues(a, b any) []Change {
 	fa, fb := map[string]any{}, map[string]any{}
-	flatten("", toAny(ra.Config), fa)
-	flatten("", toAny(rb.Config), fb)
+	flatten("", a, fa)
+	flatten("", b, fb)
 	keys := map[string]bool{}
 	for k := range fa {
 		keys[k] = true
@@ -56,7 +61,7 @@ func (s *Server) Diff(ctx context.Context, a, b int64) ([]Change, error) {
 	if out == nil {
 		out = []Change{}
 	}
-	return out, nil
+	return out
 }
 
 func toAny(v any) any {

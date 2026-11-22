@@ -23,12 +23,12 @@ type restoreEvent struct {
 }
 
 func restoreCmd() *cobra.Command {
-	var to string
+	var to, overwrite, msg string
 	var inPlace, dryRun, wait bool
 	var leaveOut, only []string
 	c := &cobra.Command{Use: "restore <fqdn> <snapshot>", Short: "Restore a snapshot on its host, through the agent (a new root-only directory by default)",
 		Args: cobra.ExactArgs(2), RunE: func(_ *cobra.Command, a []string) error {
-			in := map[string]any{"target": "new", "exclude": leaveOut, "include": only, "dry_run": dryRun}
+			in := map[string]any{"target": "new", "exclude": leaveOut, "include": only, "dry_run": dryRun, "overwrite": overwrite, "message": msg}
 			switch {
 			case inPlace && to != "":
 				return errors.New("give --in-place or --to, not both")
@@ -85,6 +85,63 @@ func restoreCmd() *cobra.Command {
 	c.Flags().StringSliceVar(&only, "only", nil, "restore only this path (repeat)")
 	c.Flags().BoolVar(&dryRun, "dry-run", false, "only report what would be restored")
 	c.Flags().BoolVar(&wait, "wait", false, "wait for the agent's result")
+	c.Flags().StringVar(&overwrite, "overwrite", "", "with --in-place or --to, for a file that exists already, restic's choice: always, if-changed, if-newer or never")
+	c.Flags().StringVarP(&msg, "message", "m", "", "why, for the audit log")
+	c.AddCommand(restorePairCmd())
+	return c
+}
+
+func restorePairCmd() *cobra.Command {
+	var msg string
+	var wait bool
+	c := &cobra.Command{Use: "pair <fqdn> <snapshot> <other-snapshot> <path>", Short: "Restore one file from two snapshots, to compare them on the host with diff -u",
+		Args: cobra.ExactArgs(4), RunE: func(_ *cobra.Command, a []string) error {
+			var res struct {
+				Path     string    `json:"path"`
+				Commands [2]string `json:"commands"`
+			}
+			raw, err := call("POST", "/api/v1/hosts/"+url.PathEscape(a[0])+"/snapshots/"+url.PathEscape(a[1])+"/restore-pair",
+				map[string]any{"path": a[3], "against": a[2], "message": msg}, &res)
+			if err != nil {
+				return err
+			}
+			if !wait {
+				if asJSON {
+					printJSON(raw)
+					return nil
+				}
+				fmt.Printf("both restores are queued (%s, %s); with --wait this prints the diff command once they are done\n", res.Commands[0], res.Commands[1])
+				return nil
+			}
+			q := url.Values{"a": {res.Commands[0]}, "b": {res.Commands[1]}, "path": {res.Path}}
+			deadline := time.Now().Add(24 * time.Hour)
+			for time.Now().Before(deadline) {
+				var st struct {
+					Status string `json:"status"`
+					Diff   string `json:"diff"`
+					Error  string `json:"error"`
+				}
+				raw, err := call("GET", "/api/v1/hosts/"+url.PathEscape(a[0])+"/restore-pair?"+q.Encode(), nil, &st)
+				if err != nil {
+					return err
+				}
+				switch st.Status {
+				case "done":
+					if asJSON {
+						printJSON(raw)
+					} else {
+						fmt.Printf("both versions are on %s, readable by root only. Compare them there:\n  %s\n", a[0], st.Diff)
+					}
+					return nil
+				case "failed":
+					return errors.New(st.Error)
+				}
+				time.Sleep(2 * time.Second)
+			}
+			return errors.New("the restores were not done in time")
+		}}
+	c.Flags().StringVarP(&msg, "message", "m", "", "why, for the audit log")
+	c.Flags().BoolVar(&wait, "wait", false, "wait for both restores, then print the diff command")
 	return c
 }
 

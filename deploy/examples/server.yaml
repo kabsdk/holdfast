@@ -33,9 +33,22 @@ maintenance:
   # forgets nothing by itself; holdfast retention run, Prune now and Delete now still work.
   retention: daily
 
-# Spec §6.4. Acted on from M4.
+# The UI and the API for people, over HTTPS, with OIDC login (spec §6, decision 034). Off while ui.listen
+# is not set; root on the server can always use the socket. Use a certificate browsers trust, not the agents'.
+ui:
+  listen: ":443"
+  public_url: https://holdfast.example.internal
+  tls:
+    cert_file: /etc/holdfast/tls/ui.crt
+    key_file: /etc/holdfast/tls/ui.key
+
 auth:
   oidc:
+    # Register Holdfast at the provider as a confidential client with the authorization code flow and the
+    # device flow, and the redirect URI <ui.public_url>/auth/callback.
     issuer: https://auth.example.internal
+    client_id: holdfast
+    client_secret_file: /etc/holdfast/oidc-client-secret   # root only
     groups_claim: groups
+  # Usernames that are admin on every host whatever their groups, for the first login. Each use is audited.
   bootstrap_admins: []

@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/kabsdk/holdfast/internal/access"
 	"github.com/kabsdk/holdfast/internal/proto"
 	"github.com/kabsdk/holdfast/internal/server/storage"
 	"github.com/kabsdk/holdfast/internal/server/store"
@@ -50,8 +51,13 @@ func (s *Server) RunChecks(ctx context.Context, a Actor) []CheckResult {
 	if err != nil {
 		return append(out, CheckResult{Status: "failed", Error: err.Error()})
 	}
+	v, err := s.viewerOf(ctx, a)
+	if err != nil {
+		return append(out, CheckResult{Status: "failed", Error: err.Error()})
+	}
 	for _, h := range hosts {
-		if h.State != "enrolled" {
+		// Only the hosts where the actor may run maintenance; the others are not mentioned.
+		if h.State != "enrolled" || !v.can(access.Maintenance, h.FQDN) {
 			continue
 		}
 		res := CheckResult{FQDN: h.FQDN, Status: "requested"}
@@ -127,6 +133,7 @@ func (s *Server) maintenanceLoop(ctx context.Context) {
 			s.refreshCatalogueDue(ctx)
 			s.expireCommands(ctx)
 			s.retentionDue(ctx)
+			_ = s.st.Q().PurgeSessions(ctx, s.now())
 		}
 	}
 }

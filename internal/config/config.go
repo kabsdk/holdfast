@@ -70,6 +70,16 @@ func DefaultAccess() Access {
 	}}
 }
 
+// DefaultJob is where a new job starts (plan-m4 Q11). With paths, it passes every check with no warnings:
+// daily at 02:00 with a 20-minute spread; one per day for 14 days, per week for 8 weeks, per month for 12
+// months and per year for 3 years; and always the newest 3.
+func DefaultJob() Job {
+	return Job{Engine: EngineRestic, Paths: []string{},
+		Schedule: schedule.Schedule{Daily: &schedule.Daily{Times: []schedule.ClockTime{"02:00"}}, Spread: schedule.Spread{Enabled: true, Minutes: 20}},
+		Retention: Retention{Daily: &Duration{14, Days}, Weekly: &Duration{8, Weeks}, Monthly: &Duration{12, Months}, Yearly: &Duration{3, Years},
+			KeepLast: DefaultKeepLast}}
+}
+
 // New returns the empty document an installation starts from.
 func New() Document {
 	d := Document{Schema: SchemaVersion, Access: DefaultAccess()}

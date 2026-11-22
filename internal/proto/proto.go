@@ -54,6 +54,9 @@ type RestoreSpec struct {
 	DryRun    bool     `json:"dry_run,omitempty"`
 	JobID     string   `json:"job_id,omitempty"` // the snapshot's job, for the in-place safety backup
 	User      string   `json:"user"`             // who asked, for the default directory's name
+	// Overwrite is restic's --overwrite for files that exist already: always, if-changed, if-newer or never.
+	// Empty: restic's default. An agent that does not know the field ignores it, and restic's default holds.
+	Overwrite string `json:"overwrite,omitempty"`
 }
 
 // EnrollRequest is sent once, with a single-use code.

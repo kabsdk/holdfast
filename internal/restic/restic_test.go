@@ -91,7 +91,7 @@ func TestBackupFailure(t *testing.T) {
 const forgetPlan = `[{"tags":null,"host":"web01","paths":null,
  "keep":[{"time":"2026-11-21T12:00:00Z","id":"aaa111","short_id":"aaa1"},{"time":"2026-11-20T12:00:00Z","id":"bbb222","short_id":"bbb2"}],
  "remove":[{"time":"2026-11-11T12:00:00Z","id":"ccc333","short_id":"ccc3"}],
- "reasons":[]}]`
+ "reasons":[{"snapshot":{"id":"aaa111"},"matches":["daily within 14d","last snapshot"]},{"snapshot":{"id":"bbb222"},"matches":["daily within 14d"]}]}]`
 
 func TestForgetPlanForgetAndPrune(t *testing.T) {
 	bin, log := fake(t, "case \"$*\" in *'forget --dry-run'*) echo '"+strings.ReplaceAll(forgetPlan, "\n", "")+"' ;; esac\n")
@@ -100,7 +100,8 @@ func TestForgetPlanForgetAndPrune(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(IDs(keep), ",") != "aaa111,bbb222" || strings.Join(IDs(remove), ",") != "ccc333" || remove[0].Time.Day() != 11 {
+	if strings.Join(IDs(keep), ",") != "aaa111,bbb222" || strings.Join(IDs(remove), ",") != "ccc333" || remove[0].Time.Day() != 11 ||
+		strings.Join(keep[0].KeptBy, ";") != "daily within 14d;last snapshot" {
 		t.Fatalf("keep %v, remove %v", keep, remove)
 	}
 	if err := r.Forget(context.Background(), "ccc333"); err != nil {

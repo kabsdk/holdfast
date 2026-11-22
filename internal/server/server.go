@@ -14,10 +14,12 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/kabsdk/holdfast/internal/access"
 	"github.com/kabsdk/holdfast/internal/checks"
 	"github.com/kabsdk/holdfast/internal/config"
 	"github.com/kabsdk/holdfast/internal/proto"
@@ -46,7 +48,8 @@ type Server struct {
 
 	runCtx    context.Context // set by Run; background work stops with it
 	refresher catalogueRefresher
-	maintBusy busyHosts // one forget-or-prune at a time per host
+	maintBusy busyHosts  // one forget-or-prune at a time per host
+	oidc      oidcClient // the server's side of the OIDC provider (decision 034)
 }
 
 // background is the context for work that outlives a request, such as a catalogue refresh.
@@ -99,12 +102,6 @@ func (s *Server) Run(ctx context.Context) {
 	go s.maintenanceLoop(ctx)
 }
 
-// Actor is who did something, for the audit log.
-type Actor struct {
-	Name   string // local:<unix user> in M1; the OIDC subject from M4
-	Source string // cli, api, ui or system
-}
-
 // ValidationError lists structural problems; the API answers 422.
 type ValidationError struct{ Problems config.Problems }
 
@@ -133,6 +130,7 @@ func (s *Server) renderHost(doc config.Document, fqdn string) proto.HostConfig {
 	hc := proto.HostConfig{FQDN: fqdn, Repository: s.loc.RepoURL(fqdn), Jobs: []proto.JobConfig{}}
 	h, ok := doc.Hosts[fqdn]
 	if !ok {
+		hc.SHA256 = hc.ComputeSHA256() // a removed host's agent gets this empty config (plan-m4 Q7)
 		return hc
 	}
 	ids := make([]string, 0, len(h.Jobs))
@@ -352,8 +350,21 @@ func (s *Server) AddHost(ctx context.Context, a Actor, in AddHostInput) (AddHost
 	if strings.TrimSpace(in.Message) == "" {
 		in.Message = "Add host " + in.FQDN
 	}
+	// Checked on the new FQDN against the bindings' patterns, before anything says whether it exists.
+	if err := s.allowed(ctx, a, access.ConfigStorage, in.FQDN); err != nil {
+		return AddHostResult{}, err
+	}
+	// A removed host comes back with its repository, its password and its history (spec §3.5).
+	revive := false
+	if h, err := s.st.Q().GetHost(ctx, in.FQDN); err == nil {
+		if h.State != "retired" {
+			return AddHostResult{}, fmt.Errorf("host %s exists already: %w", in.FQDN, ErrConflict)
+		}
+		revive = true
+	}
 	var key storage.Key
 	source := store.KeyByAdmin
+	newKey := true
 	switch {
 	case in.S3Key != nil:
 		k, err := in.S3Key.key()
@@ -361,14 +372,17 @@ func (s *Server) AddHost(ctx context.Context, a Actor, in AddHostInput) (AddHost
 			return AddHostResult{}, err
 		}
 		key = k
+	case revive:
+		k, src, err := s.hostKey(ctx, in.FQDN)
+		if err != nil {
+			return AddHostResult{}, err
+		}
+		key, source, newKey = k, src, false
 	case s.prov != nil:
 		key, source = storage.Key{AccessKeyID: newAccessKeyID(), SecretAccessKey: hex.EncodeToString(creds.Random(20))}, store.KeyByHoldfast
 	default:
 		return AddHostResult{}, &ValidationError{config.Problems{{Path: "s3_key", Message: "the host's S3 key is required: make a key that may use only " +
 			storage.Prefix(in.FQDN) + "/ (docs/storage.md) and give it with --s3-key-file"}}}
-	}
-	if _, err := s.st.Q().GetHost(ctx, in.FQDN); err == nil {
-		return AddHostResult{}, fmt.Errorf("host %s exists already: %w", in.FQDN, ErrConflict)
 	}
 	// The job's checks come before the storage test, so a job that would be refused costs no S3 calls. A new
 	// host has no runs and no snapshots, so S002 and R104 cannot fire.
@@ -421,13 +435,31 @@ func (s *Server) AddHost(ctx context.Context, a Actor, in AddHostInput) (AddHost
 		if err != nil {
 			return err
 		}
-		if err := q.CreateHost(ctx, in.FQDN, rev.Number, now); err != nil {
-			return err
-		}
-		if err := q.PutCredentials(ctx, store.SealedCredentials{FQDN: in.FQDN, Version: 1, Repository: s.loc.RepoURL(in.FQDN),
-			RepoPassword: s.seal.Seal(creds.NewPassword(), in.FQDN), S3AccessKeyID: key.AccessKeyID, S3Secret: s.seal.Seal(key.SecretAccessKey, in.FQDN),
-			S3KeySource: source, CreatedAt: now}); err != nil {
-			return err
+		switch {
+		case !revive:
+			if err := q.CreateHost(ctx, in.FQDN, rev.Number, now); err != nil {
+				return err
+			}
+			if err := q.PutCredentials(ctx, store.SealedCredentials{FQDN: in.FQDN, Version: 1, Repository: s.loc.RepoURL(in.FQDN),
+				RepoPassword: s.seal.Seal(creds.NewPassword(), in.FQDN), S3AccessKeyID: key.AccessKeyID, S3Secret: s.seal.Seal(key.SecretAccessKey, in.FQDN),
+				S3KeySource: source, CreatedAt: now}); err != nil {
+				return err
+			}
+		default:
+			if err := q.ReviveHost(ctx, in.FQDN, rev.Number); err != nil {
+				return err
+			}
+			if newKey { // the repository password stays: it is what opens the repository
+				c, err := q.GetCredentials(ctx, in.FQDN)
+				if err != nil {
+					return err
+				}
+				c.Version++
+				c.S3AccessKeyID, c.S3Secret, c.S3KeySource, c.CreatedAt = key.AccessKeyID, s.seal.Seal(key.SecretAccessKey, in.FQDN), source, now
+				if err := q.PutCredentials(ctx, c); err != nil {
+					return err
+				}
+			}
 		}
 		if err := q.RecordStorageCheck(ctx, in.FQDN, rep); err != nil {
 			return err
@@ -436,7 +468,7 @@ func (s *Server) AddHost(ctx context.Context, a Actor, in AddHostInput) (AddHost
 		if err := q.CreateEnrollmentCode(ctx, newID(), in.FQDN, creds.HashToken(creds.NormaliseCode(code)), now, expires, a.Name); err != nil {
 			return err
 		}
-		detail := map[string]any{"message": in.Message, "s3_key_by": source}
+		detail := map[string]any{"message": in.Message, "s3_key_by": source, "back_after_removal": revive}
 		if in.Job != nil {
 			detail["job"] = in.JobID
 			detail["accepted_codes"] = accepted
@@ -633,6 +665,12 @@ func (s *Server) SetJob(ctx context.Context, a Actor, fqdn, jobID string, in Set
 		return SetJobResult{}, &ChecksError{Findings: fs, Blocking: blocking}
 	}
 	res := SetJobResult{Findings: fs, Accepted: checks.Accepted(fs, in.Accept)}
+	// Accepting a retention cut is retention.cut, an admin's (spec §6.2).
+	if slices.Contains(res.Accepted, "R104") {
+		if err := s.allowed(ctx, a, access.RetentionCut, fqdn); err != nil {
+			return SetJobResult{}, err
+		}
+	}
 	err = s.st.InTx(ctx, func(q *store.Q) error {
 		head, err := s.head(ctx, q)
 		if err != nil {
@@ -723,6 +761,7 @@ type JobView struct {
 	WorstCaseLoss string           `json:"worst_case_loss"`
 	StaleAfter    string           `json:"stale_after"`
 	Status        *store.JobStatus `json:"status,omitempty"`
+	Stale         bool             `json:"stale"` // no success for more than StaleAfter
 }
 
 // HostView is one host as the API shows it.
@@ -743,6 +782,11 @@ type HostView struct {
 	Disappeared       int       `json:"disappeared"`
 	ForeignKeys       []string  `json:"foreign_keys,omitempty"` // repository keys (passwords) added outside Holdfast
 	Jobs              []JobView `json:"jobs"`
+	// Actions are the permissions the asker has on this host (spec §6.2). The UI shows an action only if it
+	// is here, and works out nothing itself (decision 028).
+	Actions []string `json:"actions"`
+	// Problems are what the server knows is wrong with the host (problems.go).
+	Problems []Problem `json:"problems"`
 }
 
 // OnlineWithin is how recently an agent must have polled to count as online.
@@ -778,6 +822,14 @@ func (s *Server) Hosts(ctx context.Context) ([]HostView, error) {
 	foreign, err := q.ForeignRepositoryKeys(ctx)
 	if err != nil {
 		return nil, err
+	}
+	health, err := q.RetentionHealth(ctx)
+	if err != nil {
+		return nil, err
+	}
+	retentionFailed := map[string]bool{}
+	for _, r := range health {
+		retentionFailed[r.FQDN] = r.LastFailed
 	}
 	now := s.now()
 	out := make([]HostView, 0, len(hosts))
@@ -826,8 +878,16 @@ func (s *Server) Hosts(ctx context.Context) ([]HostView, error) {
 					jv.Status = &statuses[i]
 				}
 			}
+			// Stale: no success for twice the longest gap, the threshold of the stale alert (spec §4.1). A job
+			// counts from when the host's first backup could have run.
+			since := h.FirstBackupAt
+			if jv.Status != nil && jv.Status.LastSuccessAt != nil {
+				since = jv.Status.LastSuccessAt
+			}
+			jv.Stale = h.State == "enrolled" && since != nil && now.Sub(*since) > j.Schedule.StaleAfter()
 			v.Jobs = append(v.Jobs, jv)
 		}
+		v.Problems = problems(v, now, retentionFailed[h.FQDN])
 		out = append(out, v)
 	}
 	return out, nil

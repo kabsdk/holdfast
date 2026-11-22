@@ -186,6 +186,10 @@ func (s *Server) Poll(ctx context.Context, fqdn string, req proto.PollRequest, w
 		if err != nil {
 			return proto.PollResponse{}, err
 		}
+		if resp.Config == nil {
+			// The agent runs the config it should. For a removed host that is the empty one: it is done.
+			s.retireIfDone(ctx, fqdn)
+		}
 		remaining := time.Until(deadline)
 		if changed || remaining <= 0 {
 			resp.ServerTime = s.now()

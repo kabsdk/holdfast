@@ -62,7 +62,7 @@ func TestAgentAgainstServer(t *testing.T) {
 	ts := httptest.NewServer(srv.AgentHandler())
 	defer ts.Close()
 
-	root := server.Actor{Name: "local:root", Source: "cli"}
+	root := server.Actor{Name: "local:root", Source: "cli", Everywhere: true}
 	job := &config.Job{Paths: []string{dir}, Schedule: schedule.Schedule{Daily: &schedule.Daily{Times: []schedule.ClockTime{"02:00"}}},
 		Retention: config.Retention{Daily: &config.Duration{N: 14, Unit: config.Days}, Monthly: &config.Duration{N: 12, Unit: config.Months}, KeepLast: 3}}
 	res, err := srv.AddHost(ctx, root, server.AddHostInput{FQDN: "web01.example.com", JobID: "system", Job: job})

@@ -75,6 +75,8 @@ type JobRetention struct {
 	// NotMadeByHoldfast are snapshots the current policy would drop that no agent reported. Holdfast leaves
 	// them alone (decision 032).
 	NotMadeByHoldfast []string `json:"not_made_by_holdfast"`
+	// KeptBy says why the current policy keeps each snapshot it keeps, in restic's words (spec §5.2).
+	KeptBy map[string][]string `json:"kept_by"`
 }
 
 // RetentionPlan is what the daily run would do on a host now, and what waits (spec §3.4).
@@ -185,6 +187,26 @@ func (s *Server) retentionPlan(ctx context.Context, fqdn string) (RetentionPlan,
 	return plan, nil
 }
 
+// jobRetentionNow is jobRetention for one job of a host, now.
+func (s *Server) jobRetentionNow(ctx context.Context, fqdn, jobID string) (JobRetention, error) {
+	revs, err := s.st.Q().RevisionsInForce(ctx, s.now().Add(-Protection))
+	if err != nil {
+		return JobRetention{}, err
+	}
+	if len(revs) == 0 {
+		return JobRetention{}, fmt.Errorf("job %s on %s: %w", jobID, fqdn, ErrNotFound)
+	}
+	if _, ok := revs[len(revs)-1].Config.Hosts[fqdn].Jobs[jobID]; !ok {
+		return JobRetention{}, fmt.Errorf("job %s on %s: %w", jobID, fqdn, ErrNotFound)
+	}
+	r, cleanup, err := s.maintRunner(ctx, fqdn)
+	if err != nil {
+		return JobRetention{}, err
+	}
+	defer cleanup()
+	return s.jobRetention(ctx, r, fqdn, jobID, revs)
+}
+
 // jobRetention asks restic what each policy that was in force for the job during the last 7 days keeps
 // (revs are the revisions in force then, oldest first; the job is in the newest).
 func (s *Server) jobRetention(ctx context.Context, r restic.Runner, fqdn, jobID string, revs []store.Revision) (JobRetention, error) {
@@ -241,6 +263,10 @@ func (s *Server) jobRetention(ctx context.Context, r restic.Runner, fqdn, jobID 
 	}
 	if cur == nil {
 		return jr, fmt.Errorf("job %s is not in the newest revision", jobID)
+	}
+	jr.KeptBy = map[string][]string{}
+	for _, sn := range cur.keep {
+		jr.KeptBy[sn.ID] = orEmpty(sn.KeptBy)
 	}
 	slices.SortFunc(pols, func(a, b *policy) int {
 		switch {

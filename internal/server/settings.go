@@ -13,9 +13,8 @@ import (
 	"github.com/kabsdk/holdfast/internal/restic"
 )
 
-// Settings is /etc/holdfast/server.yaml. Changing it needs root on the server; a reload is audited.
-// auth.* is defined by spec §6.4 and is acted on from M4; the rest is
-// operational (plan-m1 §9).
+// Settings is /etc/holdfast/server.yaml. Changing it needs root on the server (spec §3.3). ui and auth are
+// spec §6.4 (decision 034); the rest is operational (plan-m1 §9).
 type Settings struct {
 	Listen             string `yaml:"listen"`     // agent protocol, /metrics and /healthz, such as ":8443"
 	APISocket          string `yaml:"api_socket"` // /api/v1 for local root (M1); the directory must be 0700
@@ -33,7 +32,35 @@ type Settings struct {
 	Storage     StorageSettings     `yaml:"storage"`
 	Maintenance MaintenanceSettings `yaml:"maintenance"`
 
-	Auth map[string]any `yaml:"auth"` // spec §6.4; M4
+	UI   UISettings   `yaml:"ui"`
+	Auth AuthSettings `yaml:"auth"`
+}
+
+// UISettings are the listener for people: the UI and /api/v1 over HTTPS, with sessions (decision 034). It is
+// off while Listen is empty.
+type UISettings struct {
+	Listen    string `yaml:"listen"`     // such as ":443"
+	PublicURL string `yaml:"public_url"` // the URL people use; the OIDC redirect goes back to it
+	TLS       TLS    `yaml:"tls"`        // a certificate browsers trust; without it plain HTTP, for tests only
+}
+
+// AuthSettings are the OIDC provider and the bootstrap admins (spec §6.4).
+type AuthSettings struct {
+	OIDC OIDCSettings `yaml:"oidc"`
+	// BootstrapAdmins are usernames that are admin on every host whatever their groups, for the first
+	// login. Each login that relies on it is audited.
+	BootstrapAdmins []string `yaml:"bootstrap_admins"`
+}
+
+// OIDCSettings is the provider. The server is its only client (decision 034).
+type OIDCSettings struct {
+	Issuer           string   `yaml:"issuer"`
+	ClientID         string   `yaml:"client_id"`
+	ClientSecretFile string   `yaml:"client_secret_file"` // the client secret, alone in a root-only file
+	Scopes           []string `yaml:"scopes"`             // default: openid, profile, groups
+	GroupsClaim      string   `yaml:"groups_claim"`       // default: groups
+	UsernameClaim    string   `yaml:"username_claim"`     // default: preferred_username
+	CAFile           string   `yaml:"ca_file"`            // a CA to trust for the issuer, if not the system's
 }
 
 // TLS is the certificate for the agent listener. Without it the listener is plain HTTP, which is
@@ -116,6 +143,16 @@ func (s *Settings) defaults() {
 	if s.Maintenance.Retention == "" {
 		s.Maintenance.Retention = CheckDaily
 	}
+	o := &s.Auth.OIDC
+	if len(o.Scopes) == 0 {
+		o.Scopes = []string{"openid", "profile", "groups"}
+	}
+	if o.GroupsClaim == "" {
+		o.GroupsClaim = "groups"
+	}
+	if o.UsernameClaim == "" {
+		o.UsernameClaim = "preferred_username"
+	}
 	if s.NodeName == "" {
 		s.NodeName, _ = os.Hostname()
 	}
@@ -142,6 +179,12 @@ func (s Settings) validate() error {
 	}
 	if c := s.Maintenance.Retention; c != CheckDaily && c != CheckOff {
 		errs = append(errs, fmt.Errorf("maintenance.retention is %q; it must be %q or %q", c, CheckDaily, CheckOff))
+	}
+	if s.UI.Listen != "" {
+		need(s.UI.PublicURL, "ui.public_url (ui.listen is set)")
+		need(s.Auth.OIDC.Issuer, "auth.oidc.issuer (ui.listen is set)")
+		need(s.Auth.OIDC.ClientID, "auth.oidc.client_id (ui.listen is set)")
+		need(s.Auth.OIDC.ClientSecretFile, "auth.oidc.client_secret_file (ui.listen is set)")
 	}
 	return errors.Join(errs...)
 }

@@ -17,11 +17,13 @@ import (
 
 // The user-facing API, /api/v1. The CLI and the UI are thin clients of it (decision 028).
 //
-// In M1 it is served on a root-only Unix socket, and the actor is the socket peer's user
-// (plan-m1 Q2). M4 serves the same handler over HTTPS with OIDC, and adds role checks here.
+// It is served on the root-only Unix socket, where the actor is the socket peer's user and admin on every
+// host (decision 034), and on the UI listener, where the actor comes from a session (session.go). Every
+// route's permission is in Routes (authz.go).
 
 const actorKey ctxKey = 2
 
+// actorOf returns the request's actor. A request without one, which no listener sends, may do nothing.
 func actorOf(r *http.Request) Actor {
 	if a, ok := r.Context().Value(actorKey).(Actor); ok {
 		return a
@@ -29,10 +31,16 @@ func actorOf(r *http.Request) Actor {
 	return Actor{Name: "unknown", Source: "api"}
 }
 
-// PeerActor returns a ConnContext hook that records the peer's Unix user as the actor.
+// WithActor returns ctx carrying the actor.
+func WithActor(ctx context.Context, a Actor) context.Context {
+	return context.WithValue(ctx, actorKey, a)
+}
+
+// PeerActor returns a ConnContext hook that records the peer's Unix user as the actor. The socket is
+// root-only, and root is admin on every host (decision 034).
 func PeerActor() func(ctx context.Context, c net.Conn) context.Context {
 	return func(ctx context.Context, c net.Conn) context.Context {
-		a := Actor{Name: "local:unknown", Source: "cli"}
+		a := Actor{Name: "local:unknown", Source: "cli", Everywhere: true}
 		if uc, ok := c.(*net.UnixConn); ok {
 			if raw, err := uc.SyscallConn(); err == nil {
 				_ = raw.Control(func(fd uintptr) {
@@ -50,46 +58,15 @@ func PeerActor() func(ctx context.Context, c net.Conn) context.Context {
 	}
 }
 
-// APIHandler serves /api/v1. local adds the endpoints that exist only on the root-only socket.
+// APIHandler serves /api/v1. local adds the endpoints that exist only on the root-only socket: escrow
+// export, by which credentials leave the server, to root on the server only (spec §2.3 and §3.3).
 func (s *Server) APIHandler(local bool) http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/v1/status", s.apiStatus)
-	mux.HandleFunc("GET /api/v1/hosts", s.apiHosts)
-	mux.HandleFunc("POST /api/v1/hosts", s.apiAddHost)
-	mux.HandleFunc("GET /api/v1/hosts/{fqdn}", s.apiHost)
-	mux.HandleFunc("GET /api/v1/hosts/{fqdn}/events", s.apiHostEvents)
-	mux.HandleFunc("POST /api/v1/hosts/{fqdn}/enrollment-code", s.apiEnrollmentCode)
-	mux.HandleFunc("PUT /api/v1/hosts/{fqdn}/s3-key", s.apiSetS3Key)
-	mux.HandleFunc("GET /api/v1/hosts/{fqdn}/snapshots", s.apiSnapshots)
-	mux.HandleFunc("GET /api/v1/hosts/{fqdn}/snapshots/{id}/files", s.apiFiles)
-	mux.HandleFunc("GET /api/v1/hosts/{fqdn}/snapshots/{id}/changes", s.apiChanges)
-	mux.HandleFunc("GET /api/v1/hosts/{fqdn}/find", s.apiFind)
-	mux.HandleFunc("POST /api/v1/hosts/{fqdn}/acknowledge", s.apiAcknowledge)
-	mux.HandleFunc("POST /api/v1/hosts/{fqdn}/snapshots/{id}/restore", s.apiRestore)
-	mux.HandleFunc("GET /api/v1/restores", s.apiRestores)
-	mux.HandleFunc("GET /api/v1/search", s.apiSearch)
-	mux.HandleFunc("PUT /api/v1/hosts/{fqdn}/jobs/{job}", s.apiSetJob)
-	mux.HandleFunc("POST /api/v1/hosts/{fqdn}/jobs/{job}/check", s.apiCheckJob)
-	mux.HandleFunc("POST /api/v1/hosts/{fqdn}/jobs/{job}/keep-longer", s.apiKeepLonger)
-	// Retention (plan-m3): what waits, the daily run, Prune now, Delete snapshot, and the past prunes.
-	mux.HandleFunc("GET /api/v1/hosts/{fqdn}/pending", s.apiPending)
-	mux.HandleFunc("POST /api/v1/hosts/{fqdn}/retention/run", s.apiRunRetention)
-	mux.HandleFunc("GET /api/v1/hosts/{fqdn}/prune-now", s.apiPruneNowPlan)
-	mux.HandleFunc("POST /api/v1/hosts/{fqdn}/prune-now", s.apiPruneNow)
-	mux.HandleFunc("POST /api/v1/hosts/{fqdn}/snapshots/{id}/delete", s.apiDeleteSnapshot)
-	mux.HandleFunc("DELETE /api/v1/hosts/{fqdn}/snapshots/{id}/delete", s.apiCancelDeletion)
-	mux.HandleFunc("GET /api/v1/hosts/{fqdn}/prunes", s.apiPrunes)
-	mux.HandleFunc("GET /api/v1/prunes", s.apiPrunes)
-	mux.HandleFunc("POST /api/v1/hosts/{fqdn}/jobs/{job}/run", s.apiRunNow)
-	mux.HandleFunc("GET /api/v1/revisions", s.apiRevisions)
-	mux.HandleFunc("GET /api/v1/revisions/{n}", s.apiRevision)
-	mux.HandleFunc("GET /api/v1/revisions/{a}/diff/{b}", s.apiDiff)
-	mux.HandleFunc("GET /api/v1/audit", s.apiAudit)
-	mux.HandleFunc("POST /api/v1/maintenance/check", s.apiCheck)
-	if local {
-		// Credentials leave the server only here, to root on the server (spec §2.3; a listed exception
-		// to UI = API = CLI).
-		mux.HandleFunc("POST /api/v1/escrow/export", s.apiEscrow)
+	for _, rt := range s.Routes() {
+		if rt.Local && !local {
+			continue
+		}
+		mux.HandleFunc(rt.Method+" "+rt.Path, s.guard(rt))
 	}
 	return mux
 }
@@ -106,6 +83,8 @@ func apiError(w http.ResponseWriter, err error) {
 		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": ce.Error(), "findings": ce.Findings, "blocking": ce.Blocking})
 	case errors.As(err, &se):
 		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": se.Error(), "storage": se.Report})
+	case errors.Is(err, ErrForbidden):
+		writeErr(w, http.StatusForbidden, err.Error())
 	case errors.Is(err, store.ErrConflict):
 		writeErr(w, http.StatusConflict, err.Error())
 	case errors.Is(err, store.ErrNotFound):
@@ -137,21 +116,31 @@ func (s *Server) apiStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) apiHosts(w http.ResponseWriter, r *http.Request) {
+	v, err := s.viewerOf(r.Context(), actorOf(r))
+	if err != nil {
+		apiError(w, err)
+		return
+	}
 	hosts, err := s.Hosts(r.Context())
 	if err != nil {
 		apiError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, hosts)
+	writeJSON(w, http.StatusOK, v.hosts(hosts))
 }
 
 func (s *Server) apiHost(w http.ResponseWriter, r *http.Request) {
+	v, err := s.viewerOf(r.Context(), actorOf(r))
+	if err != nil {
+		apiError(w, err)
+		return
+	}
 	h, err := s.Host(r.Context(), r.PathValue("fqdn"))
 	if err != nil {
 		apiError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, h)
+	writeJSON(w, http.StatusOK, v.hosts([]HostView{h})[0])
 }
 
 func (s *Server) apiHostEvents(w http.ResponseWriter, r *http.Request) {
@@ -192,7 +181,7 @@ func (s *Server) apiEnrollmentCode(w http.ResponseWriter, r *http.Request) {
 func (s *Server) apiSnapshots(w http.ResponseWriter, r *http.Request) {
 	qv := r.URL.Query()
 	list, err := s.Snapshots(r.Context(), r.PathValue("fqdn"), SnapshotQuery{JobID: qv.Get("job"), Month: qv.Get("month"),
-		All: qv.Get("all") == "1", Refresh: qv.Get("refresh") == "1"})
+		All: qv.Get("all") == "1", Refresh: qv.Get("refresh") == "1", Retention: qv.Get("retention") == "1"})
 	if err != nil {
 		apiError(w, err)
 		return
@@ -243,25 +232,35 @@ func (s *Server) apiRestore(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) apiSearch(w http.ResponseWriter, r *http.Request) {
+	v, err := s.viewerOf(r.Context(), actorOf(r))
+	if err != nil {
+		apiError(w, err)
+		return
+	}
 	res, err := s.Search(r.Context(), r.URL.Query().Get("q"))
 	if err != nil {
 		apiError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, res)
+	writeJSON(w, http.StatusOK, v.search(res))
 }
 
 func (s *Server) apiRestores(w http.ResponseWriter, r *http.Request) {
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	if limit <= 0 || limit > 1000 {
-		limit = 100
-	}
-	v, err := s.Restores(r.Context(), limit)
+	v, err := s.viewerOf(r.Context(), actorOf(r))
 	if err != nil {
 		apiError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, v)
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	if limit <= 0 || limit > 1000 {
+		limit = 100
+	}
+	rv, err := s.Restores(r.Context(), limit)
+	if err != nil {
+		apiError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, v.restores(rv))
 }
 
 func (s *Server) apiAcknowledge(w http.ResponseWriter, r *http.Request) {
@@ -395,12 +394,17 @@ func (s *Server) apiPrunes(w http.ResponseWriter, r *http.Request) {
 	if limit <= 0 || limit > 1000 {
 		limit = 100
 	}
+	v, err := s.viewerOf(r.Context(), actorOf(r))
+	if err != nil {
+		apiError(w, err)
+		return
+	}
 	list, err := s.Prunes(r.Context(), r.PathValue("fqdn"), r.URL.Query().Get("all") == "1", limit)
 	if err != nil {
 		apiError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, list)
+	writeJSON(w, http.StatusOK, v.prunes(list))
 }
 
 func (s *Server) apiRunNow(w http.ResponseWriter, r *http.Request) {
@@ -417,7 +421,12 @@ func (s *Server) apiRevisions(w http.ResponseWriter, r *http.Request) {
 	if limit <= 0 || limit > 1000 {
 		limit = 50
 	}
-	revs, err := s.st.Q().ListRevisions(r.Context(), limit)
+	v, err := s.viewerOf(r.Context(), actorOf(r))
+	if err != nil {
+		apiError(w, err)
+		return
+	}
+	revs, err := s.visibleRevisions(r.Context(), v, limit)
 	if err != nil {
 		apiError(w, err)
 		return
@@ -426,6 +435,23 @@ func (s *Server) apiRevisions(w http.ResponseWriter, r *http.Request) {
 		revs = []store.Revision{}
 	}
 	writeJSON(w, http.StatusOK, revs)
+}
+
+// visibleRevision returns revision n with its config cut down, or not found if it changed none of the
+// actor's hosts.
+func (s *Server) visibleRevision(r *http.Request, v viewer, n int64) (store.Revision, error) {
+	rev, err := s.st.Q().GetRevision(r.Context(), n)
+	if err != nil {
+		return rev, err
+	}
+	if ok, err := s.revisionVisible(r.Context(), v, rev); err != nil || !ok {
+		if err == nil {
+			err = fmt.Errorf("revision %d: %w", n, store.ErrNotFound)
+		}
+		return store.Revision{}, err
+	}
+	rev.Config = v.config(rev.Config)
+	return rev, nil
 }
 
 func pathInt(r *http.Request, name string) (int64, error) {
@@ -442,7 +468,12 @@ func (s *Server) apiRevision(w http.ResponseWriter, r *http.Request) {
 		apiError(w, err)
 		return
 	}
-	rev, err := s.st.Q().GetRevision(r.Context(), n)
+	v, err := s.viewerOf(r.Context(), actorOf(r))
+	if err != nil {
+		apiError(w, err)
+		return
+	}
+	rev, err := s.visibleRevision(r, v, n)
 	if err != nil {
 		apiError(w, err)
 		return
@@ -457,12 +488,25 @@ func (s *Server) apiDiff(w http.ResponseWriter, r *http.Request) {
 		apiError(w, err)
 		return
 	}
+	v, err := s.viewerOf(r.Context(), actorOf(r))
+	if err != nil {
+		apiError(w, err)
+		return
+	}
 	changes, err := s.Diff(r.Context(), a, b)
 	if err != nil {
 		apiError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"from": a, "to": b, "changes": changes})
+	var fqdns []string
+	for _, n := range []int64{a, b} {
+		if rev, err := s.st.Q().GetRevision(r.Context(), n); err == nil {
+			for f := range rev.Config.Hosts {
+				fqdns = append(fqdns, f)
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"from": a, "to": b, "changes": v.changes(changes, fqdns)})
 }
 
 func (s *Server) apiAudit(w http.ResponseWriter, r *http.Request) {
@@ -470,13 +514,33 @@ func (s *Server) apiAudit(w http.ResponseWriter, r *http.Request) {
 	if limit <= 0 || limit > 1000 {
 		limit = 100
 	}
-	list, err := s.st.Q().ListAudit(r.Context(), r.URL.Query().Get("host"), limit)
+	v, err := s.viewerOf(r.Context(), actorOf(r))
 	if err != nil {
 		apiError(w, err)
 		return
 	}
-	if list == nil {
-		list = []store.AuditEntry{}
+	f := store.AuditFilter{FQDN: r.URL.Query().Get("host"), Action: r.URL.Query().Get("action"), Limit: limit}
+	if before, err := strconv.ParseInt(r.URL.Query().Get("before"), 10, 64); err == nil {
+		f.Before = before
+	}
+	if !v.everywhere() {
+		// Only the actor's hosts, and nothing that belongs to no host (decision 033).
+		hosts, err := s.st.Q().ListHosts(r.Context())
+		if err != nil {
+			apiError(w, err)
+			return
+		}
+		f.Hosts = []string{}
+		for _, h := range hosts {
+			if v.sees(h.FQDN) {
+				f.Hosts = append(f.Hosts, h.FQDN)
+			}
+		}
+	}
+	list, err := s.st.Q().ListAuditFiltered(r.Context(), f)
+	if err != nil {
+		apiError(w, err)
+		return
 	}
 	writeJSON(w, http.StatusOK, list)
 }

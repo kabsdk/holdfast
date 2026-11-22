@@ -214,6 +214,33 @@ func estimateKept(present []tier, keepLast int, gap time.Duration) int {
 	return max(int(total), keepLast)
 }
 
+// Expect is what a job gets, estimated from its schedule and windows like R101 and R102: about how many
+// restore points it keeps once it has run long enough, and how old the oldest is then.
+type Expect struct {
+	RestorePoints int           `json:"restore_points"`
+	Oldest        time.Duration `json:"-"`
+	OldestText    string        `json:"oldest"`
+}
+
+// Estimate is Expect for a job. A job whose schedule is invalid gets nothing.
+func Estimate(j config.Job) Expect {
+	if j.Schedule.Validate() != nil {
+		return Expect{}
+	}
+	var present []tier
+	for _, t := range tiers(j.Retention) {
+		if t.d != nil && t.d.N >= 1 {
+			present = append(present, t)
+		}
+	}
+	shortest, longest := j.Schedule.ShortestGap(), j.Schedule.LongestGap()
+	oldest := time.Duration(j.Retention.KeepLast) * longest
+	for _, t := range present {
+		oldest = max(oldest, Length(*t.d))
+	}
+	return Expect{RestorePoints: estimateKept(present, j.Retention.KeepLast, shortest), Oldest: oldest, OldestText: human(oldest)}
+}
+
 // RetentionCut is R104 (spec §4.5, decision 030): restic decided what the old and the new policy keep, and
 // the change is a cut when the new keep set is a strict subset of the old one. It returns nil otherwise.
 func RetentionCut(oldKeep, newKeep []string) *Finding {

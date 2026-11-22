@@ -101,7 +101,7 @@ func run(cfgPath string, now func() time.Time, log *slog.Logger) error {
 	}
 	srv.Run(ctx)
 
-	errc := make(chan error, 2)
+	errc := make(chan error, 3)
 	agentSrv := &http.Server{Addr: set.Listen, Handler: srv.AgentHandler(), ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		var err error
@@ -116,6 +116,24 @@ func run(cfgPath string, now func() time.Time, log *slog.Logger) error {
 			errc <- err
 		}
 	}()
+	// People: the UI and /api/v1 with sessions, on a listener of their own (decision 034).
+	var uiSrv *http.Server
+	if set.UI.Listen != "" {
+		uiSrv = &http.Server{Addr: set.UI.Listen, Handler: srv.UIHandler(), ReadHeaderTimeout: 10 * time.Second}
+		go func() {
+			var err error
+			if set.UI.TLS.CertFile != "" {
+				log.Info("serving the UI", "addr", set.UI.Listen, "url", set.UI.PublicURL)
+				err = uiSrv.ListenAndServeTLS(set.UI.TLS.CertFile, set.UI.TLS.KeyFile)
+			} else {
+				log.Warn("serving the UI WITHOUT TLS: for tests only", "addr", set.UI.Listen)
+				err = uiSrv.ListenAndServe()
+			}
+			if !errors.Is(err, http.ErrServerClosed) {
+				errc <- err
+			}
+		}()
+	}
 	var apiSrv *http.Server
 	if set.APISocket != "" {
 		l, err := listenSocket(set.APISocket)
@@ -138,6 +156,9 @@ func run(cfgPath string, now func() time.Time, log *slog.Logger) error {
 	sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = agentSrv.Shutdown(sctx)
+	if uiSrv != nil {
+		_ = uiSrv.Shutdown(sctx)
+	}
 	if apiSrv != nil {
 		_ = apiSrv.Shutdown(sctx)
 	}

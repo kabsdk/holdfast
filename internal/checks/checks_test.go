@@ -67,6 +67,14 @@ func TestJobChecks(t *testing.T) {
 	}
 }
 
+func TestDefaultJobPasses(t *testing.T) {
+	j := config.DefaultJob()
+	j.Paths = []string{"/etc"}
+	if fs := Job(j, History{}); len(fs) != 0 {
+		t.Fatalf("the default job must pass every check with no warnings (plan-m4 Q11): %+v", fs)
+	}
+}
+
 func TestRetentionCut(t *testing.T) {
 	if f := RetentionCut([]string{"a", "b", "c"}, []string{"a", "b"}); f == nil || f.Code != "R104" {
 		t.Fatalf("a strict subset is a cut: %+v", f)

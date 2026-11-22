@@ -117,7 +117,8 @@ func (a *Agent) runRestore(ctx context.Context, c proto.Command) bool {
 	a.mark(runMarker{Kind: proto.KindRestore, CommandID: c.ID, Started: started, Revision: rev})
 	defer os.Remove(a.path("running.json"))
 	rctx, cancel := context.WithTimeout(ctx, restoreTimeout)
-	sum, err := r.RestoreWith(rctx, sn.ID, restic.RestoreOptions{Target: target, Include: spec.Include, Exclude: spec.Exclude, DryRun: spec.DryRun})
+	sum, err := r.RestoreWith(rctx, sn.ID, restic.RestoreOptions{Target: target, Include: spec.Include, Exclude: spec.Exclude, DryRun: spec.DryRun,
+		Overwrite: spec.Overwrite})
 	timedOut := errors.Is(rctx.Err(), context.DeadlineExceeded)
 	cancel()
 	if ctx.Err() != nil {
