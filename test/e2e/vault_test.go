@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -33,8 +32,8 @@ func newVaultEnv(t *testing.T, a *env) *env {
 	}
 	dir := filepath.Join(a.dir, "site-b")
 	must(t, os.MkdirAll(dir, 0o700))
-	v := &env{t: t, dir: dir, port: freePort(t), sock: filepath.Join(dir, "run", "api.sock"), bucket: "hf-" + randHex(6), client: http.DefaultClient}
-	v.url = fmt.Sprintf("http://127.0.0.1:%d", v.port)
+	v := &env{t: t, dir: dir, port: freePort(t), sock: filepath.Join(dir, "run", "api.sock"), bucket: "hf-" + randHex(6), client: insecure, tls: serverCert(t)}
+	v.url = fmt.Sprintf("https://127.0.0.1:%d", v.port)
 	mc(t, "mb", "--quiet", "hf/"+v.bucket)
 	mc(t, "version", "enable", "hf/"+v.bucket)
 	mc(t, "ilm", "rule", "add", "--noncurrent-expire-days", "30", "hf/"+v.bucket)
@@ -70,7 +69,8 @@ func newVaultEnv(t *testing.T, a *env) *env {
 		"storage":     map[string]any{"endpoint": s3Endpoint, "bucket": v.bucket, "region": "us-east-1", "maintenance_credentials_file": maint},
 		"maintenance": map[string]any{"check": "daily", "check_cycle_days": 30, "retention": "off"},
 		"escrow":      map[string]any{"age_recipient": id.Recipient().String()},
-		"source":      map[string]any{"server": a.url, "token_file": tokenFile, "poll": "2s", "rclone_bin": rcloneBin},
+		"tls":         map[string]any{"cert_file": v.tls.cert, "key_file": v.tls.key},
+		"source":      map[string]any{"server": a.url, "ca_sha256": a.tls.pin, "token_file": tokenFile, "poll": "2s", "rclone_bin": rcloneBin},
 	}
 	b, _ := yaml.Marshal(set)
 	v.cfgPath = filepath.Join(dir, "vault.yaml")
@@ -310,7 +310,7 @@ func TestVault(t *testing.T) {
 	// Copies go on while site A's server is down: a snapshot made in A with plain restic is copied from the vault's
 	// last feed.
 	a.srv.kill(syscall.SIGTERM)
-	r := a.resticFor(esc[fqdn], false)
+	r := a.resticFor(esc[fqdn])
 	res, err := r.Backup(context.Background(), restic.BackupOptions{Paths: []string{src}, Tags: []string{"job=data"}, Host: fqdn})
 	must(t, err)
 	waitFor(t, "a copy made while site A's server is down", 2*time.Minute, func() bool { _, ok := copyOf(v.snaps(fqdn), res.SnapshotID); return ok })

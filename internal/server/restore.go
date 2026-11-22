@@ -12,9 +12,9 @@ import (
 
 	"github.com/kabsdk/holdfast/internal/access"
 	"github.com/kabsdk/holdfast/internal/config"
+	"github.com/kabsdk/holdfast/internal/gateway"
 	"github.com/kabsdk/holdfast/internal/proto"
 	"github.com/kabsdk/holdfast/internal/restic"
-	"github.com/kabsdk/holdfast/internal/server/storage"
 	"github.com/kabsdk/holdfast/internal/server/store"
 )
 
@@ -38,10 +38,9 @@ type RestoreInput struct {
 	Overwrite string `json:"overwrite,omitempty"`
 	// Message is why, for the audit log: the "Reason" in the UI.
 	Message string `json:"message,omitempty"`
-	// ToHost restores the snapshot onto another host (plan-m6 §2.2), with S3Key: a read-only key for this
-	// host's prefix, which the admin made. Input only, like every S3 key.
-	ToHost string      `json:"to_host,omitempty"`
-	S3Key  *S3KeyInput `json:"s3_key,omitempty"`
+	// ToHost restores the snapshot onto another host (plan-m6 §2.2). That host reads this one's repository through
+	// the gateway, which lets it for this restore only, and only to read (decision 041).
+	ToHost string `json:"to_host,omitempty"`
 	// FromVault restores the vault's copy of the snapshot, from site B (decision 039). The snapshot is the copy's
 	// ID or the original's here. The vault grants it on its next sync; the restore then runs on the host.
 	FromVault string `json:"from_vault,omitempty"`
@@ -104,12 +103,6 @@ func (s *Server) Restore(ctx context.Context, a Actor, fqdn, snapshotID string, 
 		if in.Target == proto.TargetInPlace {
 			return RestoreResult{}, &ValidationError{config.Problems{{Path: "target", Message: "another host's snapshot is restored into a new or another directory, never in place"}}}
 		}
-		if in.S3Key == nil {
-			return RestoreResult{}, &ValidationError{config.Problems{{Path: "s3_key", Message: "a read-only key for " + storage.Prefix(fqdn) +
-				"/ is needed: make one at the S3 server (docs/storage.md) and give it with --s3-key-file"}}}
-		}
-	} else if in.S3Key != nil {
-		return RestoreResult{}, &ValidationError{config.Problems{{Path: "s3_key", Message: "a key goes only with a restore onto another host"}}}
 	}
 	if s.set.IsVault() {
 		return RestoreResult{}, errVaultRestore
@@ -197,7 +190,7 @@ func (s *Server) Restore(ctx context.Context, a Actor, fqdn, snapshotID string, 
 		if agErr != nil || (proto.Facts{Protocol: ag.Protocol}).AgentProtocol() < proto.ProtocolRecovery {
 			return RestoreResult{}, fmt.Errorf("%s's agent does not know restores from other hosts: upgrade holdfast-agent there first: %w", target, ErrConflict)
 		}
-		if sealed, err = s.sealSource(ctx, fqdn, target, in.S3Key); err != nil {
+		if sealed, err = s.sealSource(ctx, fqdn, target); err != nil {
 			return RestoreResult{}, err
 		}
 		spec.JobID = "" // the safety backup's job: none on another host, which is why it is never in place
@@ -229,6 +222,11 @@ func (s *Server) Restore(ctx context.Context, a Actor, fqdn, snapshotID string, 
 		}
 		if in.ToHost != "" {
 			detail["from_host"], detail["to_host"] = fqdn, target
+			// The target may read this host's repository through the gateway until it reports the restore.
+			if err := q.AddGrant(ctx, store.Grant{CommandID: res.Command, Reader: target, Repo: fqdn, CreatedAt: now,
+				ExpiresAt: res.ExpiresAt.Add(GrantAfterExpiry)}); err != nil {
+				return err
+			}
 			// The snapshot's own host has it in its history too.
 			if err := q.Audit(ctx, store.AuditEntry{Actor: a.Name, Source: a.Source, Action: "restore.requested_elsewhere", FQDN: fqdn, JobID: sn.JobID,
 				Detail: detail}); err != nil {
@@ -244,18 +242,13 @@ func (s *Server) Restore(ctx context.Context, a Actor, fqdn, snapshotID string, 
 	return res, err
 }
 
-// sealSource tests the read-only key for host from's prefix, and seals what the target's agent needs to restore
-// from it: from's repository, its password and that key. Only the target's agent ever gets it, once.
-func (s *Server) sealSource(ctx context.Context, from, target string, in *S3KeyInput) ([]byte, error) {
-	key, err := in.key()
-	if err != nil {
-		return nil, err
-	}
-	rep := s.prober.ProbeReadOnly(ctx, from, key)
-	rep.CheckedAt = s.now()
-	if !rep.OK() {
-		return nil, &StorageError{rep}
-	}
+// GrantAfterExpiry is how long a grant outlives its restore command's pick-up deadline: the agent's longest restore,
+// and an hour to report it. The grant usually ends sooner, when the restore is reported.
+const GrantAfterExpiry = 25 * time.Hour
+
+// sealSource seals what the target's agent needs to restore from host from: from's password. Only the target's agent
+// ever gets it, once. It reads the repository through the gateway, under the grant the restore comes with.
+func (s *Server) sealSource(ctx context.Context, from, target string) ([]byte, error) {
 	c, err := s.st.Q().GetCredentials(ctx, from)
 	if err != nil {
 		return nil, err
@@ -264,8 +257,7 @@ func (s *Server) sealSource(ctx context.Context, from, target string, in *S3KeyI
 	if err != nil {
 		return nil, err
 	}
-	b, err := json.Marshal(proto.RestoreSource{FQDN: from, Repository: c.Repository, RepoPassword: pw, S3AccessKeyID: key.AccessKeyID,
-		S3SecretAccessKey: key.SecretAccessKey})
+	b, err := json.Marshal(proto.RestoreSource{FQDN: from, Repository: gateway.RepoURL(s.set.PublicURL, from), RepoPassword: pw})
 	if err != nil {
 		return nil, err
 	}
@@ -318,6 +310,9 @@ func (s *Server) expireCommands(ctx context.Context) {
 		var spec proto.RestoreSpec
 		_ = json.Unmarshal(c.Payload, &spec)
 		err := s.st.InTx(ctx, func(q *store.Q) error {
+			if err := q.EndGrant(ctx, c.ID, now); err != nil {
+				return err
+			}
 			// A restore's snapshot goes in the detail: SnapshotID means "this event made it" (decision 032).
 			if _, err := q.InsertEvent(ctx, store.Event{FQDN: c.FQDN, ID: "expired-" + c.ID, Kind: proto.KindRestore, JobID: c.JobID, CommandID: c.ID,
 				Status: proto.StatusFailed, Started: c.CreatedAt, Finished: now,

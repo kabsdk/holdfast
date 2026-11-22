@@ -18,10 +18,10 @@ func TestAgentProtocol(t *testing.T) {
 		t.Fatal(err)
 	}
 	var old *AgentTooOldError
-	if _, err := s.Enroll(ctx, proto.EnrollRequest{FQDN: fqdn, Code: res.Enrollment.Code}); !errors.As(err, &old) || old.Agent != 1 {
+	if err := s.Enroll(ctx, proto.EnrollRequest{FQDN: fqdn, Code: res.Enrollment.Code}, certOf(fqdn)); !errors.As(err, &old) || old.Agent != 1 {
 		t.Fatalf("an agent before M5 enrolling with a server that needs 2: %v", err)
 	}
-	if _, err := s.Enroll(ctx, proto.EnrollRequest{FQDN: fqdn, Code: res.Enrollment.Code, Facts: proto.Facts{Protocol: 2}}); err != nil {
+	if err := s.Enroll(ctx, proto.EnrollRequest{FQDN: fqdn, Code: res.Enrollment.Code, Facts: proto.Facts{Protocol: 2}}, certOf(fqdn)); err != nil {
 		t.Fatal(err)
 	}
 

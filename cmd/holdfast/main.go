@@ -73,6 +73,7 @@ type storageReport struct {
 		Code    string `json:"code"`
 		Message string `json:"message"`
 	} `json:"findings"`
+	ObjectLock string `json:"object_lock"` // reported, not required (decision 041)
 }
 
 func (r *storageReport) lines() string {
@@ -139,7 +140,7 @@ func call(method, path string, in, out any) ([]byte, error) {
 				msg += "\n  " + p.Path + ": " + p.Message
 			}
 			if e.Storage != nil && len(e.Storage.Findings) > 0 {
-				msg = "the S3 key does not meet the storage contract (docs/storage.md):" + e.Storage.lines()
+				msg = "the storage does not meet the contract (docs/storage.md):" + e.Storage.lines()
 			}
 			return raw, errors.New(msg)
 		}
@@ -331,6 +332,9 @@ func hostCmd() *cobra.Command {
 			} else {
 				fmt.Printf("storage: checks failed at %s (docs/storage.md):%s\n", h.Storage.CheckedAt.Local().Format("2006-01-02 15:04"), h.Storage.lines())
 			}
+			if h.Storage.ObjectLock != "" {
+				fmt.Println("storage: the bucket's Object Lock is", h.Storage.ObjectLock)
+			}
 		}
 		printOperating(h)
 		w := table()
@@ -349,16 +353,9 @@ func hostCmd() *cobra.Command {
 		return w.Flush()
 	}})
 	var add jobFlags
-	var msg, keyFile string
+	var msg string
 	addCmd := &cobra.Command{Use: "add <fqdn>", Short: "Add a host (a new revision), and get its 15-minute enrollment code", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, a []string) error {
 		in := map[string]any{"fqdn": a[0], "message": msg}
-		if keyFile != "" {
-			key, err := readS3Key(keyFile)
-			if err != nil {
-				return err
-			}
-			in["s3_key"] = key
-		}
 		if add.id != "" {
 			job, err := add.job()
 			if err != nil {
@@ -385,7 +382,7 @@ func hostCmd() *cobra.Command {
 			printJSON(raw)
 			return nil
 		}
-		fmt.Printf("added %s in revision %d; its S3 key passed every storage check\nenrollment code %s, valid until %s\n\nrun on the host, as root:\n  %s\n",
+		fmt.Printf("added %s in revision %d; its storage passed every check\nenrollment code %s, valid until %s\n\nrun on the host, as root:\n  %s\n",
 			a[0], res.Revision, res.Enrollment.Code, res.Enrollment.ExpiresAt.Local().Format("15:04"), res.Enrollment.InstallCommand)
 		if len(res.Findings) > 0 {
 			fmt.Println("\nchecks on job " + add.id + ":")
@@ -396,13 +393,12 @@ func hostCmd() *cobra.Command {
 		}
 		return nil
 	}}
-	addCmd.Flags().StringVar(&keyFile, "s3-key-file", "", "the host's S3 key: a root-only file of AWS_ACCESS_KEY_ID= and AWS_SECRET_ACCESS_KEY= lines, or - for stdin (docs/storage.md)")
 	addCmd.Flags().StringVarP(&msg, "message", "m", "", "revision message")
 	addCmd.Flags().StringVar(&add.id, "job", "", "also add this job (then the job flags apply)")
 	add.register(addCmd)
 	c.AddCommand(addCmd)
 	var setKeyFile, setKeyMsg string
-	setKey := &cobra.Command{Use: "set-key <fqdn>", Short: "Replace a host's S3 key; the key is tested first, and a key that fails is refused", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, a []string) error {
+	setKey := &cobra.Command{Use: "set-key <fqdn>", Short: "In a vault: give a host its read-only key, for restores from the vault; the key is tested first, and a key that fails is refused", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, a []string) error {
 		if setKeyFile == "" {
 			return errors.New("--s3-key-file is required")
 		}
@@ -421,7 +417,7 @@ func hostCmd() *cobra.Command {
 			printJSON(raw)
 			return nil
 		}
-		fmt.Printf("the new S3 key of %s passed every storage check and is credentials version %d; the agent gets it on its next poll\n"+
+		fmt.Printf("the new read-only key of %s passed every storage check and is credentials version %d\n"+
 			"export a new escrow bundle: the last one has the old key\n", a[0], res.CredentialsVersion)
 		return nil
 	}}
@@ -456,7 +452,7 @@ func hostCmd() *cobra.Command {
 				return nil
 			}
 			fmt.Printf("removed in revision %d. Its agent gets an empty config and stops backing up; the host is then retired.\n"+
-				"Its repository and snapshots stay. Delete its S3 key at your S3 server when you no longer need it.\n", res.Revision)
+				"Its repository and snapshots stay, and its agent's certificate stops working.\n", res.Revision)
 			return nil
 		}}
 	removeHost.Flags().StringVarP(&removeMsg, "message", "m", "", "revision message")
@@ -898,7 +894,7 @@ func escrowCmd() *cobra.Command {
 		if _, err := f.Write(append(b, '\n')); err != nil {
 			return err
 		}
-		fmt.Printf("wrote %s (mode 0600). It holds every repository password and S3 key in the clear: store it offline and delete this copy.\n", to)
+		fmt.Printf("wrote %s (mode 0600). It holds every repository password in the clear: store it offline and delete this copy.\n", to)
 		return nil
 	}}
 	export.Flags().StringVar(&to, "to", "", "file to create (it must not exist)")

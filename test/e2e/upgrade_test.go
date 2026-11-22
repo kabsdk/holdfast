@@ -6,7 +6,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -15,8 +14,10 @@ import (
 
 // Plan-m5 §3: an upgrade from the previous agent to this one, and an agent too old for the server.
 //
-// The previous agent is built from HOLDFAST_PREV_AGENT_REF, by default M4's last commit: the agent before
-// M5, which sends no protocol version.
+// The previous agent is built from HOLDFAST_PREV_AGENT_REF, by default M4's last commit: an agent with a bearer
+// token and no certificate of its own. From M8 on (decision 041) such an agent is not upgraded in place but enrolled
+// again, so that is what this test checks. Once a release with agent certificates exists, the default becomes it,
+// and the test upgrades in place again.
 const defaultPrevAgentRef = "c69b595"
 
 // buildPrevAgent builds the previous agent from git into binDir, as holdfast-agent-prev.
@@ -58,31 +59,18 @@ func TestAgentUpgradeAndTooOld(t *testing.T) {
 	const fqdn = "upg01.example.com"
 	code := e.addHost(fqdn, "data", "--path", src, "--every", "1m")
 
-	// The previous agent enrolls and backs up.
-	dir := filepath.Join(e.dir, "agent-upg01")
-	must(t, os.MkdirAll(dir, 0o700))
-	a := &agentProc{dir: dir, cfgPath: filepath.Join(dir, "agent.yaml")}
-	out, err := exec.Command(prev, "enroll", "--server", e.url, "--fqdn", fqdn, "--code", code,
-		"--config", a.cfgPath, "--state-dir", filepath.Join(dir, "state"), "--credentials-dir", filepath.Join(dir, "credentials"),
-		"--restic", resticBin, "--poll-timeout", "2s", "--tick", "250ms").CombinedOutput()
-	if err != nil {
-		t.Fatalf("the previous agent's enroll: %v\n%s", err, out)
-	}
-	old := start(t, e.logFile("agent-upg01-prev"), append(os.Environ(), "TZ=UTC"), "holdfast-agent-prev", "run", "--config", a.cfgPath)
-	e.waitProgress(fqdn, "first_backup_done", 2*time.Minute)
-	if v, p := e.agentFacts(fqdn); v != "prev" || p != 0 {
-		t.Fatalf("the previous agent reports %q, protocol %d", v, p)
+	// An agent from before decision 041 has no certificate of its own, so this server cannot know it: its
+	// enrollment is refused, with a reason, and the code stays valid. Every agent enrolls again on M8.
+	if _, out, err := e.enrollWithBinary(prev, fqdn, code, e.url); err == nil || !strings.Contains(string(out), "certificate") {
+		t.Fatalf("an agent without a certificate of its own must be refused, and told why: %v\n%s", err, out)
 	}
 
-	// Upgraded in place, as the package's restart does: the same config, credentials and state.
-	old.kill(syscall.SIGTERM)
-	e.runAgent(a)
+	// The new agent, in the same directories, enrolls with the same code and backs up.
+	a := e.startAgent(fqdn, code)
+	e.waitProgress(fqdn, "first_backup_done", 2*time.Minute)
 	waitFor(t, "the new agent to report", time.Minute, func() bool { v, p := e.agentFacts(fqdn); return v == "dev" && p == proto.Protocol })
 	before := countStatus(e.events(fqdn), "data", "success")
-	waitFor(t, "a backup by the new agent", 3*time.Minute, func() bool { return countStatus(e.events(fqdn), "data", "success") > before })
-	if n := countStatus(e.events(fqdn), "data", "interrupted"); n != 0 {
-		t.Fatalf("the upgrade interrupted %d runs", n)
-	}
+	waitFor(t, "a scheduled backup", 3*time.Minute, func() bool { return countStatus(e.events(fqdn), "data", "success") > before })
 
 	// The server now needs a newer protocol, so this agent is too old: it is told so, and the host says so. It
 	// keeps backing up on its cached config, and the server still takes its reports.

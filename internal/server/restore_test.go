@@ -22,7 +22,7 @@ func TestRestoreRequests(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Enroll(ctx, proto.EnrollRequest{FQDN: fqdn, Code: res.Enrollment.Code}); err != nil {
+	if err := s.Enroll(ctx, proto.EnrollRequest{FQDN: fqdn, Code: res.Enrollment.Code}, certOf(fqdn)); err != nil {
 		t.Fatal(err)
 	}
 	const id = "851e6c7f6646ff2b9fbc2e56485eb34ce841d3f41c5b09981b8a46c0c0165d56"

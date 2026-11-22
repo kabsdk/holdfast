@@ -26,15 +26,15 @@ function EnrollPanel({ host, done }) {
   </div>`;
 }
 
-function KeyPanel({ host, done, vault }) {
+// In a vault only: the read-only key for restores from it (decision 039). Hosts have no S3 key (decision 041).
+function KeyPanel({ host, done }) {
   const [id, setID] = useState('');
   const [secret, setSecret] = useState('');
   const [msg, setMsg] = useState('');
   const act = useAction();
   return html`<div class="panel">
-    <h3>${vault ? 'The read-only key for restores from this site' : 'Replace the S3 key'}</h3>
-    <p class="muted">${vault ? html`A key that may only read <code>repos/${host.fqdn}/</code> in this site's bucket, made at its S3 server (docs/storage.md). The vault gives it, with the repository's password, to the host's agent for each restore from here.`
-      : 'Make the key at your S3 server first (docs/storage.md).'} Holdfast tests it before it keeps it; a key that fails is refused, and the old one stays.</p>
+    <h3>The read-only key for restores from this site</h3>
+    <p class="muted">A key that may only read <code>repos/${host.fqdn}/</code> in this site's bucket, made at its S3 server (docs/storage.md). The vault gives it, with the repository's password, to the host's agent for each restore from here. Holdfast tests it before it keeps it; a key that fails is refused, and the old one stays.</p>
     <label class="field"><span>Access key ID</span><input value=${id} onInput=${(e) => setID(e.target.value)} autocomplete="off" /></label>
     <label class="field"><span>Secret access key</span><input type="password" value=${secret} onInput=${(e) => setSecret(e.target.value)} autocomplete="new-password" /></label>
     <label class="field"><span>Why (audit log)</span><input value=${msg} onInput=${(e) => setMsg(e.target.value)} /></label>
@@ -43,7 +43,7 @@ function KeyPanel({ host, done, vault }) {
       <button onClick=${done}>Close</button>
     </div>
     <${ErrorBox} error=${act.error} />
-    ${act.done && html`<div class="banner ok">The new key passed every storage check and is credentials version ${act.done.credentials_version}. ${vault ? 'Restores from this site can be granted now.' : 'The agent gets it on its next poll. Export a new escrow bundle on the server: the last one has the old key.'}</div>`}
+    ${act.done && html`<div class="banner ok">The new key passed every storage check and is credentials version ${act.done.credentials_version}. Restores from this site can be granted now.</div>`}
   </div>`;
 }
 
@@ -54,7 +54,7 @@ function RotatePanel({ host, done }) {
   const r = act.done;
   return html`<div class="panel">
     <h3>Rotate the repository password</h3>
-    <p class="muted">For a host you think is compromised. Holdfast adds a new restic password to the repository, removes the old one, revokes the agent's token and issues a new enrollment code. The host backs up again only once it is clean and enrolled again.</p>
+    <p class="muted">For a host you think is compromised. Holdfast adds a new restic password to the repository, removes the old one, unpins the agent's certificate and issues a new enrollment code. The host backs up again only once it is clean and enrolled again.</p>
     <label class="field"><span>Why (audit log)</span><input value=${msg} onInput=${(e) => setMsg(e.target.value)} /></label>
     <div class="row">
       <button class="danger" disabled=${act.busy || !!r} onClick=${() => act.run(() => api.rotate(host.fqdn, { message: msg }))}>Rotate now</button>
@@ -65,7 +65,7 @@ function RotatePanel({ host, done }) {
       ${r.warning && html`<div class="banner warning">${r.warning}</div>`}
       <p>Once the host is clean or rebuilt, enroll it with code <strong class="mono">${r.enrollment.code}</strong>, valid until ${fmtTime(r.enrollment.expires_at)}. As root on the host:</p>
       <pre>${r.enrollment.install_command}</pre><${CopyButton} text=${r.enrollment.install_command} />
-      <p class="muted">Also make the host a new S3 key at your S3 server and give it with Replace S3 key: the old key may be known too.</p>`}
+      <p class="muted">Enrolling makes the host a new key of its own; the old certificate no longer works.</p>`}
   </div>`;
 }
 
@@ -92,6 +92,7 @@ function Repository({ host }) {
   return html`<dl class="facts">
     <dt>Repository</dt><dd><code>repos/${host.fqdn}</code>${s ? ` · ${bytes(s.current_bytes)} in ${s.objects} objects, and ${bytes(s.noncurrent_bytes)} in old versions S3 keeps · measured ${ago(s.measured_at)}` : ' · not measured yet'}</dd>
     <dt>Escrow</dt><dd>${esc.current ? `the bucket's escrow file holds the current password (written ${fmtTime(esc.written_at)})` : esc.error ? `not written: ${esc.error}` : 'not written'}</dd>
+    ${host.storage?.object_lock && html`<dt>Object Lock</dt><dd>${host.storage.object_lock} <span class="muted">· reported, not required; Holdfast never extends a lock</span></dd>`}
     ${d && html`<dt>Decommission</dt><dd>${d.done_at
       ? `done ${fmtTime(d.done_at)}: ${d.objects_deleted} objects deleted, as ${d.requested_by} asked. The data is really gone ${d.really_gone_at ? fmtDay(d.really_gone_at) : 'when the lifecycle rule expires the old versions'}.`
       : `asked by ${d.requested_by}; the repository is deleted ${fmtTime(d.due_at)}`}</dd>`}
@@ -222,7 +223,7 @@ export function Host({ fqdn, reloadHosts, vault }) {
         ${can(h, 'retention.cut') && html`<button onClick=${() => act.run(() => api.retentionRun(h.fqdn))}>Run retention now</button>`}
         ${can(h, 'retention.cut') && html`<a class="button" href=${link('hosts', h.fqdn, 'prune-now')}>Prune now…</a>`}
         ${!vault && can(h, 'config.storage') && html`<button onClick=${() => setPanel('enroll')}>New enrollment code</button>`}
-        ${can(h, 'config.storage') && html`<button onClick=${() => setPanel('key')}>${vault ? 'Read-only key for restores…' : 'Replace S3 key'}</button>`}
+        ${vault && can(h, 'config.storage') && html`<button onClick=${() => setPanel('key')}>Read-only key for restores…</button>`}
         ${!vault && can(h, 'config.storage') && h.state !== 'retired' && html`<button onClick=${() => setPanel('rotate')}>Rotate password…</button>`}
         ${can(h, 'repository.rollback') && !(h.decommission && h.decommission.done_at) && html`<a class="button" href=${link('hosts', h.fqdn, 'rollback')}>Roll back…</a>`}
         ${can(h, 'host.remove') && h.state !== 'retired' && !h.removed_at && (!vault || h.jobs.every((j) => j.retired)) && html`<button onClick=${() => {
@@ -236,7 +237,7 @@ export function Host({ fqdn, reloadHosts, vault }) {
     <${ErrorBox} error=${act.error} />
     ${act.done && act.done.run && html`<div class="banner ok">The daily retention run started (run ${act.done.run}). Config history lists past prunes.</div>`}
     ${panel === 'enroll' && html`<${EnrollPanel} host=${h} done=${() => setPanel('')} />`}
-    ${panel === 'key' && html`<${KeyPanel} host=${h} done=${() => setPanel('')} vault=${vault} />`}
+    ${panel === 'key' && html`<${KeyPanel} host=${h} done=${() => setPanel('')} />`}
     ${panel === 'rotate' && html`<${RotatePanel} host=${h} done=${() => { setPanel(''); refresh(); }} />`}
     ${panel === 'decommission' && html`<${DecommissionPanel} host=${h} done=${() => { setPanel(''); refresh(); }} />`}
     ${panel.startsWith('offsite:') && html`<${OffsiteRestore} host=${h} vault=${panel.slice(8)} done=${() => setPanel('')} />`}

@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kabsdk/holdfast/internal/gateway"
+	"github.com/kabsdk/holdfast/internal/pin"
 	"github.com/kabsdk/holdfast/internal/proto"
 	"github.com/kabsdk/holdfast/internal/server/creds"
 	"github.com/kabsdk/holdfast/internal/server/store"
@@ -25,6 +28,10 @@ func (s *Server) AgentHandler() http.Handler {
 	mux.HandleFunc("POST "+proto.Base+"/events", s.agentAuth(s.handleEvents))
 	mux.HandleFunc("POST "+proto.VaultBase+"/sync", s.vaultAuth(s.handleVaultSync))
 	mux.HandleFunc("POST "+proto.VaultBase+"/grant", s.vaultAuth(s.handleVaultGrant))
+	if s.gw != nil {
+		// restic's REST protocol, for the host whose certificate the connection was made with (decision 041).
+		mux.HandleFunc(gateway.Base, s.agentAuth(func(w http.ResponseWriter, r *http.Request) { s.gw.Serve(w, r, hostOf(r)) }))
+	}
 	mux.HandleFunc("GET /metrics", s.handleMetrics)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		if err := s.st.Pool().Ping(r.Context()); err != nil {
@@ -50,18 +57,33 @@ type ctxKey int
 
 const hostKey ctxKey = 1
 
-// agentAuth resolves the bearer token to the host it belongs to. The host identity always comes from
-// here, never from a request body.
+// AgentTLSConfig is the agent listener's TLS (decision 041). It asks every client for a certificate and verifies
+// none against a CA: an agent's certificate is self-signed, and counts only because the server pinned it at
+// enrollment. The TLS handshake proves the client holds its private key. /metrics and /healthz need no certificate.
+func AgentTLSConfig() *tls.Config {
+	return &tls.Config{MinVersion: tls.VersionTLS12, ClientAuth: tls.RequestClientCert}
+}
+
+// certificateOf returns the fingerprint of the certificate the request's connection was made with, or "".
+func certificateOf(r *http.Request) string {
+	if r.TLS == nil || len(r.TLS.PeerCertificates) == 0 {
+		return ""
+	}
+	return pin.Fingerprint(r.TLS.PeerCertificates[0])
+}
+
+// agentAuth resolves the connection's certificate to the host that enrolled with it. The host identity always
+// comes from here, never from a request body.
 func (s *Server) agentAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		tok := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
-		if tok == "" {
-			writeErr(w, http.StatusUnauthorized, "missing agent credential")
+		fp := certificateOf(r)
+		if fp == "" {
+			writeErr(w, http.StatusUnauthorized, "no agent certificate: agents connect over TLS with the certificate they enrolled with")
 			return
 		}
-		fqdn, err := s.st.Q().AgentByToken(r.Context(), creds.HashToken(tok))
+		fqdn, err := s.st.Q().AgentByCertificate(r.Context(), fp)
 		if err != nil {
-			writeErr(w, http.StatusUnauthorized, "unknown agent credential")
+			writeErr(w, http.StatusUnauthorized, "unknown agent certificate: enroll this host (again) with holdfast-agent enroll")
 			return
 		}
 		next(w, r.WithContext(context.WithValue(r.Context(), hostKey, fqdn)))
@@ -76,26 +98,34 @@ func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad request")
 		return
 	}
-	tok, err := s.Enroll(r.Context(), req)
-	if err != nil {
+	fp := certificateOf(r)
+	if fp == "" {
+		writeErr(w, http.StatusBadRequest, "enrollment needs the agent's own certificate on the connection: use holdfast-agent enroll, which makes it")
+		return
+	}
+	if err := s.Enroll(r.Context(), req, fp); err != nil {
 		// One message for every refusal; the audit log has the reason.
 		writeErr(w, http.StatusForbidden, "enrollment refused: the code is invalid, expired or used, the host is unknown, "+
 			"or its storage does not meet the contract; `holdfast audit --host <fqdn>` on the server says which")
 		return
 	}
-	writeJSON(w, http.StatusOK, proto.EnrollResponse{Token: tok})
+	writeJSON(w, http.StatusOK, proto.EnrollResponse{CertificateSHA256: fp})
 }
 
-// Enroll redeems a code and returns the agent's token. The code is checked first. Storage is then set up
-// again, idempotently, before the code is used, so a storage failure leaves the code valid for a retry.
-func (s *Server) Enroll(ctx context.Context, req proto.EnrollRequest) (string, error) {
+// Enroll redeems a code and pins the agent's certificate, by its fingerprint: from then on that certificate is the
+// host (decision 041). The code is checked first. Storage is then set up again, idempotently, before the code is
+// used, so a storage failure leaves the code valid for a retry.
+func (s *Server) Enroll(ctx context.Context, req proto.EnrollRequest, certificate string) error {
 	now := s.now()
 	fqdn := strings.TrimSpace(req.FQDN)
 	codeHash := creds.HashToken(creds.NormaliseCode(req.Code))
-	refuse := func(reason error) (string, error) {
+	refuse := func(reason error) error {
 		_ = s.st.Q().Audit(ctx, store.AuditEntry{Actor: "agent:" + fqdn, Source: "agent", Action: "agent.enroll_refused", FQDN: fqdn,
 			Detail: map[string]any{"reason": reason.Error(), "hostname_fqdn": req.Facts.HostnameFQDN}})
-		return "", reason
+		return reason
+	}
+	if len(certificate) != 64 {
+		return refuse(errors.New("no certificate fingerprint"))
 	}
 	h, err := s.st.Q().GetHost(ctx, fqdn)
 	if err != nil {
@@ -120,16 +150,15 @@ func (s *Server) Enroll(ctx context.Context, req proto.EnrollRequest) (string, e
 		s.log.Warn("enrollment refused: the host's storage does not meet the contract", "host", fqdn, "codes", rep.Codes())
 		return refuse(errors.New("the host's storage does not meet the contract: " + rep.Summary()))
 	}
-	tok := creds.NewToken()
 	err = s.st.InTx(ctx, func(q *store.Q) error {
 		if err := q.RedeemEnrollmentCode(ctx, fqdn, codeHash, now); err != nil {
 			return err
 		}
-		if err := q.EnrollAgent(ctx, fqdn, creds.HashToken(tok), now); err != nil {
+		if err := q.EnrollAgent(ctx, fqdn, certificate, now); err != nil {
 			return err
 		}
 		detail := map[string]any{"agent_version": req.Facts.AgentVersion, "restic_version": req.Facts.ResticVersion,
-			"os": req.Facts.OSID + " " + req.Facts.OSVersion, "hostname_fqdn": req.Facts.HostnameFQDN}
+			"os": req.Facts.OSID + " " + req.Facts.OSVersion, "hostname_fqdn": req.Facts.HostnameFQDN, "certificate_sha256": certificate}
 		if req.Facts.HostnameFQDN != "" && req.Facts.HostnameFQDN != fqdn {
 			detail["warning"] = "hostname -f does not match the FQDN" // plan-m1 Q9: a warning, not a refusal
 		}
@@ -138,7 +167,7 @@ func (s *Server) Enroll(ctx context.Context, req proto.EnrollRequest) (string, e
 	if err != nil {
 		return refuse(err)
 	}
-	return tok, nil
+	return nil
 }
 
 func (s *Server) handlePoll(w http.ResponseWriter, r *http.Request) {
@@ -238,12 +267,11 @@ func (s *Server) pollAnswer(ctx context.Context, fqdn string, req proto.PollRequ
 		return resp, false, err
 	}
 	if c.Version != req.CredentialsVersion {
-		pw, err1 := s.seal.Open(c.RepoPassword, fqdn)
-		sec, err2 := s.seal.Open(c.S3Secret, fqdn)
-		if err := errors.Join(err1, err2); err != nil {
+		pw, err := s.seal.Open(c.RepoPassword, fqdn)
+		if err != nil {
 			return resp, false, err
 		}
-		resp.Credentials = &proto.Credentials{Version: c.Version, RepoPassword: pw, S3AccessKeyID: c.S3AccessKeyID, S3SecretAccessKey: sec}
+		resp.Credentials = &proto.Credentials{Version: c.Version, RepoPassword: pw}
 		changed = true
 	}
 	cmds, err := q.PendingCommands(ctx, fqdn)
@@ -258,7 +286,7 @@ func (s *Server) pollAnswer(ctx context.Context, fqdn string, req proto.PollRequ
 				if err := json.Unmarshal(c.Payload, pc.Restore); err != nil {
 					return resp, false, fmt.Errorf("restore command %s: %w", c.ID, err)
 				}
-				// A restore from another host: its repository, password and read-only key, sealed for this host.
+				// A restore from another repository: its password, and for a vault's copy its key, sealed for this host.
 				if len(c.Sealed) > 0 {
 					plain, err := s.seal.Open(c.Sealed, fqdn)
 					if err != nil {
@@ -311,7 +339,11 @@ func (s *Server) Events(ctx context.Context, fqdn string, evs []proto.Event) ([]
 				ScheduledFor: e.ScheduledFor, SpreadDelayS: e.SpreadDelayS, Started: e.Started, Finished: e.Finished, Revision: e.Revision,
 				SnapshotID: e.SnapshotID, FilesNew: e.FilesNew, FilesChanged: e.FilesChanged, BytesAdded: e.BytesAdded,
 				TotalFiles: e.TotalFiles, TotalBytes: e.TotalBytes, ResticExit: e.ResticExit, Error: e.Error, Detail: e.Detail})
-			return err
+			if err != nil || e.Kind != proto.KindRestore || e.CommandID == "" {
+				return err
+			}
+			// A restore from another host is over: so is the host's grant to read that one's repository.
+			return q.EndGrant(ctx, e.CommandID, s.now())
 		})
 		if err != nil {
 			return acked, err

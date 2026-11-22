@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/kabsdk/holdfast/internal/config"
+	"github.com/kabsdk/holdfast/internal/pin"
 	"github.com/kabsdk/holdfast/internal/schedule"
 	"github.com/kabsdk/holdfast/internal/server"
 	"github.com/kabsdk/holdfast/internal/server/creds"
@@ -42,6 +44,17 @@ func waitFor(t *testing.T, what string, d time.Duration, cond func() bool) {
 	t.Fatalf("timed out after %s waiting for: %s", d, what)
 }
 
+// agentListener serves h as holdfast-server's agent listener does: over TLS, asking each client for its certificate
+// (decision 041). It returns the URL and the fingerprint an agent pins.
+func agentListener(t *testing.T, h http.Handler) (url, pinned string) {
+	t.Helper()
+	ts := httptest.NewUnstartedServer(h)
+	ts.TLS = server.AgentTLSConfig()
+	ts.StartTLS()
+	t.Cleanup(ts.Close)
+	return ts.URL, pin.Fingerprint(ts.Certificate())
+}
+
 func TestAgentAgainstServer(t *testing.T) {
 	ctx, stop := context.WithCancel(context.Background())
 	defer stop()
@@ -54,13 +67,12 @@ func TestAgentAgainstServer(t *testing.T) {
 	sealer, _ := creds.NewSealer(creds.Random(creds.KeySize))
 	srv, err := server.New(server.Settings{PublicURL: "http://test", StateDir: filepath.Join(dir, "server"), ResticBin: bin, DefaultZone: "UTC", NodeName: "t",
 		Storage: server.StorageSettings{Endpoint: "http://127.0.0.1:1", Bucket: "b"}, Maintenance: server.MaintenanceSettings{CheckCycleDays: 30}},
-		server.Deps{Store: testpg.Store(t), Sealer: sealer, Provisioner: storage.NoopProvisioner{}, Prober: storage.StaticProber{}, Logger: quiet})
+		server.Deps{Store: testpg.Store(t), Sealer: sealer, Prober: storage.StaticProber{}, Logger: quiet})
 	if err != nil {
 		t.Fatal(err)
 	}
 	srv.Run(ctx)
-	ts := httptest.NewServer(srv.AgentHandler())
-	defer ts.Close()
+	url, pinned := agentListener(t, srv.AgentHandler())
 
 	root := server.Actor{Name: "local:root", Source: "cli", Everywhere: true}
 	job := &config.Job{Paths: []string{dir}, Schedule: schedule.Schedule{Daily: &schedule.Daily{Times: []schedule.ClockTime{"02:00"}}},
@@ -69,10 +81,21 @@ func TestAgentAgainstServer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg := Config{Server: ts.URL, FQDN: "web01.example.com", StateDir: filepath.Join(dir, "agent"), CredentialsDir: filepath.Join(dir, "creds"),
+	cfg := Config{Server: url, CASHA256: pinned, FQDN: "web01.example.com", StateDir: filepath.Join(dir, "agent"), CredentialsDir: filepath.Join(dir, "creds"),
 		ResticBin: bin, PollTimeout: time.Second, Tick: 100 * time.Millisecond}
+	// Before enrollment the agent has no identity, and cannot run.
+	if a, err := New(cfg, quiet); err != nil || a.Run(ctx) == nil {
+		t.Fatalf("an agent that never enrolled must refuse to run: %v", err)
+	}
 	if err := Enroll(ctx, cfg, res.Enrollment.Code, quiet); err != nil {
 		t.Fatal(err)
+	}
+	// The identity is the agent's own key and certificate, root-only, and no token is kept.
+	if st, err := os.Stat(filepath.Join(cfg.StateDir, identityFile)); err != nil || st.Mode().Perm() != 0o600 {
+		t.Fatalf("the agent's identity file: %v %v", st, err)
+	}
+	if _, err := os.Stat(filepath.Join(cfg.StateDir, "token")); err == nil {
+		t.Fatal("an agent token was written; agents are known by their certificate")
 	}
 	a, err := New(cfg, quiet)
 	if err != nil {

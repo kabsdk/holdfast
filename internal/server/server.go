@@ -22,6 +22,7 @@ import (
 	"github.com/kabsdk/holdfast/internal/access"
 	"github.com/kabsdk/holdfast/internal/checks"
 	"github.com/kabsdk/holdfast/internal/config"
+	"github.com/kabsdk/holdfast/internal/gateway"
 	"github.com/kabsdk/holdfast/internal/proto"
 	"github.com/kabsdk/holdfast/internal/restic"
 	"github.com/kabsdk/holdfast/internal/server/creds"
@@ -37,7 +38,8 @@ type Server struct {
 	set      Settings
 	st       *store.Store
 	seal     *creds.Sealer
-	prov     storage.Provisioner // nil: the admin gives every host's key (decision 029)
+	gw       *gateway.Gateway // restic's REST protocol for the hosts (decision 041); nil in a vault
+	gwKey    storage.Key      // the gateway's key, which the storage contract tests
 	prober   storage.Prober
 	bucket   storage.Bucket // size, escrow files and decommission, with the maintenance key
 	loc      storage.Location
@@ -70,10 +72,10 @@ func (s *Server) background() context.Context {
 type Deps struct {
 	Store       *store.Store
 	Sealer      *creds.Sealer
-	Provisioner storage.Provisioner // optional: makes the keys Holdfast generates
-	Prober      storage.Prober      // tests the storage contract; S3Prober when nil
-	Bucket      storage.Bucket      // S3Bucket when nil
+	Prober      storage.Prober // tests the storage contract; S3Prober when nil
+	Bucket      storage.Bucket // S3Bucket when nil
 	Maintenance storage.Key
+	Gateway     storage.Key // the gateway key (decision 041); not in a vault
 	Logger      *slog.Logger
 	Now         func() time.Time
 	// MinProtocol raises the oldest agent protocol accepted, for the end-to-end tests only; 0 is
@@ -106,9 +108,44 @@ func New(set Settings, d Deps) (*Server, error) {
 	if d.MinProtocol < proto.MinProtocol {
 		d.MinProtocol = proto.MinProtocol
 	}
-	return &Server{set: set, st: d.Store, seal: d.Sealer, prov: d.Provisioner, prober: d.Prober, bucket: d.Bucket, maintKey: d.Maintenance,
+	s := &Server{set: set, st: d.Store, seal: d.Sealer, gwKey: d.Gateway, prober: d.Prober, bucket: d.Bucket, maintKey: d.Maintenance,
 		loc: loc, zone: zone, log: d.Logger, hub: newHub(), now: d.Now, minProtocol: d.MinProtocol,
-		refresher: catalogueRefresher{running: map[string]bool{}, again: map[string]bool{}}}, nil
+		refresher: catalogueRefresher{running: map[string]bool{}, again: map[string]bool{}}}
+	if !set.IsVault() {
+		gw, err := gateway.New(gateway.Options{Endpoint: loc.Endpoint, Bucket: loc.Bucket, Region: loc.Region,
+			AccessKeyID: d.Gateway.AccessKeyID, SecretAccessKey: d.Gateway.SecretAccessKey,
+			Access: s.gatewayAccess, Refused: s.gatewayRefused, Log: d.Logger})
+		if err != nil {
+			return nil, err
+		}
+		s.gw = gw
+	}
+	return s, nil
+}
+
+// gatewayAccess is what a host may do with a repository through the gateway: its own, and another host's only to
+// read it under a grant, for a restore onto it (decision 041).
+func (s *Server) gatewayAccess(ctx context.Context, host, repo string) gateway.Access {
+	if host == repo {
+		return gateway.Own
+	}
+	if ok, err := s.st.Q().HasGrant(ctx, host, repo, s.now()); err == nil && ok {
+		return gateway.ReadOnly
+	}
+	return gateway.NoAccess
+}
+
+// gatewayRefused audits a refusal, in the host's history and, when it was another host's repository, in that one's.
+func (s *Server) gatewayRefused(ctx context.Context, host string, r gateway.Request, ref *gateway.Refusal) {
+	s.log.Warn("the gateway refused a host's request", "host", host, "repository", r.Repo, "op", r.Op, "kind", r.Kind, "reason", ref.Reason)
+	detail := map[string]any{"repository": r.Repo, "op": r.Op, "kind": r.Kind, "file": r.Name, "reason": ref.Reason, "message": ref.Message}
+	q := s.st.Q()
+	_ = q.Audit(ctx, store.AuditEntry{Actor: "agent:" + host, Source: "agent", Action: "gateway.refused", FQDN: host, Detail: detail})
+	if r.Repo != "" && r.Repo != host {
+		if _, err := q.GetHost(ctx, r.Repo); err == nil {
+			_ = q.Audit(ctx, store.AuditEntry{Actor: "agent:" + host, Source: "agent", Action: "gateway.refused", FQDN: r.Repo, Detail: detail})
+		}
+	}
 }
 
 // Run starts the background work: the notification listener and the maintenance loop.
@@ -148,7 +185,7 @@ func newID() string {
 // renderHost builds a host's agent config from a document. Schedules get their zone resolved here,
 // so agents never need the fleet default.
 func (s *Server) renderHost(doc config.Document, fqdn string) proto.HostConfig {
-	hc := proto.HostConfig{FQDN: fqdn, Repository: s.loc.RepoURL(fqdn), Jobs: []proto.JobConfig{}}
+	hc := proto.HostConfig{FQDN: fqdn, Repository: gateway.RepoURL(s.set.PublicURL, fqdn), Jobs: []proto.JobConfig{}}
 	h, ok := doc.Hosts[fqdn]
 	if !ok {
 		hc.SHA256 = hc.ComputeSHA256() // a removed host's agent gets this empty config (plan-m4 Q7)
@@ -251,25 +288,28 @@ func (s *Server) hostKey(ctx context.Context, fqdn string) (storage.Key, string,
 	return storage.Key{AccessKeyID: c.S3AccessKeyID, SecretAccessKey: secret}, c.S3KeySource, nil
 }
 
-// prepareKey makes a key that Holdfast generated exist, if a provisioner is configured, and tests the
-// storage contract with it (decision 029).
-func (s *Server) prepareKey(ctx context.Context, fqdn string, key storage.Key, source string) (storage.Report, error) {
-	// In a vault, a host's key is for restores from this site: it must only read (decision 039).
+// probeKey tests a key against the storage contract on a host's prefix. In the server it is the gateway key: hosts
+// hold none (decision 041). In a vault it is a host's read-only key, for restores from this site (decision 039).
+func (s *Server) probeKey(ctx context.Context, fqdn string, key storage.Key) storage.Report {
+	var rep storage.Report
 	if s.set.IsVault() {
-		rep := s.prober.ProbeReadOnly(ctx, fqdn, key)
+		rep = s.prober.ProbeReadOnly(ctx, fqdn, key)
 		m := s.prober.ProbeMaintenance(ctx)
 		rep.Findings, rep.NoncurrentDays = append(m.Findings, rep.Findings...), m.NoncurrentDays
-		rep.CheckedAt = s.now()
-		return rep, nil
+	} else {
+		rep = s.prober.Probe(ctx, fqdn, key)
 	}
-	if source == store.KeyByHoldfast && s.prov != nil {
-		if err := s.prov.EnsureHostKey(ctx, fqdn, key); err != nil {
-			return storage.Report{}, err
-		}
-	}
-	rep := s.prober.Probe(ctx, fqdn, key)
 	rep.CheckedAt = s.now()
-	return rep, nil
+	return rep
+}
+
+// storageKey is the key a host's storage is tested with: the gateway key, or in a vault the host's own.
+func (s *Server) storageKey(ctx context.Context, fqdn string) (storage.Key, error) {
+	if !s.set.IsVault() {
+		return s.gwKey, nil
+	}
+	k, _, err := s.hostKey(ctx, fqdn)
+	return k, err
 }
 
 // recordStorage keeps a host's latest contract test and audits a failure.
@@ -287,17 +327,14 @@ func (s *Server) recordStorage(ctx context.Context, fqdn string, rep storage.Rep
 }
 
 // ensureStorage makes a stored host's storage ready, idempotently: it tests the contract again (the S3
-// policies may have changed since the key was given), records the result, and initialises the
+// policies may have changed since the last test), records the result, and initialises the
 // repository once the contract holds.
 func (s *Server) ensureStorage(ctx context.Context, fqdn string) (storage.Report, error) {
-	key, source, err := s.hostKey(ctx, fqdn)
+	key, err := s.storageKey(ctx, fqdn)
 	if err != nil {
 		return storage.Report{}, err
 	}
-	rep, err := s.prepareKey(ctx, fqdn, key, source)
-	if err != nil {
-		return storage.Report{}, err
-	}
+	rep := s.probeKey(ctx, fqdn, key)
 	s.recordStorage(ctx, fqdn, rep)
 	if !rep.OK() {
 		return rep, nil
@@ -305,12 +342,12 @@ func (s *Server) ensureStorage(ctx context.Context, fqdn string) (storage.Report
 	return rep, s.initRepository(ctx, fqdn)
 }
 
-// StorageError refuses a key that does not meet the storage contract. The API answers 422 with the
+// StorageError refuses what the storage contract does not allow. The API answers 422 with the
 // report, so the UI and the CLI show the same findings.
 type StorageError struct{ Report storage.Report }
 
 func (e *StorageError) Error() string {
-	return "the S3 key does not meet the storage contract (docs/storage.md): " + e.Report.Summary()
+	return "the storage does not meet the contract (docs/storage.md): " + e.Report.Summary()
 }
 
 // S3KeyInput is a host's S3 key, as the admin made it. It is input only: no response, log, audit
@@ -328,8 +365,6 @@ func (k *S3KeyInput) key() (storage.Key, error) {
 	return key, nil
 }
 
-func newAccessKeyID() string { return "HF" + strings.ToUpper(hex.EncodeToString(creds.Random(9))) }
-
 /* ---------------- operations (each is an /api/v1 endpoint) ---------------- */
 
 // AddHostInput adds a host, optionally with its first job.
@@ -339,8 +374,6 @@ type AddHostInput struct {
 	JobID   string      `json:"job_id,omitempty"`
 	Job     *config.Job `json:"job,omitempty"`
 	Base    *int64      `json:"base_revision,omitempty"` // omitted: the current head
-	// S3Key is the host's key (decision 029). It may be omitted only when a provisioner is configured.
-	S3Key *S3KeyInput `json:"s3_key,omitempty"`
 	// Accept lists the warning codes the person accepts for the job (spec §4.5).
 	Accept []string `json:"accept,omitempty"`
 }
@@ -372,10 +405,10 @@ func (s *Server) installCommand(fqdn, code string) string {
 	return cmd
 }
 
-// AddHost tests the host's S3 key against the storage contract and refuses a key that fails it. It then
-// creates a revision with the host, its credentials and a 15-minute enrollment code, all in one
-// transaction, and initialises the repository. An initialisation failure is reported but not fatal:
-// enrollment does it again before it uses the code.
+// AddHost tests the storage contract on the host's prefix, with the gateway key, and refuses a host whose storage
+// fails it. A host needs no S3 key of its own (decision 041). It then creates a revision with the host, its
+// credentials and a 15-minute enrollment code, all in one transaction, and initialises the repository. An
+// initialisation failure is reported but not fatal: enrollment does it again before it uses the code.
 func (s *Server) AddHost(ctx context.Context, a Actor, in AddHostInput) (AddHostResult, error) {
 	if s.set.IsVault() {
 		return AddHostResult{}, errVaultHosts
@@ -392,8 +425,7 @@ func (s *Server) AddHost(ctx context.Context, a Actor, in AddHostInput) (AddHost
 		return AddHostResult{}, err
 	}
 	// A removed host comes back with its repository, its password and its history (spec §3.5).
-	// A decommissioned host starts over: its repository is gone, so it gets a new password, and its old S3
-	// key, which the admin was told to delete, is not used again.
+	// A decommissioned host starts over: its repository is gone, so it gets a new password.
 	revive, fresh := false, false
 	if h, err := s.st.Q().GetHost(ctx, in.FQDN); err == nil {
 		switch {
@@ -403,28 +435,6 @@ func (s *Server) AddHost(ctx context.Context, a Actor, in AddHostInput) (AddHost
 			return AddHostResult{}, fmt.Errorf("host %s is waiting to be decommissioned; cancel that first (holdfast host decommission %s --cancel): %w", in.FQDN, in.FQDN, ErrConflict)
 		}
 		revive, fresh = true, decommissioned(h)
-	}
-	var key storage.Key
-	source := store.KeyByAdmin
-	newKey := true
-	switch {
-	case in.S3Key != nil:
-		k, err := in.S3Key.key()
-		if err != nil {
-			return AddHostResult{}, err
-		}
-		key = k
-	case revive && !fresh:
-		k, src, err := s.hostKey(ctx, in.FQDN)
-		if err != nil {
-			return AddHostResult{}, err
-		}
-		key, source, newKey = k, src, false
-	case s.prov != nil:
-		key, source = storage.Key{AccessKeyID: newAccessKeyID(), SecretAccessKey: hex.EncodeToString(creds.Random(20))}, store.KeyByHoldfast
-	default:
-		return AddHostResult{}, &ValidationError{config.Problems{{Path: "s3_key", Message: "the host's S3 key is required: make a key that may use only " +
-			storage.Prefix(in.FQDN) + "/ (docs/storage.md) and give it with --s3-key-file"}}}
 	}
 	// The job's checks come before the storage test, so a job that would be refused costs no S3 calls. A new
 	// host has no runs and no snapshots, so S002 and R104 cannot fire.
@@ -443,17 +453,14 @@ func (s *Server) AddHost(ctx context.Context, a Actor, in AddHostInput) (AddHost
 		}
 	}
 	accepted := checks.Accepted(fs, in.Accept)
-	rep, err := s.prepareKey(ctx, in.FQDN, key, source)
-	if err != nil {
-		return AddHostResult{}, err
-	}
+	rep := s.probeKey(ctx, in.FQDN, s.gwKey)
 	if !rep.OK() {
 		return AddHostResult{}, &StorageError{rep}
 	}
 	now := s.now()
 	code := creds.NewEnrollmentCode()
 	var res AddHostResult
-	err = s.st.InTx(ctx, func(q *store.Q) error {
+	err := s.st.InTx(ctx, func(q *store.Q) error {
 		head, err := s.head(ctx, q)
 		if err != nil {
 			return err
@@ -484,24 +491,20 @@ func (s *Server) AddHost(ctx context.Context, a Actor, in AddHostInput) (AddHost
 				return err
 			}
 			if err := q.PutCredentials(ctx, store.SealedCredentials{FQDN: in.FQDN, Version: 1, Repository: s.loc.RepoURL(in.FQDN),
-				RepoPassword: s.seal.Seal(creds.NewPassword(), in.FQDN), S3AccessKeyID: key.AccessKeyID, S3Secret: s.seal.Seal(key.SecretAccessKey, in.FQDN),
-				S3KeySource: source, CreatedAt: now}); err != nil {
+				RepoPassword: s.seal.Seal(creds.NewPassword(), in.FQDN), S3Secret: s.seal.Seal("", in.FQDN), CreatedAt: now}); err != nil {
 				return err
 			}
 		default:
 			if err := q.ReviveHost(ctx, in.FQDN, rev.Number); err != nil {
 				return err
 			}
-			if newKey { // the repository password stays, unless the repository was decommissioned: it is what opens it
+			if fresh { // the repository password stays, unless the repository was decommissioned: it is what opens it
 				c, err := q.GetCredentials(ctx, in.FQDN)
 				if err != nil {
 					return err
 				}
 				c.Version++
-				c.S3AccessKeyID, c.S3Secret, c.S3KeySource, c.CreatedAt = key.AccessKeyID, s.seal.Seal(key.SecretAccessKey, in.FQDN), source, now
-				if fresh {
-					c.RepoPassword = s.seal.Seal(creds.NewPassword(), in.FQDN)
-				}
+				c.RepoPassword, c.CreatedAt = s.seal.Seal(creds.NewPassword(), in.FQDN), now
 				if err := q.PutCredentials(ctx, c); err != nil {
 					return err
 				}
@@ -514,7 +517,7 @@ func (s *Server) AddHost(ctx context.Context, a Actor, in AddHostInput) (AddHost
 		if err := q.CreateEnrollmentCode(ctx, newID(), in.FQDN, creds.HashToken(creds.NormaliseCode(code)), now, expires, a.Name); err != nil {
 			return err
 		}
-		detail := map[string]any{"message": in.Message, "s3_key_by": source, "back_after_removal": revive}
+		detail := map[string]any{"message": in.Message, "back_after_removal": revive}
 		if fresh {
 			detail["after_decommission"] = true
 		}
@@ -598,10 +601,13 @@ type SetS3KeyResult struct {
 	Storage            storage.Report `json:"storage"`
 }
 
-// SetS3Key replaces a host's S3 key with one the admin made, after testing it against the storage
-// contract. A key that fails is refused and the old one stays. The agent gets the new key on its next
-// poll. The escrow bundle is out of date until the next export.
+// SetS3Key gives a vault's host its read-only key, for restores from the vault, after testing it against the storage
+// contract (decision 039). A key that fails is refused and the old one stays. In the server, hosts have no S3 key:
+// they reach the bucket through its gateway (decision 041).
 func (s *Server) SetS3Key(ctx context.Context, a Actor, fqdn string, in SetS3KeyInput) (SetS3KeyResult, error) {
+	if !s.set.IsVault() {
+		return SetS3KeyResult{}, fmt.Errorf("hosts have no S3 key: they back up through the server's gateway (decision 041): %w", ErrConflict)
+	}
 	key, err := in.S3Key.key()
 	if err != nil {
 		return SetS3KeyResult{}, err
@@ -613,10 +619,7 @@ func (s *Server) SetS3Key(ctx context.Context, a Actor, fqdn string, in SetS3Key
 	if h.State == "retired" {
 		return SetS3KeyResult{}, fmt.Errorf("host %s is retired: %w", fqdn, ErrConflict)
 	}
-	rep, err := s.prepareKey(ctx, fqdn, key, store.KeyByAdmin)
-	if err != nil {
-		return SetS3KeyResult{}, err
-	}
+	rep := s.probeKey(ctx, fqdn, key)
 	if !rep.OK() {
 		return SetS3KeyResult{}, &StorageError{rep}
 	}
@@ -1024,13 +1027,14 @@ func (s *Server) Host(ctx context.Context, fqdn string) (HostView, error) {
 
 /* ---------------- escrow ---------------- */
 
-// EscrowHost is one host's credentials in an escrow bundle.
+// EscrowHost is one host's credentials in an escrow bundle: its repository and the password that opens it. A host
+// has no S3 key (decision 041); a vault's host has the read-only key for restores from it (decision 039).
 type EscrowHost struct {
 	FQDN              string `json:"fqdn"`
 	Repository        string `json:"repository"`
 	RepoPassword      string `json:"repo_password"`
-	S3AccessKeyID     string `json:"s3_access_key_id"`
-	S3SecretAccessKey string `json:"s3_secret_access_key"`
+	S3AccessKeyID     string `json:"s3_access_key_id,omitempty"`
+	S3SecretAccessKey string `json:"s3_secret_access_key,omitempty"`
 }
 
 // EscrowBundle is what escrow export returns. Its encrypted format is still open (plan-m1 Q5); M1
@@ -1055,7 +1059,11 @@ func (s *Server) EscrowExport(ctx context.Context, a Actor) (EscrowBundle, error
 		if err := errors.Join(err1, err2); err != nil {
 			return EscrowBundle{}, fmt.Errorf("%s: %w", c.FQDN, err)
 		}
-		b.Hosts = append(b.Hosts, EscrowHost{FQDN: c.FQDN, Repository: c.Repository, RepoPassword: pw, S3AccessKeyID: c.S3AccessKeyID, S3SecretAccessKey: sec})
+		eh := EscrowHost{FQDN: c.FQDN, Repository: c.Repository, RepoPassword: pw}
+		if c.S3AccessKeyID != "" {
+			eh.S3AccessKeyID, eh.S3SecretAccessKey = c.S3AccessKeyID, sec
+		}
+		b.Hosts = append(b.Hosts, eh)
 		fqdns = append(fqdns, c.FQDN)
 	}
 	err = s.st.InTx(ctx, func(q *store.Q) error {

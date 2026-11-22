@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -188,18 +189,20 @@ func TestRestoreOntoAnotherHost(t *testing.T) {
 	e.runAgent(bAgent)
 	e.waitProgress(b, "first_backup_done", 2*time.Minute)
 
-	// The admin's read-only key for A's prefix; and A's own key, which can write.
-	p := "repos/" + a
-	roID, roSecret := e.makeUser(`{"Version":"2012-10-17","Statement":[
- {"Effect":"Allow","Action":["s3:GetBucketLocation"],"Resource":["arn:aws:s3:::` + e.bucket + `"]},
- {"Effect":"Allow","Action":["s3:ListBucket"],"Resource":["arn:aws:s3:::` + e.bucket + `"],"Condition":{"StringLike":{"s3:prefix":["` + p + `","` + p + `/*"]}}},
- {"Effect":"Allow","Action":["s3:GetObject"],"Resource":["arn:aws:s3:::` + e.bucket + `/` + p + `/*"]}]}`)
-	roFile := filepath.Join(e.dir, "readonly.env")
-	must(t, os.WriteFile(roFile, []byte("AWS_ACCESS_KEY_ID="+roID+"\nAWS_SECRET_ACCESS_KEY="+roSecret+"\n"), 0o600))
-	rwFile, _ := e.makeKey(a, "")
+	// B cannot read A's repository through the gateway: no restore lets it.
+	gw := func() int {
+		t.Helper()
+		resp, err := e.agentClient(bAgent).Get(e.url + "/gateway/v1/" + a + "/config")
+		must(t, err)
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+	if code := gw(); code != http.StatusForbidden {
+		t.Fatalf("B read A's repository before any restore: %d", code)
+	}
 
-	// The host's opt-in is checked first: it costs no S3 call.
-	if out, err := e.cliErr("restore", a, snap, "--to-host", b, "--s3-key-file", roFile); err == nil || !strings.Contains(string(out), "allow_other_hosts") {
+	// The host's opt-in is checked first.
+	if out, err := e.cliErr("restore", a, snap, "--to-host", b); err == nil || !strings.Contains(string(out), "allow_other_hosts") {
 		t.Fatalf("a host that has not opted in: %v %s", err, out)
 	}
 
@@ -211,13 +214,10 @@ func TestRestoreOntoAnotherHost(t *testing.T) {
 		bounds, _ := e.hostRaw(b)["agent"].(map[string]any)["restore_bounds"].(map[string]any)
 		return bounds != nil && bounds["allow_other_hosts"] == true
 	})
-	if out, err := e.cliErr("restore", a, snap, "--to-host", b, "--s3-key-file", rwFile); err == nil || !strings.Contains(string(out), "B015") {
-		t.Fatalf("a key that can write: %v %s", err, out)
-	}
-	if out, err := e.cliErr("restore", a, snap, "--to-host", b, "--s3-key-file", roFile, "--in-place"); err == nil {
+	if out, err := e.cliErr("restore", a, snap, "--to-host", b, "--in-place"); err == nil {
 		t.Fatalf("in place onto another host: %s", out)
 	}
-	ev, err := e.restoreWait(a, snap, "--to-host", b, "--s3-key-file", roFile, "-m", "e2e: A is gone")
+	ev, err := e.restoreWait(a, snap, "--to-host", b, "-m", "e2e: A is gone")
 	if err != nil || ev.Status != "success" || ev.Detail["source_host"] != a || !strings.HasPrefix(ev.Detail["directory"], restoreRoot+"/") {
 		t.Fatalf("restore onto B: %+v %v", ev, err)
 	}
@@ -225,10 +225,13 @@ func TestRestoreOntoAnotherHost(t *testing.T) {
 	if err != nil || string(got) != "invoice 42\n" {
 		t.Fatalf("the restored file: %q %v", got, err)
 	}
-	// B kept A's secrets only for that restore.
+	// B kept A's secrets only for that restore, and may not read A's repository any more.
 	left, _ := filepath.Glob(filepath.Join(bAgent.dir, "state", "source-*"))
 	if len(left) != 0 {
 		t.Fatalf("B kept A's credentials: %v", left)
+	}
+	if code := gw(); code != http.StatusForbidden {
+		t.Fatalf("B may still read A's repository after the restore: %d", code)
 	}
 	var actions []string
 	for _, x := range e.audit(a) {

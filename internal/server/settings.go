@@ -85,20 +85,21 @@ type OIDCSettings struct {
 	CAFile           string   `yaml:"ca_file"`            // a CA to trust for the issuer, if not the system's
 }
 
-// TLS is the certificate for the agent listener. Without it the listener is plain HTTP, which is
-// for tests only and logged as such.
+// TLS is a listener's certificate. The agent listener always needs one (decision 041); the UI listener without
+// one is plain HTTP, for tests only.
 type TLS struct {
 	CertFile string `yaml:"cert_file"`
 	KeyFile  string `yaml:"key_file"`
 }
 
-// StorageSettings locate the bucket and the identities the server uses.
+// StorageSettings locate the bucket and the two keys the server uses on it (decision 041): the maintenance key, and
+// the gateway key, with which the server's gateway reads and writes the hosts' repositories for them.
 type StorageSettings struct {
-	Endpoint                   string   `yaml:"endpoint"`
-	Bucket                     string   `yaml:"bucket"`
-	Region                     string   `yaml:"region"`
-	MaintenanceCredentialsFile string   `yaml:"maintenance_credentials_file"` // KEY=VALUE, root-only
-	ProvisionerCommand         []string `yaml:"provisioner_command"`
+	Endpoint                   string `yaml:"endpoint"`
+	Bucket                     string `yaml:"bucket"`
+	Region                     string `yaml:"region"`
+	MaintenanceCredentialsFile string `yaml:"maintenance_credentials_file"` // KEY=VALUE, root-only
+	GatewayCredentialsFile     string `yaml:"gateway_credentials_file"`     // KEY=VALUE, root-only; not in a vault
 }
 
 // MaintenanceSettings control the repository checks and retention.
@@ -217,6 +218,9 @@ func (s Settings) validate() error {
 	need(s.DatabaseDSN, "database_dsn (or database_dsn_file)")
 	need(s.CredentialsKeyFile, "credentials_key_file")
 	need(s.PublicURL, "public_url")
+	// Agents log in with their own certificates, in the TLS handshake (decision 041): no TLS, no agents.
+	need(s.TLS.CertFile, "tls.cert_file")
+	need(s.TLS.KeyFile, "tls.key_file")
 	need(s.Storage.Endpoint, "storage.endpoint")
 	need(s.Storage.Bucket, "storage.bucket")
 	need(s.Storage.MaintenanceCredentialsFile, "storage.maintenance_credentials_file")
@@ -231,6 +235,7 @@ func (s Settings) validate() error {
 	}
 	switch s.Role {
 	case RoleServer:
+		need(s.Storage.GatewayCredentialsFile, "storage.gateway_credentials_file")
 	case RoleVault:
 		need(s.Source.Server, "source.server (role is vault)")
 		need(s.Source.TokenFile, "source.token_file (role is vault)")

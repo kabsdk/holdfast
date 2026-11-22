@@ -187,7 +187,7 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 			fmt.Fprintf(&b, "holdfast_repository_foreign_keys{host=%q} %d\n", h.FQDN, len(h.ForeignKeys))
 		}
 	}
-	gauge("holdfast_storage_contract_ok", "1 if the host's keys passed every storage check at the last test (decision 029).")
+	gauge("holdfast_storage_contract_ok", "1 if the host's storage passed every storage check at the last test (docs/storage.md).")
 	gauge("holdfast_storage_contract_failed", "1 for each storage check (code) that failed at the last test.")
 	gauge("holdfast_storage_checked_timestamp_seconds", "When the host's storage contract was last tested.")
 	for _, h := range hosts {
@@ -244,6 +244,9 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 			fmt.Fprintf(&b, "holdfast_repository_objects{host=%q} %d\n", h.FQDN, sz.Objects)
 			fmt.Fprintf(&b, "holdfast_repository_size_timestamp_seconds{host=%q} %s\n", h.FQDN, ts(&sz.At))
 		}
+	}
+	if s.gw != nil {
+		s.gw.WriteMetrics(&b)
 	}
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
 	_, _ = w.Write([]byte(b.String()))

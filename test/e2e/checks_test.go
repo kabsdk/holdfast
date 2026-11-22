@@ -18,10 +18,9 @@ func TestChecks(t *testing.T) {
 	src := smallSource(t)
 	e := newEnv(t)
 	const fqdn = "chk01.example.com"
-	kf, _ := e.makeKey(fqdn, "")
 	job := []string{"--job", "data", "--path", src, "--every", "1m", "--keep-last", "10"}
 
-	out, err := e.cliErr(append([]string{"host", "add", fqdn, "--s3-key-file", kf}, job...)...)
+	out, err := e.cliErr(append([]string{"host", "add", fqdn}, job...)...)
 	if err == nil || !strings.Contains(string(out), "R101") || !strings.Contains(string(out), "--accept R101") {
 		t.Fatalf("an unaccepted R101 must refuse host add, with the --accept that saves it: %v %s", err, out)
 	}
@@ -35,7 +34,7 @@ func TestChecks(t *testing.T) {
 		Enrollment struct{ Code string }             `json:"enrollment"`
 		Findings   []struct{ Code, Severity string } `json:"findings"`
 	}
-	must(t, json.Unmarshal(e.cli(append([]string{"host", "add", fqdn, "--s3-key-file", kf, "--accept", "R101"}, job...)...), &res))
+	must(t, json.Unmarshal(e.cli(append([]string{"host", "add", fqdn, "--accept", "R101"}, job...)...), &res))
 	if !slices.Equal(res.Accepted, []string{"R101"}) {
 		t.Fatalf("accepted codes: %+v", res)
 	}

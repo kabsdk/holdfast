@@ -116,30 +116,28 @@ func run(name, cfgPath, role string, now func() time.Time, minProto int, log *sl
 	if err := st.Migrate(ctx); err != nil {
 		return fmt.Errorf("migrations: %w", err)
 	}
-	// Decision 029: the admin gives each host's S3 key. A provisioner command is optional; with one,
-	// a host may be added without a key, and Holdfast generates it and runs the command.
-	var prov storage.Provisioner
-	if len(set.Storage.ProvisionerCommand) > 0 {
-		prov = storage.ExecProvisioner{Command: set.Storage.ProvisionerCommand, Bucket: set.Storage.Bucket}
+	// Decision 041: hosts hold no S3 key. The server's gateway reads and writes their repositories with its own.
+	var gw storage.Key
+	if !set.IsVault() {
+		if gw, err = storage.ReadKeyFile(set.Storage.GatewayCredentialsFile); err != nil {
+			return err
+		}
 	}
-	srv, err := server.New(set, server.Deps{Store: st, Sealer: sealer, Provisioner: prov, Maintenance: maint, Logger: log, Now: now, MinProtocol: minProto})
+	srv, err := server.New(set, server.Deps{Store: st, Sealer: sealer, Maintenance: maint, Gateway: gw, Logger: log, Now: now, MinProtocol: minProto})
 	if err != nil {
 		return err
 	}
 	srv.Run(ctx)
 
 	errc := make(chan error, 3)
-	agentSrv := &http.Server{Addr: set.Listen, Handler: srv.AgentHandler(), ReadHeaderTimeout: 10 * time.Second}
+	// Agents are known by the certificate their TLS connection is made with (decision 041), so this listener is
+	// always TLS, and asks each client for its certificate. Backups stream through it to the gateway: HTTP/2's
+	// default windows would hold a host to about 1 MiB per round trip.
+	agentSrv := &http.Server{Addr: set.Listen, Handler: srv.AgentHandler(), ReadHeaderTimeout: 10 * time.Second, TLSConfig: server.AgentTLSConfig(),
+		HTTP2: &http.HTTP2Config{MaxReceiveBufferPerConnection: 32 << 20, MaxReceiveBufferPerStream: 16 << 20}}
 	go func() {
-		var err error
-		if set.TLS.CertFile != "" {
-			log.Info("listening for agents and vaults, and /metrics", "addr", set.Listen, "tls", true)
-			err = agentSrv.ListenAndServeTLS(set.TLS.CertFile, set.TLS.KeyFile)
-		} else {
-			log.Warn("listening for agents WITHOUT TLS: for tests only", "addr", set.Listen)
-			err = agentSrv.ListenAndServe()
-		}
-		if !errors.Is(err, http.ErrServerClosed) {
+		log.Info("listening for agents, and /metrics", "addr", set.Listen)
+		if err := agentSrv.ListenAndServeTLS(set.TLS.CertFile, set.TLS.KeyFile); !errors.Is(err, http.ErrServerClosed) {
 			errc <- err
 		}
 	}()

@@ -142,23 +142,10 @@ func TestUIPages(t *testing.T) {
 		t.Fatal("Prune now must stay disabled until the short name is typed")
 	}
 
-	// Add host, with an S3 key an admin made: the enrollment code and the install command.
+	// Add host, with no S3 key (decision 041): the enrollment code and the install command.
 	const added = "app07.example.com"
-	keyFile, _ := e.makeKey(added, "")
-	kb, _ := os.ReadFile(keyFile)
-	var id, secret string
-	for _, line := range strings.Split(string(kb), "\n") {
-		if v, ok := strings.CutPrefix(line, "AWS_ACCESS_KEY_ID="); ok {
-			id = v
-		}
-		if v, ok := strings.CutPrefix(line, "AWS_SECRET_ACCESS_KEY="); ok {
-			secret = v
-		}
-	}
 	open(t, ctx, "#/add-host")
 	field(t, ctx, "FQDN", added)
-	field(t, ctx, "Access key ID", id)
-	field(t, ctx, "Secret access key", secret)
 	field(t, ctx, "Paths", "/etc")
 	clickText(t, ctx, "button", "Add host and issue enrollment code")
 	waitText(t, ctx, "holdfast-agent enroll")

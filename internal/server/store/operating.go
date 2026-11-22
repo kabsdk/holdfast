@@ -74,8 +74,8 @@ func (q *Q) FinishRotation(ctx context.Context, fqdn, oldKey string) error {
 	return err
 }
 
-// RevokeAgent revokes an enrolled agent's token: the host waits for a new enrollment, and only enrolled hosts'
-// tokens work. replacement is stored instead of the token's hash, and matches no token.
+// RevokeAgent unpins an enrolled agent's certificate: the host waits for a new enrollment, and only enrolled hosts'
+// certificates work. replacement is stored instead of the certificate's sha256, and matches no certificate.
 func (q *Q) RevokeAgent(ctx context.Context, fqdn, replacement string) error {
 	if _, err := q.db.Exec(ctx, `UPDATE agents SET credential_sha256 = $2 WHERE fqdn = $1`, fqdn, replacement); err != nil {
 		return err

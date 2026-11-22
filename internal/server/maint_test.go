@@ -34,14 +34,14 @@ func (c *testClock) Add(d time.Duration) {
 func TestChecksAndTheDailyStorageTest(t *testing.T) {
 	clock := &testClock{t: time.Date(2026, 11, 23, 8, 0, 0, 0, time.UTC)}
 	p := &testProber{}
-	s := newTestServerWith(t, func(d *Deps) { d.Provisioner, d.Prober, d.Now = nil, p, clock.Now })
+	s := newTestServerWith(t, func(d *Deps) { d.Prober, d.Now = p, clock.Now })
 	ctx := context.Background()
 	const fqdn = "web01.example.com"
-	res, err := s.AddHost(ctx, root, AddHostInput{FQDN: fqdn, JobID: "system", Job: job("/etc"), S3Key: &S3KeyInput{AccessKeyID: "HOSTKEY01", SecretAccessKey: "host-secret-01"}})
+	res, err := s.AddHost(ctx, root, AddHostInput{FQDN: fqdn, JobID: "system", Job: job("/etc")})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Enroll(ctx, proto.EnrollRequest{FQDN: fqdn, Code: res.Enrollment.Code}); err != nil {
+	if err := s.Enroll(ctx, proto.EnrollRequest{FQDN: fqdn, Code: res.Enrollment.Code}, certOf(fqdn)); err != nil {
 		t.Fatal(err)
 	}
 	poll, err := s.Poll(ctx, fqdn, proto.PollRequest{}, 0)

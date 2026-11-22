@@ -90,7 +90,7 @@ func TestRestoreThroughTheAgent(t *testing.T) {
 	}
 
 	// A snapshot of another host, in this host's repository: the agent refuses it.
-	host := e.resticFor(e.escrow()[fqdn], true)
+	host := e.resticAsAgent(a, e.escrow()[fqdn])
 	if _, err := host.Backup(context.Background(), restic.BackupOptions{Paths: []string{filepath.Join(src, "plain.txt")}, Host: "other.example.com"}); err != nil {
 		t.Fatal(err)
 	}

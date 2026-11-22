@@ -24,11 +24,16 @@ dnf install ./holdfast-restic-*.rpm ./holdfast-agent-*.rpm        # RHEL, Oracle
 ```
 
 Installing enables nothing, because each service needs its config first:
-- **The server:** write `/etc/holdfast/server.yaml`, using `/usr/share/holdfast/server.yaml.example`, then
-  `systemctl enable --now holdfast-server`. The alert rules and the alerting scripts are in
-  `/usr/share/holdfast/` too ([alerting.md](alerting.md)).
+- **The server:** make the bucket and its two keys, the gateway key and the maintenance key
+  ([storage.md](storage.md)), and a TLS certificate for the agent listener, which is required. Write
+  `/etc/holdfast/server.yaml`, using `/usr/share/holdfast/server.yaml.example`, with `ca_sha256` set to the sha256
+  of your CA's certificate (or of the server's own, if it is self-signed), then `systemctl enable --now
+  holdfast-server`. The alert rules and the alerting scripts are in `/usr/share/holdfast/` too
+  ([alerting.md](alerting.md)).
 - **An agent:** run the command `holdfast host add` printed, as root on the host:
-  `holdfast-agent enroll --server … --fqdn … --code …`. Then `systemctl enable --now holdfast-agent`.
+  `holdfast-agent enroll --server … --fqdn … --code … --ca-sha256 …`. It makes the agent's own key and
+  certificate, which the server pins; nothing else is needed on the host, no S3 key. Then `systemctl enable
+  --now holdfast-agent`.
 - **The witness:** see `holdfast-freshness.service`'s comments.
 - **A vault**, in the other site (spec §3.7), with a PostgreSQL and a bucket of its own there:
   1. on site A's server, as root: `holdfast vault add site-b --s3-key-file <site A read key>` (docs/storage.md). It
@@ -48,8 +53,14 @@ gives way to the host's own work.
 
 ## Upgrading
 
-**Upgrade the server first, then the agents, in any order and at any pace.** Upgrade a vault after its source's
-server. The agent sends its protocol
+**From a release before M8, every agent enrolls again** (decision 041): it had a bearer token and an S3 key, and
+is known by its own certificate from now on, and backs up through the server. Upgrade the server, give it its
+gateway key and TLS, then for each host: upgrade the agent's package, `holdfast host enroll-code <fqdn>`, and run
+the printed `holdfast-agent enroll …` on the host. Its repository and password stay. Delete the host's old S3 key
+at your S3 server once it has backed up through the gateway.
+
+**Otherwise, upgrade the server first, then the agents, in any order and at any pace.** Upgrade a vault after its
+source's server. The agent sends its protocol
 version with every poll, and the server answers with the range it accepts:
 - a server accepts every agent from its `MinProtocol` on, so agents can be upgraded one by one, after it;
 - an agent that is too old is refused with that range, and logs "the server needs a newer agent". It keeps

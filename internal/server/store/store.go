@@ -324,7 +324,7 @@ func (q *Q) MarkRemoved(ctx context.Context, fqdn string, now time.Time) error {
 	return err
 }
 
-// RetireHost retires a removed host. Its agent's token stops working: only enrolled hosts' tokens do.
+// RetireHost retires a removed host. Its agent's certificate stops working: only enrolled hosts' certificates do.
 func (q *Q) RetireHost(ctx context.Context, fqdn string) error {
 	_, err := q.db.Exec(ctx, `UPDATE hosts SET state = 'retired' WHERE fqdn = $1 AND retired_at IS NOT NULL`, fqdn)
 	return err
@@ -515,23 +515,28 @@ type Agent struct {
 	Paused *proto.Paused `json:"paused,omitempty"`
 }
 
-// EnrollAgent records (or replaces, on re-enrollment) the agent's credential and marks the host enrolled.
-func (q *Q) EnrollAgent(ctx context.Context, fqdn, tokenHash string, now time.Time) error {
+// EnrollAgent pins (or replaces, on re-enrollment) the agent's certificate, by its sha256, and marks the host
+// enrolled (decision 041). A certificate another host is pinned to is a conflict.
+func (q *Q) EnrollAgent(ctx context.Context, fqdn, certificate string, now time.Time) error {
 	if _, err := q.db.Exec(ctx, `INSERT INTO agents (fqdn, credential_kind, credential_sha256, enrolled_at, last_seen_at)
-		VALUES ($1, 'token', $2, $3, $3)
-		ON CONFLICT (fqdn) DO UPDATE SET credential_kind = 'token', credential_sha256 = $2, enrolled_at = $3, last_seen_at = $3`,
-		fqdn, tokenHash, now); err != nil {
+		VALUES ($1, 'certificate', $2, $3, $3)
+		ON CONFLICT (fqdn) DO UPDATE SET credential_kind = 'certificate', credential_sha256 = $2, enrolled_at = $3, last_seen_at = $3`,
+		fqdn, certificate, now); err != nil {
+		if isUniqueViolation(err) {
+			return fmt.Errorf("another host is enrolled with this certificate: %w", ErrConflict)
+		}
 		return err
 	}
 	_, err := q.db.Exec(ctx, `UPDATE hosts SET state = 'enrolled', connected_at = COALESCE(connected_at, $2) WHERE fqdn = $1`, fqdn, now)
 	return err
 }
 
-// AgentByToken returns the FQDN that owns the token hash.
-func (q *Q) AgentByToken(ctx context.Context, tokenHash string) (string, error) {
+// AgentByCertificate returns the FQDN of the enrolled host pinned to a certificate's sha256. A token from before
+// decision 041 matches nothing: it was stored as another kind.
+func (q *Q) AgentByCertificate(ctx context.Context, certificate string) (string, error) {
 	var fqdn string
 	err := q.db.QueryRow(ctx, `SELECT a.fqdn FROM agents a JOIN hosts h ON h.fqdn = a.fqdn
-		WHERE a.credential_sha256 = $1 AND h.state = 'enrolled'`, tokenHash).Scan(&fqdn)
+		WHERE a.credential_sha256 = $1 AND a.credential_kind = 'certificate' AND h.state = 'enrolled'`, certificate).Scan(&fqdn)
 	return fqdn, notFound(err)
 }
 
@@ -633,7 +638,8 @@ type SealedCredentials struct {
 	EscrowExportID *int64
 }
 
-// Who made a host's S3 key (decision 029).
+// Who made a host's S3 key (decision 029). Hosts have none since decision 041; a vault's hosts have their read-only
+// key for restores from it, which the admin gives (decision 039).
 const (
 	KeyByAdmin    = "admin"    // given at host add or set-key
 	KeyByHoldfast = "holdfast" // generated, then made by the provisioner command

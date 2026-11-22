@@ -17,15 +17,16 @@ import (
 )
 
 // The storage checks (spec §4.5, docs/storage.md). Each is an error: while any fails, the host cannot
-// enroll. The codes are stable.
+// enroll. The codes are stable. B001, B002 and B005–B007 were the host key's until hosts had none (decision 041):
+// they are the gateway key's now, which the server's gateway reads and writes every host's repository with.
 const (
-	CodeHostWrite         = "B001" // the host key cannot write under its prefix, or delete under its locks/
-	CodeHostRead          = "B002" // the host key cannot read back or list its prefix
-	CodeMaintRead         = "B003" // the maintenance key cannot read what the host key wrote
+	CodeHostWrite         = "B001" // the gateway key cannot write under the host's prefix, or delete under its locks/
+	CodeHostRead          = "B002" // the gateway key cannot read back or list the host's prefix
+	CodeMaintRead         = "B003" // the maintenance key cannot read what the gateway key wrote
 	CodeMaintWrite        = "B004" // the maintenance key cannot write, list or delete under repos/
-	CodeHostDelete        = "B005" // the host key can delete outside its locks/
-	CodeHostVersionDelete = "B006" // the host key can delete a version of a non-lock object for good
-	CodeHostOtherPrefix   = "B007" // the host key can use another prefix, or list repos/
+	CodeHostDelete        = "B005" // the gateway key can delete outside locks/
+	CodeHostVersionDelete = "B006" // the gateway key can delete a version for good
+	CodeHostOtherPrefix   = "B007" // the gateway key can use the bucket outside repos/, such as the escrow files
 	CodeVersioning        = "B008" // bucket versioning is not enabled
 	CodeMaintVersionDel   = "B009" // the maintenance key can delete an object version for good
 	CodeMaintSettings     = "B010" // the maintenance key can change the bucket's settings
@@ -49,6 +50,9 @@ type Report struct {
 	// NoncurrentDays is how long the bucket's lifecycle rule keeps a deleted file's old version, 0 if no
 	// rule was found. It dates when deleted data is really gone (decision 031).
 	NoncurrentDays int `json:"noncurrent_days,omitempty"`
+	// ObjectLock describes the bucket's Object Lock, when it has one and the maintenance key may read the
+	// setting. It is reported, not required, and Holdfast never extends a lock (decision 041).
+	ObjectLock string `json:"object_lock,omitempty"`
 }
 
 // OK is true when every check passed.
@@ -75,10 +79,10 @@ func (r Report) Summary() string {
 	return b.String()
 }
 
-// Prober tests the storage contract for one host's key (decision 029), and a read-only key for a restore onto
-// another host (plan-m6 §2.2).
+// Prober tests the storage contract on one host's prefix: the gateway key's (decision 041), and in a vault a
+// read-only key for restores from it (decision 039).
 type Prober interface {
-	Probe(ctx context.Context, fqdn string, host Key) Report
+	Probe(ctx context.Context, fqdn string, gateway Key) Report
 	ProbeReadOnly(ctx context.Context, fqdn string, key Key) Report
 	// ProbeMaintenance tests the bucket's side alone, with the maintenance key: a vault has no host keys that
 	// write (decision 039).
@@ -158,6 +162,13 @@ func (p S3Prober) bucketSettings(ctx context.Context, mc *minio.Client, rep *Rep
 	} else {
 		rep.NoncurrentDays = days
 	}
+	// Object Lock is reported, not required (decision 041): a key that may not read the setting reports nothing.
+	if on, mode, validity, unit, err := mc.GetObjectLockConfig(ctx, b); err == nil && on == "Enabled" {
+		rep.ObjectLock = "enabled"
+		if mode != nil && validity != nil && unit != nil {
+			rep.ObjectLock = fmt.Sprintf("enabled, %s for %d %s by default", strings.ToLower(string(*mode)), *validity, strings.ToLower(string(*unit)))
+		}
+	}
 	return versioned
 }
 
@@ -174,8 +185,8 @@ func (p StaticProber) ProbeReadOnly(context.Context, string, Key) Report {
 	return Report{Findings: []Finding{}}
 }
 
-// ProbeReadOnly tests a key for a restore onto another host: it must read and list the host's prefix (B014), and
-// must not write or delete anything there, its locks included (B015). restic then restores with --no-lock.
+// ProbeReadOnly tests a key for restores from a vault: it must read and list the host's prefix (B014), and must not
+// write or delete anything there, its locks included (B015). restic then restores with --no-lock.
 func (p S3Prober) ProbeReadOnly(ctx context.Context, fqdn string, key Key) Report {
 	rep := Report{Findings: []Finding{}}
 	add := func(code, format string, a ...any) {
@@ -222,8 +233,9 @@ type S3Prober struct {
 
 var probeBody = []byte("holdfast storage probe; safe to delete\n")
 
-// Probe implements Prober.
-func (p S3Prober) Probe(ctx context.Context, fqdn string, host Key) Report {
+// Probe implements Prober: it tests the gateway key on the host's prefix (decision 041), and the maintenance key
+// beside it.
+func (p S3Prober) Probe(ctx context.Context, fqdn string, gateway Key) Report {
 	rep := Report{Findings: []Finding{}}
 	add := func(code, format string, a ...any) {
 		rep.Findings = append(rep.Findings, Finding{Code: code, Message: fmt.Sprintf(format, a...)})
@@ -234,8 +246,7 @@ func (p S3Prober) Probe(ctx context.Context, fqdn string, host Key) Report {
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	// The host client has no region, as restic on an agent has none: it asks the bucket, like restic.
-	hc, err1 := p.client(host, "")
+	gc, err1 := p.client(gateway, p.Location.Region)
 	mc, err2 := p.client(p.Maint, p.Location.Region)
 	if err := errors.Join(err1, err2); err != nil {
 		add(CodeHostWrite, "cannot use the S3 endpoint %s: %v", p.Location.Endpoint, err)
@@ -249,26 +260,26 @@ func (p S3Prober) Probe(ctx context.Context, fqdn string, host Key) Report {
 
 	versioned := p.bucketSettings(ctx, mc, &rep, add)
 
-	// The host's own prefix.
-	if info, err := put(ctx, hc, b, own); err != nil {
-		add(CodeHostWrite, "the host key cannot write %s: %s", own, s3err(err))
+	// The host's prefix.
+	if info, err := put(ctx, gc, b, own); err != nil {
+		add(CodeHostWrite, "the gateway key cannot write %s: %s", own, s3err(err))
 	} else {
-		if err := get(ctx, hc, b, own); err != nil {
-			add(CodeHostRead, "the host key cannot read back %s: %s", own, s3err(err))
+		if err := get(ctx, gc, b, own); err != nil {
+			add(CodeHostRead, "the gateway key cannot read back %s: %s", own, s3err(err))
 		}
-		if err := list(ctx, hc, b, prefix); err != nil {
-			add(CodeHostRead, "the host key cannot list %s: %s", prefix, s3err(err))
+		if err := list(ctx, gc, b, prefix); err != nil {
+			add(CodeHostRead, "the gateway key cannot list %s: %s", prefix, s3err(err))
 		}
 		if err := get(ctx, mc, b, own); err != nil {
-			add(CodeMaintRead, "the maintenance key cannot read %s, which the host key wrote: %s. "+
+			add(CodeMaintRead, "the maintenance key cannot read %s, which the gateway key wrote: %s. "+
 				"On some S3 servers an object belongs to the user who uploaded it; see docs/storage.md", own, s3err(err))
 		}
-		if err := hc.RemoveObject(ctx, b, own, minio.RemoveObjectOptions{}); err == nil {
-			add(CodeHostDelete, "the host key deleted %s: it may delete only under %slocks/", own, prefix)
+		if err := gc.RemoveObject(ctx, b, own, minio.RemoveObjectOptions{}); err == nil {
+			add(CodeHostDelete, "the gateway key deleted %s: it may delete only lock files, under locks/", own)
 		}
 		if versioned && info.VersionID != "" {
-			if err := hc.RemoveObject(ctx, b, own, minio.RemoveObjectOptions{VersionID: info.VersionID}); err == nil {
-				add(CodeHostVersionDelete, "the host key deleted a version of %s for good", own)
+			if err := gc.RemoveObject(ctx, b, own, minio.RemoveObjectOptions{VersionID: info.VersionID}); err == nil {
+				add(CodeHostVersionDelete, "the gateway key deleted a version of %s for good; deny it s3:DeleteObjectVersion (docs/storage.md)", own)
 			}
 		}
 		if err := mc.RemoveObject(ctx, b, own, minio.RemoveObjectOptions{}); err != nil {
@@ -280,20 +291,17 @@ func (p S3Prober) Probe(ctx context.Context, fqdn string, host Key) Report {
 	}
 
 	// Its locks.
-	if _, err := put(ctx, hc, b, lock); err != nil {
-		add(CodeHostWrite, "the host key cannot write %s: %s", lock, s3err(err))
-	} else if err := hc.RemoveObject(ctx, b, lock, minio.RemoveObjectOptions{}); err != nil {
-		add(CodeHostWrite, "the host key cannot delete %s: %s", lock, s3err(err))
+	if _, err := put(ctx, gc, b, lock); err != nil {
+		add(CodeHostWrite, "the gateway key cannot write %s: %s", lock, s3err(err))
+	} else if err := gc.RemoveObject(ctx, b, lock, minio.RemoveObjectOptions{}); err != nil {
+		add(CodeHostWrite, "the gateway key cannot delete %s: %s", lock, s3err(err))
 		_ = mc.RemoveObject(ctx, b, lock, minio.RemoveObjectOptions{})
 	}
 
-	// Everyone else's.
+	// The maintenance key never deletes a version either.
 	if info, err := put(ctx, mc, b, other); err != nil {
 		add(CodeMaintWrite, "the maintenance key cannot write %s: %s", other, s3err(err))
 	} else {
-		if err := get(ctx, hc, b, other); err == nil {
-			add(CodeHostOtherPrefix, "the host key read %s, outside its prefix", other)
-		}
 		if versioned && info.VersionID != "" {
 			if err := mc.RemoveObject(ctx, b, other, minio.RemoveObjectOptions{VersionID: info.VersionID}); err == nil {
 				add(CodeMaintVersionDel, "the maintenance key deleted a version of %s for good, so a compromised server could "+
@@ -304,22 +312,19 @@ func (p S3Prober) Probe(ctx context.Context, fqdn string, host Key) Report {
 			add(CodeMaintWrite, "the maintenance key cannot delete %s: %s", other, s3err(err))
 		}
 	}
-	if _, err := put(ctx, hc, b, other+"-host"); err == nil {
-		add(CodeHostOtherPrefix, "the host key wrote %s-host, outside its prefix", other)
-		_ = mc.RemoveObject(ctx, b, other+"-host", minio.RemoveObjectOptions{})
-	}
-	if err := list(ctx, hc, b, "repos/"); err == nil {
-		add(CodeHostOtherPrefix, "the host key can list repos/, so it sees every host's name")
-	}
 
-	// The escrow files (decision 036).
+	// Outside repos/: the escrow files (decision 036) are the maintenance key's alone.
+	esc := "escrow/" + tag
+	if _, err := put(ctx, gc, b, esc+"-gateway"); err == nil {
+		add(CodeHostOtherPrefix, "the gateway key wrote %s-gateway, outside repos/: it could replace an escrow file", esc)
+		_ = mc.RemoveObject(ctx, b, esc+"-gateway", minio.RemoveObjectOptions{})
+	}
 	if p.Escrow {
-		esc := "escrow/" + tag
 		if _, err := put(ctx, mc, b, esc); err != nil {
 			add(CodeEscrowWrite, "the maintenance key cannot write %s: %s; it needs s3:PutObject and s3:DeleteObject on escrow/* (docs/storage.md)", esc, s3err(err))
 		} else {
-			if err := get(ctx, hc, b, esc); err == nil {
-				add(CodeHostOtherPrefix, "the host key read %s, outside its prefix", esc)
+			if err := get(ctx, gc, b, esc); err == nil {
+				add(CodeHostOtherPrefix, "the gateway key read %s, outside repos/", esc)
 			}
 			if err := mc.RemoveObject(ctx, b, esc, minio.RemoveObjectOptions{}); err != nil {
 				add(CodeEscrowWrite, "the maintenance key cannot delete %s: %s", esc, s3err(err))

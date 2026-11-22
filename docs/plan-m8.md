@@ -46,7 +46,11 @@ answer.
   repository through the gateway for that one restore.
 - The escrow bundle holds passwords only.
 
-**4. Off-site copies by the server.**
+**4. Off-site copies by the server. Optional.**
+- **A site B is optional** (your instruction, 2026-11-22). Without `offsite:` in `server.yaml`, Holdfast runs with one
+  bucket: nothing is copied, the API answers that off-site is not set up, the UI and the CLI show no off-site setting,
+  column or action, the checks and the alerts about off-site stay silent, and the e2e suite's other tests all run
+  without it. Adding `offsite:` later starts copying every job's snapshots from then on.
 - `offsite:` in `server.yaml`: the endpoint, the bucket and its maintenance key. Tested with the same contract as the
   primary bucket.
 - The copier (M7's) runs in the server: after a backup, and every few minutes, `restic copy` from the primary repository
@@ -105,5 +109,18 @@ Say so if you want any of these otherwise.
 - **M8 comes before the rebuild** (now M9, [plan-m9](plan-m9.md)), so the rebuild is designed once, on this
   architecture. Nothing is in production to lose meanwhile.
 - **Second-admin approval** is left for a later milestone.
+- **Parts 2 and 3 are built as one step.** The gateway is what makes the per-host keys go: their checks, the
+  credentials and the restore keys change together, and an agent that used both would be tested for nothing.
+- **The gateway never rewrites a file and never writes a repository's config or keys.** restic names its files by
+  their content, so a file that exists already holds what a second upload holds; and only the server makes a
+  repository or changes its keys. A restic key added outside Holdfast can then only come from someone with S3 access.
+- **Off-site runs inside holdfast-server as a second instance of the same code**, the M7 copier with its retention,
+  hold, Exclude, Match primary and "Deleted in primary", on its own PostgreSQL schema (`offsite`, in the same
+  database) and its own bucket. The two talk in-process in place of the vault protocol: no registration, no token, no
+  rclone, no restore keys. The copier reads the primary repository through a loopback read-only gateway, so restic
+  needs only the off-site key. People reach it through the same UI, API and CLI: `/api/v1/offsite/…`,
+  `holdfast --offsite …`, and the UI's Off-site pages, with the same login and the same bindings. Its config history
+  and audit log are its own, as site B's were. This keeps M7's tested behaviour instead of rebuilding it on a site
+  column in every table.
 - **Agents enroll again** when they are upgraded to M8, in place of a migration path, since Holdfast has no production
   installs.

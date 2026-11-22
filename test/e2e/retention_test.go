@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"net/http"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
@@ -36,17 +34,13 @@ func history(t *testing.T, r restic.Runner, fqdn, jobID, src string, times []tim
 // sends after each backup. The test made them with restic --time, which the agent never does.
 func (e *env) reportSnapshots(a *agentProc, jobID string, ids []string) {
 	e.t.Helper()
-	tok, err := os.ReadFile(filepath.Join(a.dir, "state", "token"))
-	must(e.t, err)
 	now := time.Now()
 	var evs []proto.Event
 	for _, id := range ids {
 		evs = append(evs, proto.Event{ID: "e2e-history-" + id[:16], Kind: proto.KindBackup, JobID: jobID, Status: "success", Started: now, Finished: now, SnapshotID: id})
 	}
 	body, _ := json.Marshal(proto.EventsRequest{Events: evs})
-	req, _ := http.NewRequest("POST", e.url+proto.Base+"/events", bytes.NewReader(body))
-	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(string(tok)))
-	resp, err := e.client.Do(req)
+	resp, err := e.agentClient(a).Post(e.url+proto.Base+"/events", "application/json", bytes.NewReader(body))
 	if err != nil || resp.StatusCode != 200 {
 		e.t.Fatalf("reporting snapshots: %v %v", resp, err)
 	}
@@ -114,7 +108,7 @@ func TestRetentionMatchesRestic(t *testing.T) {
 	code := e.addHost(fqdn, "data", "--path", src, "--daily", "02:00", "--keep-daily", "14d", "--keep-weekly", "8w", "--keep-monthly", "6mo", "--keep-last", "3")
 	a := e.startAgent(fqdn, code)
 	e.waitProgress(fqdn, "first_backup_done", 2*time.Minute)
-	r := e.resticFor(e.escrow()[fqdn], false)
+	r := e.resticFor(e.escrow()[fqdn])
 
 	base := time.Now().UTC().Truncate(24 * time.Hour).Add(-22 * time.Hour) // yesterday, 02:00
 	var times []time.Time
@@ -213,7 +207,7 @@ func TestRetentionCutWaitsSevenDays(t *testing.T) {
 	code := e.addHost(fqdn, "data", long...)
 	a := e.startAgent(fqdn, code)
 	e.waitProgress(fqdn, "first_backup_done", 2*time.Minute)
-	r := e.resticFor(e.escrow()[fqdn], false)
+	r := e.resticFor(e.escrow()[fqdn])
 	base := time.Now().UTC().Truncate(24 * time.Hour).Add(-22 * time.Hour)
 	var times []time.Time
 	for d := 20; d >= 1; d-- {

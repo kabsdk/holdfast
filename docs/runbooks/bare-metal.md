@@ -17,9 +17,10 @@ This path is walked in the lab (`lab/README.md`, the rebuild test).
    web01.example.com`. Its first backup after enrolling is of the empty new host, and is only one more snapshot:
    retention keeps the old ones.
 4. **Get an enrollment code.** The host is still in Holdfast: `holdfast host enroll-code web01.example.com`. If it
-   was removed, add it again (`holdfast host add web01.example.com --s3-key-file …`): it comes back with its
+   was removed, add it again (`holdfast host add web01.example.com`): it comes back with its
    repository and its password (spec §3.5). A decommissioned host starts over, with nothing to restore.
-5. **Enroll it**, as root on the host, with the command Holdfast printed. Before starting the agent, set what it
+5. **Enroll it**, as root on the host, with the command Holdfast printed: the new agent makes its own key and
+   certificate, and the server pins them in place of the lost host's. Before starting the agent, set what it
    may do in `/etc/holdfast/agent.yaml`, which is the host's own (`deploy/examples/agent.yaml`): `restore.allow_in_place:
    true` to restore over the fresh system, and the `dumps:` it had. Then `systemctl enable --now holdfast-agent`.
 6. **Restore** the snapshot from step 3:
@@ -33,7 +34,7 @@ This path is walked in the lab (`lab/README.md`, the rebuild test).
 
 **A different FQDN**, such as a spare taking over, is a restore onto another host (spec §5.4): the spare's
 `agent.yaml` allows `restore.allow_other_hosts`, and an admin restores with `holdfast restore web01.example.com <id>
---to-host spare01.example.com --s3-key-file <a read-only key for repos/web01.example.com/>` (`docs/storage.md`).
+--to-host spare01.example.com`. The gateway lets the spare read web01's repository for that restore only.
 
 ## Path 2: Holdfast is gone too
 
@@ -48,8 +49,10 @@ storage admin.
    ```
 
    It holds `repository` and `repo_password`. Keep it root-only, and delete it when you are done. A manual escrow
-   bundle (`holdfast escrow export`) holds the same, with the S3 key too.
-2. **Get a key**: the storage admin makes a read-only key for `repos/web01.example.com/` (`docs/storage.md`).
+   bundle (`holdfast escrow export`) holds the same.
+2. **Get a key**: the storage admin makes a read-only key for `repos/web01.example.com/`: `s3:ListBucket` on the
+   bucket and `s3:GetObject` on that prefix. Hosts hold no S3 key (decision 041), so this one is made for the
+   occasion, and deleted afterwards.
 3. **Boot a rescue system** (the distribution's installer in rescue mode), partition and format the new disk, and
    mount it at `/mnt`, with `/mnt/boot` and the other file systems as they were.
 4. **Get restic**: from the `holdfast-restic` package (`dpkg-deb -x` or `rpm2cpio … | cpio -id`), or restic's own

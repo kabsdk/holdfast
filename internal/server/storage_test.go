@@ -46,58 +46,53 @@ func (p *testProber) ProbeMaintenance(context.Context) storage.Report {
 	return storage.Report{Findings: []storage.Finding{}}
 }
 
-// TestStorageContractGatesHosts: the admin gives each host's S3 key, and a key that fails the storage
-// contract is refused at host add and at set-key. Enrollment is refused while the storage fails, the
-// daily check tests it again, and the secret never shows (decision 029).
+// TestStorageContractGatesHosts: hosts have no S3 key (decision 041). The storage contract is tested with the
+// gateway key on the host's prefix, and a host whose storage fails it is refused at host add. Enrollment is refused
+// while the storage fails, the daily check tests it again, and neither the gateway's secret nor any S3 key shows.
 func TestStorageContractGatesHosts(t *testing.T) {
 	p := &testProber{}
-	s := newTestServerWith(t, func(d *Deps) { d.Provisioner, d.Prober = nil, p })
+	const gwSecret = "gateway-secret-0123456789abcdef"
+	s := newTestServerWith(t, func(d *Deps) {
+		d.Prober, d.Gateway = p, storage.Key{AccessKeyID: "GATEWAY01", SecretAccessKey: gwSecret}
+	})
 	ctx := context.Background()
 	const fqdn = "web01.example.com"
-	const secret, secret2 = "host-secret-0123456789abcdef", "host-secret-2-fedcba9876543210"
-	key := &S3KeyInput{AccessKeyID: "HOSTKEY01", SecretAccessKey: secret}
-	add := func(k *S3KeyInput) (AddHostResult, error) {
-		return s.AddHost(ctx, root, AddHostInput{FQDN: fqdn, JobID: "system", Job: job("/etc"), S3Key: k})
+	add := func() (AddHostResult, error) {
+		return s.AddHost(ctx, root, AddHostInput{FQDN: fqdn, JobID: "system", Job: job("/etc")})
 	}
 
-	var ve *ValidationError
-	if _, err := add(nil); !errors.As(err, &ve) || ve.Problems[0].Path != "s3_key" {
-		t.Fatalf("without a provisioner the key is required: %v", err)
-	}
-	if _, err := add(&S3KeyInput{AccessKeyID: "HOSTKEY01", SecretAccessKey: "has a space"}); !errors.As(err, &ve) {
-		t.Fatalf("a malformed key: %v", err)
-	}
-
-	// A key that fails the contract is refused, and nothing is saved.
+	// Storage that fails the contract: the host is refused, and nothing is saved.
 	p.fail(storage.CodeHostDelete)
 	var se *StorageError
-	if _, err := add(key); !errors.As(err, &se) || !slices.Equal(se.Report.Codes(), []string{"B005"}) {
-		t.Fatalf("a key that fails B005: %v", err)
+	if _, err := add(); !errors.As(err, &se) || !slices.Equal(se.Report.Codes(), []string{"B005"}) {
+		t.Fatalf("storage that fails B005: %v", err)
 	}
 	if _, err := s.st.Q().GetHost(ctx, fqdn); !errors.Is(err, store.ErrNotFound) {
-		t.Fatalf("the host was saved with a key that failed: %v", err)
+		t.Fatalf("the host was saved while its storage failed: %v", err)
 	}
 	if _, err := s.st.Q().Head(ctx); !errors.Is(err, store.ErrNotFound) {
-		t.Fatalf("a revision was saved with a key that failed: %v", err)
+		t.Fatalf("a revision was saved while the storage failed: %v", err)
 	}
 
-	// A key that passes: the host is added with exactly that key.
+	// Storage that passes: the host is added, tested with the gateway key, and holds no S3 key.
 	p.fail()
-	res, err := add(key)
+	res, err := add()
 	if err != nil || !res.Storage.OK() {
-		t.Fatalf("add host with a good key: %+v %v", res, err)
+		t.Fatalf("add host: %+v %v", res, err)
 	}
-	if p.lastKey.SecretAccessKey != secret {
-		t.Fatal("the contract was tested with another key than the one given")
+	if p.lastKey.AccessKeyID != "GATEWAY01" || p.lastKey.SecretAccessKey != gwSecret {
+		t.Fatal("the contract was not tested with the gateway key")
 	}
-	c, _ := s.st.Q().GetCredentials(ctx, fqdn)
-	if c.S3AccessKeyID != "HOSTKEY01" || c.S3KeySource != store.KeyByAdmin {
-		t.Fatalf("stored key: %s, made by %s", c.S3AccessKeyID, c.S3KeySource)
+	if c, _ := s.st.Q().GetCredentials(ctx, fqdn); c.S3AccessKeyID != "" {
+		t.Fatalf("a host has an S3 key: %s", c.S3AccessKeyID)
+	}
+	if _, err := s.SetS3Key(ctx, root, fqdn, SetS3KeyInput{S3Key: S3KeyInput{AccessKeyID: "HOSTKEY01", SecretAccessKey: "host-secret"}}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("a host was given an S3 key: %v", err)
 	}
 
 	// A stranger with the FQDN but not the code causes no S3 traffic.
 	before := p.called()
-	if _, err := s.Enroll(ctx, proto.EnrollRequest{FQDN: fqdn, Code: "WRONG-CODE-0000"}); err == nil {
+	if err := s.Enroll(ctx, proto.EnrollRequest{FQDN: fqdn, Code: "WRONG-CODE-0000"}, certOf(fqdn)); err == nil {
 		t.Fatal("enrolled with a wrong code")
 	}
 	if p.called() != before {
@@ -106,7 +101,7 @@ func TestStorageContractGatesHosts(t *testing.T) {
 
 	// The storage changed before enrollment: refused, the reason audited, and the code stays valid.
 	p.fail(storage.CodeMaintRead)
-	if _, err := s.Enroll(ctx, proto.EnrollRequest{FQDN: fqdn, Code: res.Enrollment.Code}); err == nil {
+	if err := s.Enroll(ctx, proto.EnrollRequest{FQDN: fqdn, Code: res.Enrollment.Code}, certOf(fqdn)); err == nil {
 		t.Fatal("enrolled while the maintenance key cannot read the host's objects")
 	}
 	if h, _ := s.Host(ctx, fqdn); h.Storage == nil || !slices.Equal(h.Storage.Codes(), []string{"B003"}) {
@@ -123,31 +118,15 @@ func TestStorageContractGatesHosts(t *testing.T) {
 		t.Fatalf("the refusal is not audited with its code: %+v", audit)
 	}
 	p.fail()
-	if _, err := s.Enroll(ctx, proto.EnrollRequest{FQDN: fqdn, Code: res.Enrollment.Code}); err != nil {
+	if err := s.Enroll(ctx, proto.EnrollRequest{FQDN: fqdn, Code: res.Enrollment.Code}, certOf(fqdn)); err != nil {
 		t.Fatalf("enroll once the storage passes: %v", err)
 	}
 	poll, err := s.Poll(ctx, fqdn, proto.PollRequest{}, 0)
-	if err != nil || poll.Credentials == nil || poll.Credentials.S3AccessKeyID != "HOSTKEY01" || poll.Credentials.S3SecretAccessKey != secret {
-		t.Fatalf("the agent does not get the admin's key: %+v %v", poll.Credentials, err)
+	if err != nil || poll.Credentials == nil || poll.Credentials.RepoPassword == "" {
+		t.Fatalf("the agent does not get its password: %+v %v", poll.Credentials, err)
 	}
-
-	// Replacing the key: one that fails is refused and the old one stays; one that passes reaches the agent.
-	newKey := S3KeyInput{AccessKeyID: "HOSTKEY02", SecretAccessKey: secret2}
-	p.fail(storage.CodeHostOtherPrefix)
-	if _, err := s.SetS3Key(ctx, root, fqdn, SetS3KeyInput{S3Key: newKey}); !errors.As(err, &se) {
-		t.Fatalf("set-key with a key that fails B007: %v", err)
-	}
-	if c, _ := s.st.Q().GetCredentials(ctx, fqdn); c.Version != 1 || c.S3AccessKeyID != "HOSTKEY01" {
-		t.Fatalf("a refused key replaced the old one: version %d, %s", c.Version, c.S3AccessKeyID)
-	}
-	p.fail()
-	set, err := s.SetS3Key(ctx, root, fqdn, SetS3KeyInput{S3Key: newKey, Message: "rotation"})
-	if err != nil || set.CredentialsVersion != 2 {
-		t.Fatalf("set-key: %+v %v", set, err)
-	}
-	poll, err = s.Poll(ctx, fqdn, proto.PollRequest{CredentialsVersion: 1}, 0)
-	if err != nil || poll.Credentials == nil || poll.Credentials.Version != 2 || poll.Credentials.S3AccessKeyID != "HOSTKEY02" {
-		t.Fatalf("the agent does not get the new key: %+v %v", poll.Credentials, err)
+	if !strings.HasPrefix(poll.Config.Repository, "rest:https://holdfast.example.test/gateway/v1/"+fqdn+"/") {
+		t.Fatalf("the agent's repository is not at the gateway: %s", poll.Config.Repository)
 	}
 
 	// The daily check tests the storage again, and the metrics name the failed check.
@@ -164,16 +143,17 @@ func TestStorageContractGatesHosts(t *testing.T) {
 		}
 	}
 
-	// The secrets show nowhere a person or a scraper can see.
+	// The gateway's secret shows nowhere a person, an agent or a scraper can see.
 	h, _ := s.Host(ctx, fqdn)
 	hostJSON, _ := json.Marshal(h)
+	pollJSON, _ := json.Marshal(poll)
 	audit, _ = s.st.Q().ListAudit(ctx, "", 1000)
 	auditJSON, _ := json.Marshal(audit)
 	revs, _ := s.st.Q().ListRevisions(ctx, 100)
 	revJSON, _ := json.Marshal(revs)
-	for where, text := range map[string]string{"host view": string(hostJSON), "audit log": string(auditJSON), "metrics": metrics, "revisions": string(revJSON)} {
-		if strings.Contains(text, secret) || strings.Contains(text, secret2) {
-			t.Errorf("a host's S3 secret is in the %s", where)
+	for where, text := range map[string]string{"host view": string(hostJSON), "poll": string(pollJSON), "audit log": string(auditJSON), "metrics": metrics, "revisions": string(revJSON)} {
+		if strings.Contains(text, gwSecret) {
+			t.Errorf("the gateway's S3 secret is in the %s", where)
 		}
 	}
 }

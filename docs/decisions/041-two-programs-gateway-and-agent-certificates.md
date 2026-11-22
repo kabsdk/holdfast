@@ -31,9 +31,11 @@ decision 006 that lets a backup run while the server is down; the bearer token o
    - The maintenance key: as today.
    - `holdfast host add` needs no S3 key. Holdfast still never creates S3 users (decision 029's first half stands).
 
-5. **The server makes the off-site copies.** `server.yaml` names a second bucket, off-site. After each backup the server
-   copies the new snapshots there with `restic copy`, into off-site repositories with passwords of their own, kept under
-   each job's off-site retention, behind the same 7-day protection.
+5. **The server makes the off-site copies, and off-site is optional.** `server.yaml` may name a second bucket, off-site
+   (you said so on 2026-11-22: "site B is OPTIONAL"). Without it Holdfast is complete: nothing is copied, no off-site
+   setting or action is shown, and nothing warns about it. With it, after each backup the server copies the new
+   snapshots there with `restic copy`, into off-site repositories with passwords of their own, kept under each job's
+   off-site retention, behind the same 7-day protection.
    - Exclude, the hold (a snapshot is not forgotten in primary before it is copied, for at most 7 days), "Deleted in
      primary" and O101 stay. A restore from off-site runs on the host, through the gateway, read-only.
    - Two sites that each have hosts run a server each, and use the other site's storage as off-site.

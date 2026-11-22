@@ -23,7 +23,7 @@ type restoreEvent struct {
 }
 
 func restoreCmd() *cobra.Command {
-	var to, overwrite, msg, toHost, keyFile, fromVault string
+	var to, overwrite, msg, toHost, fromVault string
 	var inPlace, dryRun, wait bool
 	var leaveOut, only []string
 	c := &cobra.Command{Use: "restore <fqdn> <snapshot>", Short: "Restore a snapshot on its host, or onto another one (--to-host), through the agent (a new root-only directory by default)",
@@ -39,14 +39,7 @@ func restoreCmd() *cobra.Command {
 			}
 			runsOn := a[0]
 			if toHost != "" {
-				if keyFile == "" {
-					return errors.New("--to-host needs --s3-key-file: a read-only key for " + a[0] + "'s prefix, made at the S3 server (docs/runbooks/bare-metal.md)")
-				}
-				key, err := readS3Key(keyFile)
-				if err != nil {
-					return err
-				}
-				in["to_host"], in["s3_key"], runsOn = toHost, key, toHost
+				in["to_host"], runsOn = toHost, toHost
 			}
 			if fromVault != "" {
 				in["from_vault"] = fromVault
@@ -71,7 +64,7 @@ func restoreCmd() *cobra.Command {
 				}
 				fmt.Printf("restore %s queued for %s; the host must pick it up by %s\nholdfast restores shows its result\n", res.Command, runsOn, res.ExpiresAt.Local().Format("2006-01-02 15:04"))
 				if toHost != "" {
-					fmt.Printf("%s's root learns %s's repository password: delete the read-only key at the S3 server once it is done\n", toHost, a[0])
+					fmt.Printf("%s may read %s's repository through the gateway until it reports the restore; its root learns %s's repository password\n", toHost, a[0], a[0])
 				}
 				return nil
 			}
@@ -109,8 +102,7 @@ func restoreCmd() *cobra.Command {
 	c.Flags().BoolVar(&wait, "wait", false, "wait for the agent's result")
 	c.Flags().StringVar(&overwrite, "overwrite", "", "with --in-place or --to, for a file that exists already, restic's choice: always, if-changed, if-newer or never")
 	c.Flags().StringVarP(&msg, "message", "m", "", "why, for the audit log")
-	c.Flags().StringVar(&toHost, "to-host", "", "admin: restore onto this other host, which must allow it (agent.yaml restore.allow_other_hosts)")
-	c.Flags().StringVar(&keyFile, "s3-key-file", "", "with --to-host: a read-only key for the snapshot's host's prefix, as for host add, or - for stdin")
+	c.Flags().StringVar(&toHost, "to-host", "", "admin: restore onto this other host, which must allow it (agent.yaml restore.allow_other_hosts); it reads this host's repository through the gateway, for this restore only")
 	c.Flags().StringVar(&fromVault, "from-vault", "", "restore the copy this vault holds, from the other site (holdfast offsite copies lists them)")
 	c.AddCommand(restorePairCmd())
 	return c

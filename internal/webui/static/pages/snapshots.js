@@ -138,10 +138,9 @@ function Restore({ fqdn, snap, host, only }) {
   const [dir, setDir] = useState('/srv/recovered');
   const [overwrite, setOverwrite] = useState('');
   const [reason, setReason] = useState('');
-  // Onto another host (plan-m6 §2.2): an admin's, with a read-only key for this host's prefix.
+  // Onto another host (plan-m6 §2.2): an admin's. That host reads this one's repository through the gateway, for this
+  // restore only (decision 041).
   const [toHost, setToHost] = useState('');
-  const [keyID, setKeyID] = useState('');
-  const [keySecret, setKeySecret] = useState('');
   const act = useAction();
   const [result, setResult] = useState(null);
   const bounds = host.agent?.restore_bounds;
@@ -152,7 +151,7 @@ function Restore({ fqdn, snap, host, only }) {
     include: only.length ? only : undefined,
     exclude: !only.length && leaveOut.trim() ? leaveOut.split('\n').map((x) => x.trim()).filter(Boolean) : undefined,
     overwrite: target !== 'new' && overwrite ? overwrite : undefined, dry_run: dryRun, message: reason || undefined,
-    ...(elsewhere ? { to_host: toHost.trim(), s3_key: { access_key_id: keyID, secret_access_key: keySecret } } : {}),
+    ...(elsewhere ? { to_host: toHost.trim() } : {}),
   });
   useEffect(() => {
     if (!act.done || !act.done.command) return;
@@ -178,11 +177,9 @@ function Restore({ fqdn, snap, host, only }) {
       Another directory: <input value=${dir} onInput=${(e) => setDir(e.target.value)} disabled=${target !== 'directory'} />
       ${!elsewhere && bounds && !bounds.allow_other_directories ? html`<span class="muted"> (this host does not allow it)</span>` : ''}</label>`}
     ${inPlace && html`<details><summary>Onto another host</summary>
-      <p class="muted">Restore this snapshot on another host, which must allow it (restore.allow_other_hosts in its agent.yaml). Give a key that may only read
-        <code>repos/${fqdn}/</code>, made at your S3 server; it is tested first. That host's root learns ${fqdn}'s repository password: delete the key afterwards.</p>
+      <p class="muted">Restore this snapshot on another host, which must allow it (restore.allow_other_hosts in its agent.yaml). That host may read
+        ${fqdn}'s repository through this server for this restore only, and never write to it. Its root learns ${fqdn}'s repository password.</p>
       <label class="field"><span>Host</span><input value=${toHost} onInput=${(e) => { setToHost(e.target.value); if (target === 'in_place') setTarget('new'); }} placeholder="the other host's FQDN" /></label>
-      ${elsewhere && html`<label class="field"><span>Read-only key: access key ID</span><input value=${keyID} onInput=${(e) => setKeyID(e.target.value)} autocomplete="off" /></label>
-        <label class="field"><span>Secret access key</span><input type="password" value=${keySecret} onInput=${(e) => setKeySecret(e.target.value)} autocomplete="new-password" /></label>`}
     </details>`}
     ${target !== 'new' && html`<label class="field"><span>If a file already exists (restic --overwrite)</span>
       <select value=${overwrite} onChange=${(e) => setOverwrite(e.target.value)}>

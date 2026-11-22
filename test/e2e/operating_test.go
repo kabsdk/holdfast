@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"net/http"
 	"net/url"
 	"slices"
 	"strings"
@@ -93,7 +94,7 @@ func TestEscrowSizeAndRotate(t *testing.T) {
 	if f.FQDN != fqdn || f.Format != "holdfast-escrow-1" || f.RepoPassword == "" || !strings.HasSuffix(f.Repository, "/repos/"+fqdn) {
 		t.Fatalf("escrow file: %+v", f)
 	}
-	old := e.resticFor(escrowHost{Repository: f.Repository, RepoPassword: f.RepoPassword}, false)
+	old := e.resticFor(escrowHost{Repository: f.Repository, RepoPassword: f.RepoPassword})
 	if n := snapshots(t, old); n != 1 {
 		t.Fatalf("the escrowed password opens the repository with %d snapshots, want 1", n)
 	}
@@ -135,14 +136,20 @@ func TestEscrowSizeAndRotate(t *testing.T) {
 	if f2.RepoPassword == f.RepoPassword || f2.CredentialsVersion != rot.CredentialsVersion {
 		t.Fatalf("the escrow file must hold the new password: %+v", f2)
 	}
-	next := e.resticFor(escrowHost{Repository: f2.Repository, RepoPassword: f2.RepoPassword}, false)
+	next := e.resticFor(escrowHost{Repository: f2.Repository, RepoPassword: f2.RepoPassword})
 	keys, err := next.Keys(ctx)
 	if err != nil || len(keys) != 1 || keys[0].ID != rot.NewKey {
 		t.Fatalf("the repository's keys after the rotation: %+v %v", keys, err)
 	}
 	h := e.host(fqdn)
 	if h.State != "awaiting_enrollment" || !hasProblem(h, "enroll") {
-		t.Fatalf("the agent's token must be revoked: %s %+v", h.State, h.Problems)
+		t.Fatalf("the agent's certificate must be unpinned: %s %+v", h.State, h.Problems)
+	}
+	resp, err := e.agentClient(a).Post(e.url+"/agent/v1/poll?wait=0s", "application/json", strings.NewReader("{}"))
+	must(t, err)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("the rotated host's old certificate still works: %d", resp.StatusCode)
 	}
 
 	// Enrolled again with the new code, the agent backs up with the new password.

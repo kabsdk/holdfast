@@ -263,7 +263,7 @@ func TestChangedCredentialFilesAreRepaired(t *testing.T) {
 	var now atomic.Int64
 	now.Store(at("2026-11-20 10:00:00"))
 	a := testAgent(t, daily, &now)
-	creds := proto.Credentials{Version: 3, RepoPassword: "repo-password", S3AccessKeyID: "HOSTKEY", S3SecretAccessKey: "host-secret"}
+	creds := proto.Credentials{Version: 3, RepoPassword: "repo-password"}
 	if err := a.applyCredentials(creds); err != nil {
 		t.Fatal(err)
 	}
@@ -290,8 +290,8 @@ func TestChangedCredentialFilesAreRepaired(t *testing.T) {
 	if notices() != 0 || a.credVer != 3 {
 		t.Fatalf("untouched files: %d notices, version %d", notices(), a.credVer)
 	}
-	env := filepath.Join(a.cfg.CredentialsDir, "s3.env")
-	if err := os.WriteFile(env, []byte("AWS_ACCESS_KEY_ID=SOMEONE-ELSES\nAWS_SECRET_ACCESS_KEY=x\n"), 0o600); err != nil {
+	pass := filepath.Join(a.cfg.CredentialsDir, "repo.pass")
+	if err := os.WriteFile(pass, []byte("someone-elses-password"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	backup("2026-11-20 11:00:00")
@@ -306,7 +306,7 @@ func TestChangedCredentialFilesAreRepaired(t *testing.T) {
 	if notices() != 1 || a.credVer != 3 {
 		t.Fatalf("after the server sent them again: %d notices, version %d", notices(), a.credVer)
 	}
-	if b, _ := os.ReadFile(env); !strings.Contains(string(b), "HOSTKEY") {
+	if b, _ := os.ReadFile(pass); string(b) != "repo-password" {
 		t.Fatalf("the files were not repaired: %s", b)
 	}
 }

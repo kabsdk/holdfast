@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"io"
@@ -18,6 +19,7 @@ import (
 	"time"
 
 	"github.com/kabsdk/holdfast/internal/config"
+	"github.com/kabsdk/holdfast/internal/pin"
 	"github.com/kabsdk/holdfast/internal/proto"
 	"github.com/kabsdk/holdfast/internal/schedule"
 	"github.com/kabsdk/holdfast/internal/server/creds"
@@ -35,8 +37,7 @@ func fakeRestic(t *testing.T) string {
 	return p
 }
 
-// newTestServer builds a server on a fresh database. Its keys are generated (the provisioner path) and
-// its storage always passes. now, if given, is its clock.
+// newTestServer builds a server on a fresh database. Its storage always passes. now, if given, is its clock.
 func newTestServer(t *testing.T, now ...func() time.Time) *Server {
 	return newTestServerWith(t, func(d *Deps) {
 		if len(now) > 0 {
@@ -51,8 +52,9 @@ func newTestServerWith(t *testing.T, opt func(*Deps)) *Server {
 	sealer, _ := creds.NewSealer(creds.Random(creds.KeySize))
 	set := Settings{PublicURL: "https://holdfast.example.test", StateDir: t.TempDir(), ResticBin: fakeRestic(t), DefaultZone: "Europe/Copenhagen", NodeName: "test",
 		Storage: StorageSettings{Endpoint: "http://127.0.0.1:9000", Bucket: "holdfast"}, Maintenance: MaintenanceSettings{Check: CheckDaily, CheckCycleDays: 30}}
-	d := Deps{Store: testpg.Store(t), Sealer: sealer, Provisioner: storage.NoopProvisioner{}, Prober: storage.StaticProber{},
-		Maintenance: storage.Key{AccessKeyID: "MAINT", SecretAccessKey: "maint-secret"}, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	d := Deps{Store: testpg.Store(t), Sealer: sealer, Prober: storage.StaticProber{},
+		Maintenance: storage.Key{AccessKeyID: "MAINT", SecretAccessKey: "maint-secret"}, Gateway: storage.Key{AccessKeyID: "GATEWAY", SecretAccessKey: "gateway-secret"},
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	opt(&d)
 	s, err := New(set, d)
 	if err != nil {
@@ -67,6 +69,9 @@ func job(paths ...string) *config.Job {
 }
 
 var root = Actor{Name: "local:root", Source: "cli", Everywhere: true}
+
+// certOf stands in for the fingerprint of the certificate a host's agent enrolls with.
+func certOf(fqdn string) string { return creds.HashToken("the certificate of " + fqdn) }
 
 func TestHostLifecycle(t *testing.T) {
 	s, ctx := newTestServer(t), context.Background()
@@ -94,20 +99,26 @@ func TestHostLifecycle(t *testing.T) {
 		t.Fatalf("before enrollment: %+v", h)
 	}
 
-	// Enrollment: a wrong code is refused (and audited); the right one gives a token, once.
-	if _, err := s.Enroll(ctx, proto.EnrollRequest{FQDN: "web01.example.com", Code: "WRONG-CODE-0000"}); err == nil {
+	// Enrollment: a wrong code is refused (and audited); the right one pins the agent's certificate, once.
+	cert := certOf("web01.example.com")
+	if err := s.Enroll(ctx, proto.EnrollRequest{FQDN: "web01.example.com", Code: "WRONG-CODE-0000"}, cert); err == nil {
 		t.Fatal("wrong code accepted")
 	}
-	tok, err := s.Enroll(ctx, proto.EnrollRequest{FQDN: "web01.example.com", Code: strings.ToLower(res.Enrollment.Code), Facts: proto.Facts{HostnameFQDN: "web01"}})
-	if err != nil || tok == "" {
+	if err := s.Enroll(ctx, proto.EnrollRequest{FQDN: "web01.example.com", Code: strings.ToLower(res.Enrollment.Code)}, ""); err == nil {
+		t.Fatal("enrolled without a certificate")
+	}
+	if err := s.Enroll(ctx, proto.EnrollRequest{FQDN: "web01.example.com", Code: strings.ToLower(res.Enrollment.Code), Facts: proto.Facts{HostnameFQDN: "web01"}}, cert); err != nil {
 		t.Fatalf("enroll: %v", err)
 	}
-	if _, err := s.Enroll(ctx, proto.EnrollRequest{FQDN: "web01.example.com", Code: res.Enrollment.Code}); err == nil {
+	if err := s.Enroll(ctx, proto.EnrollRequest{FQDN: "web01.example.com", Code: res.Enrollment.Code}, certOf("another")); err == nil {
 		t.Fatal("a code was used twice")
 	}
-	fqdn, err := s.st.Q().AgentByToken(ctx, creds.HashToken(tok))
+	fqdn, err := s.st.Q().AgentByCertificate(ctx, cert)
 	if err != nil || fqdn != "web01.example.com" {
-		t.Fatalf("token lookup: %q %v", fqdn, err)
+		t.Fatalf("certificate lookup: %q %v", fqdn, err)
+	}
+	if _, err := s.st.Q().AgentByCertificate(ctx, certOf("another")); err == nil {
+		t.Fatal("a certificate nobody enrolled with is a host")
 	}
 
 	// First poll: config and credentials, at once.
@@ -115,7 +126,7 @@ func TestHostLifecycle(t *testing.T) {
 	if err != nil || p.Config == nil || p.Credentials == nil || p.Credentials.RepoPassword == "" {
 		t.Fatalf("first poll: %+v %v", p, err)
 	}
-	if p.Config.Revision != 1 || p.Config.Jobs[0].Schedule.Zone != "Europe/Copenhagen" || p.Config.Repository != "s3:http://127.0.0.1:9000/holdfast/repos/web01.example.com" {
+	if p.Config.Revision != 1 || p.Config.Jobs[0].Schedule.Zone != "Europe/Copenhagen" || p.Config.Repository != "rest:https://holdfast.example.test/gateway/v1/web01.example.com/" {
 		t.Fatalf("rendered config: %+v", p.Config)
 	}
 	applied := proto.Applied{Revision: p.Config.Revision, SHA256: p.Config.SHA256}
@@ -209,7 +220,7 @@ func TestHostLifecycle(t *testing.T) {
 	audit, _ := s.st.Q().ListAudit(ctx, "", 100)
 	ab, _ := json.Marshal(audit)
 	for name, blob := range map[string]string{"revision": string(b), "audit": string(ab), "metrics": rr.Body.String()} {
-		if strings.Contains(blob, pw) || strings.Contains(blob, p.Credentials.S3SecretAccessKey) || strings.Contains(blob, tok) {
+		if strings.Contains(blob, pw) || strings.Contains(blob, "gateway-secret") {
 			t.Errorf("a credential leaked into the %s", name)
 		}
 	}
@@ -221,28 +232,73 @@ func TestAgentAuthAndAPIOverSocket(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ts := httptest.NewServer(s.AgentHandler())
+	// The agent listener: TLS that asks each client for its certificate (decision 041).
+	ts := httptest.NewUnstartedServer(s.AgentHandler())
+	ts.TLS = AgentTLSConfig()
+	ts.StartTLS()
 	defer ts.Close()
-	// Polling without a token is refused.
-	resp, _ := http.Post(ts.URL+proto.Base+"/poll", "application/json", strings.NewReader("{}"))
-	if resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("unauthenticated poll: %d", resp.StatusCode)
+	// with returns a client that pins the server and, given an identity, connects with its certificate.
+	with := func(identity []byte) (*http.Client, string) {
+		t.Helper()
+		var cert *tls.Certificate
+		fp := ""
+		if identity != nil {
+			c, err := pin.ParseIdentity(identity)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cert, fp = c, pin.Fingerprint(c.Leaf)
+		}
+		c, err := pin.Client(ts.URL, pin.Fingerprint(ts.Certificate()), cert)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return c, fp
 	}
-	// Enroll over HTTP, then poll with the token.
-	body, _ := json.Marshal(proto.EnrollRequest{FQDN: "db01.example.com", Code: res.Enrollment.Code})
-	resp, _ = http.Post(ts.URL+proto.Base+"/enroll", "application/json", bytes.NewReader(body))
-	var er proto.EnrollResponse
-	_ = json.NewDecoder(resp.Body).Decode(&er)
-	if resp.StatusCode != 200 || er.Token == "" {
-		t.Fatalf("enroll over HTTP: %d", resp.StatusCode)
+	post := func(c *http.Client, path string, body any, out any) int {
+		t.Helper()
+		b, _ := json.Marshal(body)
+		resp, err := c.Post(ts.URL+proto.Base+path, "application/json", bytes.NewReader(b))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		_ = json.NewDecoder(resp.Body).Decode(out)
+		return resp.StatusCode
 	}
-	req, _ := http.NewRequest("POST", ts.URL+proto.Base+"/poll?wait=0s", strings.NewReader("{}"))
-	req.Header.Set("Authorization", "Bearer "+er.Token)
-	resp, _ = http.DefaultClient.Do(req)
+	mine, _ := pin.NewIdentity("db01.example.com")
+	other, _ := pin.NewIdentity("db01.example.com") // the same name, another key
+	anon, _ := with(nil)
+	agent, fp := with(mine)
+	stranger, _ := with(other)
 	var pr proto.PollResponse
-	_ = json.NewDecoder(resp.Body).Decode(&pr)
-	if resp.StatusCode != 200 || pr.Config == nil || pr.Config.FQDN != "db01.example.com" {
-		t.Fatalf("authenticated poll: %d %+v", resp.StatusCode, pr.Config)
+	var er proto.EnrollResponse
+	enroll := proto.EnrollRequest{FQDN: "db01.example.com", Code: res.Enrollment.Code}
+
+	// Without a certificate nothing works, not even with the right code; /metrics and /healthz need none.
+	if code := post(anon, "/poll?wait=0s", struct{}{}, &pr); code != http.StatusUnauthorized {
+		t.Fatalf("a poll without a certificate: %d", code)
+	}
+	if code := post(anon, "/enroll", enroll, &er); code != http.StatusBadRequest {
+		t.Fatalf("enrollment without a certificate: %d", code)
+	}
+	if resp, err := anon.Get(ts.URL + "/healthz"); err != nil || resp.StatusCode != 200 {
+		t.Fatalf("/healthz without a certificate: %v %v", resp, err)
+	}
+	// A certificate nobody enrolled with is no host.
+	if code := post(agent, "/poll?wait=0s", struct{}{}, &pr); code != http.StatusUnauthorized {
+		t.Fatalf("a poll before enrollment: %d", code)
+	}
+	// Enrollment pins the certificate the connection was made with.
+	if code := post(agent, "/enroll", enroll, &er); code != 200 || er.CertificateSHA256 != fp {
+		t.Fatalf("enroll over TLS: %d, pinned %q, want %q", code, er.CertificateSHA256, fp)
+	}
+	if code := post(agent, "/poll?wait=0s", struct{}{}, &pr); code != 200 || pr.Config == nil || pr.Config.FQDN != "db01.example.com" {
+		t.Fatalf("a poll with the pinned certificate: %d %+v", code, pr.Config)
+	}
+	// Another key is not the host, whatever name its certificate carries.
+	if code := post(stranger, "/poll?wait=0s", struct{}{}, &pr); code != http.StatusUnauthorized {
+		t.Fatalf("a poll with another certificate of the same name: %d", code)
 	}
 
 	// The API over a Unix socket records the peer's user as the actor.
@@ -257,7 +313,7 @@ func TestAgentAuthAndAPIOverSocket(t *testing.T) {
 	client := &http.Client{Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 		return (&net.Dialer{}).DialContext(ctx, "unix", sock)
 	}}}
-	resp, err = client.Get("http://holdfast/api/v1/status")
+	resp, err := client.Get("http://holdfast/api/v1/status")
 	if err != nil {
 		t.Fatal(err)
 	}

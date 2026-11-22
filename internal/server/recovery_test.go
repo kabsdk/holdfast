@@ -10,6 +10,7 @@ import (
 
 	"github.com/kabsdk/holdfast/internal/checks"
 	"github.com/kabsdk/holdfast/internal/config"
+	"github.com/kabsdk/holdfast/internal/gateway"
 	"github.com/kabsdk/holdfast/internal/proto"
 	"github.com/kabsdk/holdfast/internal/server/storage"
 	"github.com/kabsdk/holdfast/internal/server/store"
@@ -31,7 +32,7 @@ func enrolled(t *testing.T, s *Server, fqdn string, f proto.Facts) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Enroll(ctx, proto.EnrollRequest{FQDN: fqdn, Code: res.Enrollment.Code, Facts: f}); err != nil {
+	if err := s.Enroll(ctx, proto.EnrollRequest{FQDN: fqdn, Code: res.Enrollment.Code, Facts: f}, certOf(fqdn)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.Poll(ctx, fqdn, proto.PollRequest{Facts: f}, 0); err != nil {
@@ -82,8 +83,9 @@ func TestDumpJobChecks(t *testing.T) {
 	}
 }
 
-// A dump goes into a new directory only; a restore onto another host needs a read-only key, the other host's
-// opt-in and a new enough agent, and its secrets reach only that agent, once (plan-m6 §2.2).
+// A dump goes into a new directory only; a restore onto another host needs the other host's opt-in and a new enough
+// agent, its password reaches only that agent, once (plan-m6 §2.2), and that host may read the repository through the
+// gateway until it reports the restore, and only read it (decision 041).
 func TestRestoreDumpAndOntoAnotherHost(t *testing.T) {
 	s, ctx := newTestServer(t), context.Background()
 	q := s.st.Q()
@@ -106,49 +108,53 @@ func TestRestoreDumpAndOntoAnotherHost(t *testing.T) {
 		t.Fatalf("a dump into a new directory: %v", err)
 	}
 
-	key := &S3KeyInput{AccessKeyID: "READONLY01", SecretAccessKey: "read-only-secret"}
 	for name, in := range map[string]RestoreInput{
-		"no key":    {ToHost: b},
-		"in place":  {ToHost: b, Target: proto.TargetInPlace, S3Key: key},
-		"no opt-in": {ToHost: b, S3Key: key},
+		"in place":  {ToHost: b, Target: proto.TargetInPlace},
+		"no opt-in": {ToHost: b},
 	} {
 		if _, err := s.Restore(ctx, root, a, fileID, in); !errors.As(err, &ve) {
 			t.Errorf("%s: %v", name, err)
 		}
 	}
 	editor := Actor{Name: "ed", Source: "cli"}
-	if _, err := s.Restore(ctx, editor, a, fileID, RestoreInput{ToHost: b, S3Key: key}); err == nil {
+	if _, err := s.Restore(ctx, editor, a, fileID, RestoreInput{ToHost: b}); err == nil {
 		t.Fatal("an editor restored onto another host")
 	}
+	if s.gatewayAccess(ctx, b, a) != gateway.NoAccess {
+		t.Fatal("B may use A's repository before any restore")
+	}
 
-	// B opts in: the command is B's, sealed, and B gets A's password and the key, once.
+	// B opts in: the command is B's, sealed, B gets A's password once, and may read A's repository meanwhile.
 	bounds.AllowOtherHosts = true
 	if _, err := s.Poll(ctx, b, proto.PollRequest{Facts: proto.Facts{Protocol: 2, RestoreBounds: bounds}}, 0); err != nil {
 		t.Fatal(err)
 	}
-	res, err := s.Restore(ctx, root, a, fileID, RestoreInput{ToHost: b, S3Key: key, Message: "rebuild"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	queued, _ := q.PendingRestores(ctx)
-	if !slices.ContainsFunc(queued, func(c store.Command) bool {
-		return c.ID == res.Command && c.FQDN == b && len(c.Sealed) > 0 && !strings.Contains(string(c.Payload), "read-only-secret")
-	}) {
-		t.Fatalf("the queued command: %+v", queued)
-	}
-	p, err := s.Poll(ctx, b, proto.PollRequest{Facts: proto.Facts{Protocol: 2, RestoreBounds: bounds}}, 0)
+	res, err := s.Restore(ctx, root, a, fileID, RestoreInput{ToHost: b, Message: "rebuild"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	c, _ := q.GetCredentials(ctx, a)
 	pw, _ := s.seal.Open(c.RepoPassword, a)
+	queued, _ := q.PendingRestores(ctx)
+	if !slices.ContainsFunc(queued, func(c store.Command) bool {
+		return c.ID == res.Command && c.FQDN == b && len(c.Sealed) > 0 && !strings.Contains(string(c.Payload), pw)
+	}) {
+		t.Fatalf("the queued command: %+v", queued)
+	}
+	if s.gatewayAccess(ctx, b, a) != gateway.ReadOnly || s.gatewayAccess(ctx, a, b) != gateway.NoAccess {
+		t.Fatal("during the restore, B may read A's repository, and A nothing of B's")
+	}
+	p, err := s.Poll(ctx, b, proto.PollRequest{Facts: proto.Facts{Protocol: 2, RestoreBounds: bounds}}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
 	var got *proto.RestoreSource
 	for _, cmd := range p.Commands {
 		if cmd.ID == res.Command && cmd.Restore != nil {
 			got = cmd.Restore.Source
 		}
 	}
-	if got == nil || got.FQDN != a || got.RepoPassword != pw || got.S3AccessKeyID != "READONLY01" || got.S3SecretAccessKey != "read-only-secret" {
+	if got == nil || got.FQDN != a || got.RepoPassword != pw || got.S3AccessKeyID != "" || !strings.Contains(got.Repository, "/gateway/v1/"+a+"/") {
 		t.Fatalf("B's restore source: %+v", got)
 	}
 	if _, err := s.Poll(ctx, b, proto.PollRequest{AckedCommands: []string{res.Command}, Facts: proto.Facts{Protocol: 2, RestoreBounds: bounds}}, 0); err != nil {
@@ -161,6 +167,14 @@ func TestRestoreDumpAndOntoAnotherHost(t *testing.T) {
 	audit, _ := q.ListAudit(ctx, a, 20)
 	if !slices.ContainsFunc(audit, func(e store.AuditEntry) bool { return e.Action == "restore.requested_elsewhere" }) {
 		t.Fatal("A's history must say its snapshot was restored elsewhere")
+	}
+	// B reports the restore: its grant ends.
+	now := time.Now()
+	if _, err := s.Events(ctx, b, []proto.Event{{ID: "restored-1", Kind: proto.KindRestore, CommandID: res.Command, Status: proto.StatusSuccess, Started: now, Finished: now}}); err != nil {
+		t.Fatal(err)
+	}
+	if s.gatewayAccess(ctx, b, a) != gateway.NoAccess {
+		t.Fatal("B may still read A's repository after the restore")
 	}
 }
 

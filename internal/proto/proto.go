@@ -19,8 +19,10 @@ const Base = "/agent/v1"
 // Protocol is the version of the agent protocol this build speaks (plan-m5 item 1). It goes up only when
 // a change needs both sides to know of it; a field the other side may ignore does not change it. Agents
 // before M5 sent none, and speak 1. 2 (M6): dump jobs, restores from another host, pause and resume. 3 (M7):
-// restores of the host's own snapshots from a vault's copies.
-const Protocol = 3
+// restores of the host's own snapshots from a vault's copies. 4 (M8, decision 041): the agent is known by its own
+// certificate, which the server pins at enrollment, and no longer by a token, and it backs up through the server's
+// gateway with no S3 key; an agent before 4 cannot log in at all, and enrolls again after its upgrade.
+const Protocol = 4
 
 // ProtocolRecovery is the first protocol with M6's dump jobs, restores from another host, and pausing.
 const ProtocolRecovery = 2
@@ -73,15 +75,19 @@ type RestoreBounds struct {
 	AllowOtherHosts bool `json:"allow_other_hosts" yaml:"allow_other_hosts"`
 }
 
-// RestoreSource is another host's repository, for a restore from it (plan-m6 §2.2): its password, and a
-// read-only key the admin made. It travels only in the restore command, which the server keeps sealed and
-// deletes once the agent has it; the agent keeps it in root-only files for that one restore.
+// RestoreSource is another repository to restore from, with its password. It travels only in the restore command,
+// which the server keeps sealed and deletes once the agent has it; the agent keeps it in root-only files for that one
+// restore.
+//
+// Another host's repository (plan-m6 §2.2) is read through the gateway, which lets this host read it for this restore
+// (decision 041): it comes without a key, and Repository is only shown. A vault's copy (decision 039) comes with the
+// vault's read-only key for it, and Repository is where it is.
 type RestoreSource struct {
 	FQDN              string `json:"fqdn"`
 	Repository        string `json:"repository"`
 	RepoPassword      string `json:"repo_password"`
-	S3AccessKeyID     string `json:"s3_access_key_id"`
-	S3SecretAccessKey string `json:"s3_secret_access_key"`
+	S3AccessKeyID     string `json:"s3_access_key_id,omitempty"`
+	S3SecretAccessKey string `json:"s3_secret_access_key,omitempty"`
 }
 
 // Restore targets.
@@ -116,17 +122,18 @@ type Paused struct {
 	Until   time.Time `json:"until"`
 }
 
-// EnrollRequest is sent once, with a single-use code.
+// EnrollRequest is sent once, with a single-use code, over a connection made with the agent's new certificate: that
+// certificate is what the server pins (decision 041).
 type EnrollRequest struct {
 	FQDN  string `json:"fqdn"`
 	Code  string `json:"code"`
 	Facts Facts  `json:"facts"`
 }
 
-// EnrollResponse returns the agent's credential. M1 uses a bearer token (plan-m1 Q3, a stand-in for
-// OQ3); the server stores only its hash.
+// EnrollResponse says which certificate the server pinned, by its sha256. Nothing secret comes back: the agent's
+// credential is the private key it made.
 type EnrollResponse struct {
-	Token string `json:"token"`
+	CertificateSHA256 string `json:"certificate_sha256"`
 }
 
 // Applied is what the agent runs: the revision in which its host config last changed, and the
@@ -200,12 +207,11 @@ func (hc HostConfig) ComputeSHA256() string {
 	return hex.EncodeToString(sum[:])
 }
 
-// Credentials are sent only when their version changes, and never logged.
+// Credentials are sent only when their version changes, and never logged. The repository password is all a host
+// holds: it reaches its repository through the server's gateway, with its own certificate (decision 041).
 type Credentials struct {
-	Version           int    `json:"version"`
-	RepoPassword      string `json:"repo_password"`
-	S3AccessKeyID     string `json:"s3_access_key_id"`
-	S3SecretAccessKey string `json:"s3_secret_access_key"`
+	Version      int    `json:"version"`
+	RepoPassword string `json:"repo_password"`
 }
 
 // Command kinds.

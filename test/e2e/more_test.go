@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -14,6 +15,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/kabsdk/holdfast/internal/pin"
 )
 
 func smallSource(t *testing.T) string {
@@ -92,18 +95,16 @@ func TestEventsExactlyOnceAndScheduleSlots(t *testing.T) {
 	src := smallSource(t)
 	e := newEnv(t)
 	const fqdn = "web02.example.com"
-	proxy := newDropProxy(t, e.url, 3)
 	code := e.addHost(fqdn, "etc", "--path", src, "--every", "1m")
-	a, out, err := e.enrollAgentWith(fqdn, code, proxy.url)
-	if err != nil {
-		t.Fatalf("enroll through the proxy: %v %s", err, out)
-	}
+	a := e.enrollAgent(fqdn, code)
+	proxy := newDropProxy(t, e, a, 3)
+	pointAgentAt(t, a, e.url, proxy.url)
 	e.runAgent(a)
 	key := `holdfast_runs_total{host="web02.example.com",kind="backup",job_id="etc",status="success"}`
 	waitFor(t, "three answers dropped, then three backups delivered", 4*time.Minute, func() bool {
 		return proxy.dropped.Load() == 3 && a.spooled() == 0 && metrics(t, e.url+"/metrics")[key] >= 3
 	})
-	r := e.resticFor(e.escrow()[fqdn], false)
+	r := e.resticFor(e.escrow()[fqdn])
 	total := snapshots(t, r)
 	waitFor(t, "every snapshot counted once", 30*time.Second, func() bool {
 		return a.spooled() == 0 && metrics(t, e.url+"/metrics")[key] == float64(snapshots(t, r))
@@ -219,8 +220,10 @@ func TestConfigHistoryDriftCheckAndNoLeaks(t *testing.T) {
 
 	// No credential in anything a person or Prometheus reads: logs, CLI and API output, metrics.
 	h := e.escrow()[fqdn]
-	token, _ := os.ReadFile(filepath.Join(a.dir, "state", "token"))
-	secrets := map[string]string{"repository password": h.RepoPassword, "S3 secret": h.S3SecretAccessKey, "agent token": string(token)}
+	gw, err := os.ReadFile(filepath.Join(e.dir, "gateway.env"))
+	must(t, err)
+	_, gwSecret, _ := strings.Cut(string(gw), "AWS_SECRET_ACCESS_KEY=")
+	secrets := map[string]string{"repository password": h.RepoPassword, "gateway key's secret": strings.TrimSpace(gwSecret), "agent's private key": agentKeyLine(t, a)}
 	var blobs []string
 	for _, args := range [][]string{{"host", "list"}, {"host", "show", fqdn}, {"host", "events", fqdn}, {"audit"}, {"revision", "list"},
 		{"revision", "show", "1"}, {"revision", "show", "3"}, {"status"}} {
@@ -247,13 +250,24 @@ func TestConfigHistoryDriftCheckAndNoLeaks(t *testing.T) {
 	}
 }
 
+// agentKeyLine is the first line of the agent's private key, as its identity file holds it in PEM.
+func agentKeyLine(t *testing.T, a *agentProc) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(a.dir, "state", "agent.pem"))
+	must(t, err)
+	_, key, ok := strings.Cut(string(b), "-----BEGIN PRIVATE KEY-----\n")
+	if !ok {
+		t.Fatalf("no private key in the agent's identity file")
+	}
+	line, _, _ := strings.Cut(key, "\n")
+	return line
+}
+
 // Enrollment: bad and duplicate hosts are refused; a code expires after 15 minutes and is refused
 // (and audited); a new code revokes the open one; a used code is refused.
 func TestEnrollment(t *testing.T) {
 	src := smallSource(t)
-	// The optional provisioner path (decision 029): hosts are added without a key, Holdfast generates
-	// it and runs provision-minio.sh, and the contract test still has to pass.
-	e := newEnvWith(t, envOpts{Provisioner: true})
+	e := newEnv(t)
 	if out, err := e.cliErr("host", "add", "Not_A_Host"); err == nil || !strings.Contains(string(out), "lower case") {
 		t.Fatalf("an invalid FQDN must be refused: %v %s", err, out)
 	}
@@ -301,7 +315,8 @@ func TestEnrollment(t *testing.T) {
 // TLS: the install command carries the server CA's fingerprint. An agent with a wrong pin refuses to
 // talk to the server, and the code stays valid. So does an agent talking to a man in the middle who
 // presents the real CA's certificate next to his own (decision 030). With the right pin and the real
-// server, it enrolls and backs up.
+// server, it enrolls and backs up. The other way round, the server knows the agent only by the certificate
+// it enrolled with (decision 041).
 func TestTLSPinning(t *testing.T) {
 	src := smallSource(t)
 	cert := serverCert(t)
@@ -313,8 +328,7 @@ func TestTLSPinning(t *testing.T) {
 			InstallCommand string `json:"install_command"`
 		} `json:"enrollment"`
 	}
-	kf, _ := e.makeKey(fqdn, "")
-	must(t, json.Unmarshal(e.cli("host", "add", fqdn, "--s3-key-file", kf, "--job", "system", "--path", src, "--daily", "02:00", testAccept), &res))
+	must(t, json.Unmarshal(e.cli("host", "add", fqdn, "--job", "system", "--path", src, "--daily", "02:00", testAccept), &res))
 	if !strings.Contains(res.Enrollment.InstallCommand, "--ca-sha256 "+cert.pin) {
 		t.Fatalf("the install command does not pin the server: %s", res.Enrollment.InstallCommand)
 	}
@@ -330,4 +344,44 @@ func TestTLSPinning(t *testing.T) {
 	}
 	e.runAgent(a)
 	e.waitProgress(fqdn, "first_backup_done", 2*time.Minute)
+
+	// The server knows the agent by the certificate it enrolled with (decision 041): no certificate, or another
+	// one with the same name, gets nothing.
+	poll := func(c *http.Client) int {
+		t.Helper()
+		resp, err := c.Post(e.url+"/agent/v1/poll?wait=0s", "application/json", strings.NewReader("{}"))
+		must(t, err)
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+	if code := poll(e.agentClient(a)); code != http.StatusOK {
+		t.Fatalf("the enrolled agent's certificate: %d", code)
+	}
+	noCert, err := pin.Client(e.url, cert.pin, nil)
+	must(t, err)
+	if code := poll(noCert); code != http.StatusUnauthorized {
+		t.Fatalf("a poll without a certificate: %d", code)
+	}
+	otherPEM, err := pin.NewIdentity(fqdn)
+	must(t, err)
+	other, err := pin.ParseIdentity(otherPEM)
+	must(t, err)
+	stranger, err := pin.Client(e.url, cert.pin, other)
+	must(t, err)
+	if code := poll(stranger); code != http.StatusUnauthorized {
+		t.Fatalf("another certificate with the host's name: %d", code)
+	}
+
+	// Enrolling again makes a new key, and the old certificate stops working.
+	oldClient := e.agentClient(a)
+	a.kill(syscall.SIGTERM)
+	var fresh struct{ Code string }
+	must(t, json.Unmarshal(e.cli("host", "enroll-code", fqdn), &fresh))
+	a = e.enrollAgent(fqdn, fresh.Code)
+	if code := poll(oldClient); code != http.StatusUnauthorized {
+		t.Fatalf("the certificate from before the new enrollment: %d", code)
+	}
+	if code := poll(e.agentClient(a)); code != http.StatusOK {
+		t.Fatalf("the new certificate: %d", code)
+	}
 }

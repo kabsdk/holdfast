@@ -60,15 +60,21 @@ supports.
 ### 2.1 Components
 
 **Agent** (`holdfast-agent`, Go, one per host, runs as root)
-- Has a local scheduler and runs restic itself.
+- Has a local scheduler and runs restic itself. restic encrypts on the host.
 - Spools events to disk until the server has acknowledged them.
 - Connects to the server by HTTPS long-poll. The agent always dials out.
-- Keeps running, and keeps backing up, while the server is down.
+- Is known to the server by its own key and a self-signed certificate, which it makes at enrollment and the server
+  pins, as SSH pins a host key (decision 041). Every connection is mutual TLS. There is no token and no CA.
+- Backs up through the server's gateway: it holds no S3 key. While the server is down it keeps its schedule; a
+  backup waits for the gateway, and one that fails is retried as soon as the server answers.
 - Reports the config revision it has applied, which is how drift is detected (§3.1).
 
 **Server** (`holdfast-server`)
 - The configurator. It serves the API and the UI to people on a listener of its own, `ui.listen`
   (decision 034), and to root on the server on a root-only socket.
+- The gateway (decision 041): restic's REST protocol for every host's repository, at `/gateway/v1/<fqdn>/` on the
+  agent listener, in front of the bucket. It knows the host by its certificate, and holds the one gateway key
+  (§2.3). It sees only what restic encrypted on the host.
 - The maintenance leader: it runs forget, prune and check.
   - `restic check` takes an exclusive lock, and a backup that meets it waits or fails. So each agent
     checks its own repository: once a day, right after a backup, inside its one-restic-at-a-time loop,
@@ -98,28 +104,33 @@ supports.
 
 ### 2.2 High availability
 
-- There is no standby (decision 030). Agents back up without the server, so an outage costs only
-  reporting and maintenance.
+- There is no standby (decision 030). Backups go through the server's gateway (decision 041), so while the server
+  is down no backup is made: agents keep their schedule, restic waits and retries, and a failed backup is retried
+  as soon as the server answers. A second gateway, on another machine, is designed for and not built.
 - Instead, there is a nightly PostgreSQL dump and config export to site B, the sealing key is in escrow,
   and a tested runbook rebuilds the server.
-- Agents keep backing up while the control plane is down.
 
 ### 2.3 Credentials and storage protection
 
-- Each host has its own repository password and its own S3 key.
-- The admin makes the S3 keys with the S3 server's own tools, and gives Holdfast each host's key when the
-  host is added. Holdfast never creates S3 users, keys or policies, so it works with any S3 server
-  (decision 029).
-- A host key may use only its own prefix, and may delete only under its `locks/`. The maintenance key may
-  do everything under `repos/`. Bucket versioning is on. [storage.md](storage.md) states the full contract.
-- Holdfast tests that contract with plain S3 calls:
+- Each host has its own repository password, and its own key and certificate, which never leave it. It holds no
+  S3 key (decision 041).
+- The admin makes two S3 keys per bucket with the S3 server's own tools, and gives them to the server: the
+  gateway key and the maintenance key. Holdfast never creates S3 users, keys or policies, so it works with any S3
+  server (decision 029).
+- The gateway key may read and write under `repos/`, delete only lock files, and never delete a version. The
+  maintenance key may do everything under `repos/` but delete a version. Bucket versioning is on. [storage.md](storage.md)
+  states the full contract.
+- The gateway decides what each host may do: read and add to its own repository, delete only its own lock files,
+  never rewrite a file that exists, and never write the repository's config or keys, which the server made. For a
+  restore onto another host, that host may read the snapshot's repository, and only read it, until it reports the
+  restore. Every refusal is audited, in the host's history and in the other host's when it was that one's
+  repository, and counted in `holdfast_gateway_refusals_total`.
+- Holdfast tests the contract with plain S3 calls, with the gateway key on each host's prefix:
   - when a host is added;
-  - when its key is replaced;
   - before an enrollment is accepted;
   - in each host's daily check.
 
-  A key that fails is refused, and a host whose storage fails cannot enroll. The storage checks are in
-  §4.5.
+  A host whose storage fails cannot be added or enroll. The storage checks are in §4.5.
 - **The floor is in storage, not in Holdfast** (decision 030). No Holdfast key can delete an object
   version for good or change the bucket's settings. So whatever is deleted can be recovered until the
   bucket's lifecycle rule expires its old versions. That holds against a compromised host, a compromised
@@ -127,10 +138,10 @@ supports.
 - **Repository passwords are escrowed in the bucket** (decision 036). `escrow.age_recipient` in
   `server.yaml` names an age public key whose private key the admin keeps offline. At host add, and whenever
   a host's password changes, the server writes `escrow/<fqdn>.age`: the FQDN, the repository URL and the
-  password, encrypted to that key. The S3 key is not in it. A write that fails is shown on the host and tried
+  password, encrypted to that key. A write that fails is shown on the host and tried
   again every 15 minutes; a host added before the recipient was set is written at the next pass. Without a
   recipient nothing is written, and every host and `holdfast_escrow_configured` say so.
-- `holdfast escrow export` still writes every host's credentials, S3 keys included, to an offline bundle.
+- `holdfast escrow export` still writes every host's repository and password to an offline bundle.
 - Credentials are never shown in the UI.
 - There is no raw restic console.
 
@@ -267,7 +278,7 @@ disappeared (§3.6).
 
 - Removing a job or a host never deletes data (plan-m4 Q7).
   - A removed job leaves the config. Its snapshots stay, and the daily run no longer touches them.
-  - A removed host is retired: its agent's token is revoked, and its repository stays and can still be
+  - A removed host is retired: its agent's certificate stops working, and its repository stays and can still be
     browsed. Adding the same FQDN again brings it back, with its repository, after a new enrollment.
 - Deleting data is a separate **decommission** action (plan-m5 item 7):
   - only for a removed (retired) host, only by an admin (`host.decommission`), who types the FQDN:
@@ -278,8 +289,7 @@ disappeared (§3.6).
     maintenance key. S3 keeps their old versions until the lifecycle rule expires them, so the host's page
     gives the date the data is really gone: the decommission's date plus the rule's days (B011). Its
     snapshots keep tombstones marked **Deleted by Holdfast**;
-  - a decommissioned host added again starts over, with a new repository and a new password, and needs a
-    new S3 key.
+  - a decommissioned host added again starts over, with a new repository and a new password.
 - The repository's size is measured once a day: one listing of the prefix with its versions gives the
   current bytes and objects, and the bytes of the old versions S3 keeps. The host's page and the metrics
   `holdfast_repository_bytes{versions="current"|"noncurrent"}` and `holdfast_repository_objects` show it.
@@ -309,15 +319,16 @@ For a repository damaged or emptied behind Holdfast's back (decision 032), or af
 
 `holdfast host rotate <fqdn>` (`config.storage`) does, in this order:
 1. adds a new restic password to the repository, and checks that it opens it;
-2. stores it, revokes the agent's token (the host waits for a new enrollment) and issues a new enrollment
-   code;
+2. stores it, unpins the agent's certificate (the host waits for a new enrollment, which makes it a new key) and
+   issues a new enrollment code;
 3. removes the old password's key from the repository. If that fails, the host shows the `rotation`
    error, and the next rotation removes it first;
 4. writes the escrow file again.
 
 The new password is stored before the old key goes, so the server always has a password that opens the
-repository. The runbook, [runbooks/compromised-host.md](runbooks/compromised-host.md), says what else to
-do: a new S3 key, rebuilding or cleaning the host, and finding the last good snapshot.
+repository. The host has no S3 key to replace (decision 041). The runbook,
+[runbooks/compromised-host.md](runbooks/compromised-host.md), says what else to do: rebuilding or cleaning the
+host, and finding the last good snapshot.
 
 ### 3.6 Changes made outside Holdfast
 
@@ -488,24 +499,24 @@ The UI, the API and the CLI use the same checks engine, and every check has a st
 | D002 | The host's agent does not know dump jobs (protocol 1): upgrade it first. |
 
 **Storage checks** test the S3 server, not the config (decision 029, [storage.md](storage.md)). They are
-errors that cannot be accepted. A key that fails one is refused, and a host whose storage fails one
-cannot enroll.
+errors that cannot be accepted. A host whose storage fails one cannot be added or enroll. Hosts hold no S3 key
+(decision 041): B001, B002 and B005–B007 test the server's gateway key, on the host's prefix.
 
 | Code | Condition |
 | --- | --- |
-| B001 | The host key cannot write under its prefix, or cannot delete under its `locks/`. |
-| B002 | The host key cannot read back or list its prefix. |
-| B003 | The maintenance key cannot read what the host key wrote. |
+| B001 | The gateway key cannot write under the host's prefix, or cannot delete under its `locks/`. |
+| B002 | The gateway key cannot read back or list the host's prefix. |
+| B003 | The maintenance key cannot read what the gateway key wrote. |
 | B004 | The maintenance key cannot write, list or delete under `repos/`. |
-| B005 | The host key can delete outside its `locks/`. |
-| B006 | The host key can delete, for good, a version of an object outside its `locks/`. |
-| B007 | The host key can read or write another host's prefix, or list `repos/`. |
+| B005 | The gateway key can delete outside `locks/`. |
+| B006 | The gateway key can delete a version for good. |
+| B007 | The gateway key can use the bucket outside `repos/`, such as the escrow files. |
 | B008 | Bucket versioning is not enabled. |
 | B009 | The maintenance key can delete an object version for good. |
 | B010 | The maintenance key can change the bucket's settings: versioning, the lifecycle rule or the bucket policy. |
 | B011 | No enabled lifecycle rule expires noncurrent versions under `repos/`. |
 | B012 | The maintenance key cannot write and delete under `escrow/`. Tested only when `escrow.age_recipient` is set (decision 036). |
-| B014 | A read-only key, for a restore onto another host, cannot read or list its host's prefix. |
+| B014 | A vault's read-only key, for restores from it, cannot read or list its host's prefix. |
 | B015 | That key can write or delete under the prefix: it must only read. |
 
 - The accepted codes are stored in the revision and in the audit log.
@@ -536,7 +547,7 @@ A dump job backs up what a command prints, such as a database dump, as one file 
   ```
 
 - The agent runs it with `restic backup --stdin-from-command`, as its user, with a clean environment: it never
-  sees restic's, which holds the host's S3 key. A command that exits non-zero, or is not there, fails the run,
+  sees restic's. A command that exits non-zero, or is not there, fails the run,
   and no snapshot is made. The snapshot is tagged `dump=<name>` beside `job=<id>`.
 - Schedule, retention, retries, the upload limit and the checks are those of any job, and D001 and D002 (§4.5).
   The agent reports its dumps' names, never their commands.
@@ -611,13 +622,13 @@ has no label in its snapshot, another host's labels belong to its own policy, an
 label, which made restic fail (found in the lab, on el9 and ol9).
 
 **Onto another host** (plan-m6 §2.2): an admin (`restore.in_place` on both hosts) restores host A's snapshot onto
-host B with `holdfast restore A <snapshot> --to-host B --s3-key-file <key>`:
-- the key is a read-only one for A's prefix, which the admin makes; it is tested first (B014, B015);
+host B with `holdfast restore A <snapshot> --to-host B`:
 - B must allow it in its own `agent.yaml` (`restore.allow_other_hosts`), and its agent must speak protocol 2;
 - the target is a new or another directory on B, never in place;
-- B's agent gets A's repository URL, A's password and the key in the restore command, which the server keeps
-  sealed and clears once B has it; B keeps them in root-only files for that one restore and runs restic without
-  locks. B's root learns A's password, so delete the key afterwards;
+- B's agent gets A's password in the restore command, which the server keeps sealed and clears once B has it; B
+  keeps it in a root-only file for that one restore. B's root learns A's password;
+- the gateway lets B's certificate read A's repository, and only read it, from the request until B reports the
+  restore, at most 49 hours (decision 041); B runs restic without locks;
 - A's history and B's both have it.
 
 **From a vault's copy, in the other site** (decision 039): `holdfast restore <fqdn> <snapshot> --from-vault <name>`,
@@ -664,10 +675,16 @@ Search finds:
 ### 5.7 Add host
 
 1. Enter the FQDN. It is validated, and a duplicate FQDN is refused.
-2. Give the host's S3 key (decision 029, [storage.md](storage.md)), and optionally its first job.
+2. Optionally give its first job. No S3 key: the host's storage is tested with the gateway key (decision 041,
+   [storage.md](storage.md)).
 3. Saving creates a revision.
-4. Holdfast shows a single-use enrollment code, valid for 15 minutes, and the install command.
-5. Progress is shown: **waiting → agent connected → first backup done**.
+4. Holdfast shows a single-use enrollment code, valid for 15 minutes, and the install command:
+   `holdfast-agent enroll --server <url> --fqdn <fqdn> --code <code> --ca-sha256 <pin>`.
+5. Enrolling makes the agent an ECDSA key and a self-signed certificate on the host, in a root-only file; the
+   key never leaves the host. The agent pins the server (`--ca-sha256`), and the server pins the certificate the
+   enrollment came with: from then on that certificate is the host, on every connection (mutual TLS). A new
+   code and a new enrollment replace it; removing or rotating the host unpins it.
+6. Progress is shown: **waiting → agent connected → first backup done**.
 
 ---
 
@@ -714,7 +731,7 @@ for you:** it is not listed, not searchable and not counted (decision 033). Aski
 found". Revisions and the audit log are cut down to your hosts. Nobody sees file contents.
 
 Actions the table does not name (plan-m4 Q6):
-- adding a host, replacing its S3 key, issuing an enrollment code and rotating its password
+- adding a host, giving a vault's host its read-only key, issuing an enrollment code and rotating its password
   (`holdfast host rotate`) need `config.storage`;
 - a restore into another directory needs `restore.in_place`, and a restore onto another host needs it on both;
 - saving a job needs `config.jobs`, and also `retention.cut` when it accepts R104;

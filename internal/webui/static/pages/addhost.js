@@ -15,8 +15,6 @@ function Progress({ fqdn }) {
 
 export function AddHost({ me, settings }) {
   const [fqdn, setFqdn] = useState('');
-  const [keyID, setKeyID] = useState('');
-  const [secret, setSecret] = useState('');
   const [withJob, setWithJob] = useState(true);
   const [jobID, setJobID] = useState('system');
   const [paths, setPaths] = useState('/etc\n/root\n/home');
@@ -25,7 +23,6 @@ export function AddHost({ me, settings }) {
   if (!me.add_hosts) return html`<div class="banner warning">Adding hosts needs config.storage (an admin).</div>`;
   const submit = () => {
     const body = { fqdn: fqdn.trim(), accept };
-    if (keyID || secret) body.s3_key = { access_key_id: keyID.trim(), secret_access_key: secret.trim() };
     if (withJob) {
       body.job_id = jobID.trim();
       body.job = { ...settings.default_job, paths: paths.split('\n').map((x) => x.trim()).filter(Boolean) };
@@ -35,13 +32,9 @@ export function AddHost({ me, settings }) {
   const done = act.done;
   const findings = act.error?.data?.findings;
   return html`<h1>Add host</h1>
-    <p class="muted">The FQDN is the host's identity. Adding it saves a config revision and issues a one-time enrollment code for the agent.</p>
+    <p class="muted">The FQDN is the host's identity. Adding it saves a config revision and issues a one-time enrollment code for the agent. The host needs no S3 key: it backs up through this server, with a certificate it makes when it enrolls.</p>
     ${!done && html`<div class="grid2"><div class="panel">
       <label class="field"><span>FQDN</span><input style="width:100%" placeholder="web03.dc1.example.com" value=${fqdn} onInput=${(e) => setFqdn(e.target.value)} /></label>
-      <h3>The host's S3 key</h3>
-      <p class="muted">Make it at your S3 server first: it may use only <code>repos/${fqdn || '<fqdn>'}/</code>, and delete only under its <code>locks/</code> (docs/storage.md). Holdfast tests it before it keeps it.</p>
-      <label class="field"><span>Access key ID</span><input value=${keyID} onInput=${(e) => setKeyID(e.target.value)} autocomplete="off" /></label>
-      <label class="field"><span>Secret access key</span><input type="password" value=${secret} onInput=${(e) => setSecret(e.target.value)} autocomplete="new-password" /></label>
       <h3><label><input type="checkbox" checked=${withJob} onChange=${(e) => setWithJob(e.target.checked)} /> And a first job</label></h3>
       ${withJob && html`<label class="field"><span>Job ID</span><input value=${jobID} onInput=${(e) => setJobID(e.target.value)} /></label>
         <label class="field"><span>Paths (one per line)</span><textarea value=${paths} onInput=${(e) => setPaths(e.target.value)} /></label>

@@ -39,6 +39,7 @@ import (
 	"filippo.io/age"
 	"go.yaml.in/yaml/v3"
 
+	"github.com/kabsdk/holdfast/internal/pin"
 	"github.com/kabsdk/holdfast/internal/restic"
 	"github.com/kabsdk/holdfast/internal/testpg"
 )
@@ -208,37 +209,40 @@ type env struct {
 	srvEnv  []string
 	logs    []string
 	client  *http.Client
-	// provisioner: Holdfast generates host keys and runs provision-minio.sh. Otherwise each test makes
-	// the keys itself, as an admin would (decision 029).
-	provisioner bool
 	// escrowKey is the offline age key: server.yaml names its recipient, so the server writes each host's
 	// escrow file (decision 036), and only this key reads them.
 	escrowKey *age.X25519Identity
 	maintKey  string // a vault's maintenance key's access key ID (vault_test.go)
+	// gwKey is the gateway key's access key ID, and gwPolicy the name of its policy (decision 041): hosts hold no
+	// S3 key, the server's gateway uses this one for all of them.
+	gwKey, gwPolicy string
+	// tls is the agent listener's certificate: always TLS, since agents are known by their own certificates
+	// (decision 041). Agents pin tls.pin.
+	tls *tlsFiles
 }
 
 // envOpts change one test environment.
 type envOpts struct {
-	S3Endpoint  string    // the endpoint the server and agents use (a proxy in front of MinIO); default: MinIO
-	TLS         *tlsFiles // serve the agent listener over TLS with this certificate
-	Provisioner bool      // configure storage.provisioner_command, and add hosts without a key
-	MaintPolicy string    // give the server a maintenance key with this policy instead of MinIO's root
-	OIDC        bool      // serve the UI listener on uiAddr, with login through the e2e Authelia (M4)
+	S3Endpoint    string    // the endpoint the server uses (a proxy in front of MinIO); default: MinIO
+	TLS           *tlsFiles // the agent listener's certificate; default: a new one (serverCert)
+	MaintPolicy   string    // give the server a maintenance key with this policy instead of docs/storage.md's
+	GatewayPolicy string    // give the server a gateway key with this policy instead of docs/storage.md's
+	OIDC          bool      // serve the UI listener on uiAddr, with login through the e2e Authelia (M4)
 }
 
 func newEnv(t *testing.T) *env { return newEnvWith(t, envOpts{}) }
 
+// insecure is for what needs no client certificate and checks nothing of the server: /healthz and /metrics.
+var insecure = &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}}
+
 func newEnvWith(t *testing.T, o envOpts) *env {
 	t.Helper()
 	dir := t.TempDir()
-	e := &env{t: t, dir: dir, port: freePort(t), sock: filepath.Join(dir, "run", "api.sock"), bucket: "hf-" + randHex(6), client: http.DefaultClient,
-		provisioner: o.Provisioner}
-	scheme := "http"
-	if o.TLS != nil {
-		scheme = "https"
-		e.client = &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}}
+	if o.TLS == nil {
+		o.TLS = serverCert(t)
 	}
-	e.url = fmt.Sprintf("%s://127.0.0.1:%d", scheme, e.port)
+	e := &env{t: t, dir: dir, port: freePort(t), sock: filepath.Join(dir, "run", "api.sock"), bucket: "hf-" + randHex(6), client: insecure, tls: o.TLS}
+	e.url = fmt.Sprintf("https://127.0.0.1:%d", e.port)
 	endpoint := s3Endpoint
 	if o.S3Endpoint != "" {
 		endpoint = o.S3Endpoint
@@ -261,13 +265,19 @@ func newEnvWith(t *testing.T, o envOpts) *env {
 	}
 	mak, msk := e.makeUser(policy)
 	must(t, os.WriteFile(maint, []byte("AWS_ACCESS_KEY_ID="+mak+"\nAWS_SECRET_ACCESS_KEY="+msk+"\n"), 0o600))
+	// The gateway key, with docs/storage.md's policy unless the test gives another.
+	gwFile := filepath.Join(dir, "gateway.env")
+	if o.GatewayPolicy == "" {
+		o.GatewayPolicy = e.gatewayPolicy()
+	}
+	gak, gsk, gpol := e.makeUserWithPolicy(o.GatewayPolicy)
+	e.gwKey, e.gwPolicy = gak, gpol
+	must(t, os.WriteFile(gwFile, []byte("AWS_ACCESS_KEY_ID="+gak+"\nAWS_SECRET_ACCESS_KEY="+gsk+"\n"), 0o600))
 	id, err := age.GenerateX25519Identity()
 	must(t, err)
 	e.escrowKey = id
-	stor := map[string]any{"endpoint": endpoint, "bucket": e.bucket, "region": "us-east-1", "maintenance_credentials_file": maint}
-	if o.Provisioner {
-		stor["provisioner_command"] = []string{"bash", filepath.Join(repoRoot, "test", "e2e", "provision-minio.sh")}
-	}
+	stor := map[string]any{"endpoint": endpoint, "bucket": e.bucket, "region": "us-east-1", "maintenance_credentials_file": maint,
+		"gateway_credentials_file": gwFile}
 	set := map[string]any{
 		"listen": fmt.Sprintf("127.0.0.1:%d", e.port), "api_socket": e.sock, "public_url": e.url,
 		"database_dsn": dsn, "credentials_key_file": filepath.Join(dir, "credentials.key"), "state_dir": filepath.Join(dir, "server"),
@@ -277,10 +287,8 @@ func newEnvWith(t *testing.T, o envOpts) *env {
 		// their lock counts, and a daily retention run their snapshot counts.
 		"maintenance": map[string]any{"check": "off", "check_cycle_days": 30, "retention": "off"},
 		"escrow":      map[string]any{"age_recipient": id.Recipient().String()},
-	}
-	if o.TLS != nil {
-		set["tls"] = map[string]any{"cert_file": o.TLS.cert, "key_file": o.TLS.key}
-		set["ca_sha256"] = o.TLS.pin
+		"tls":         map[string]any{"cert_file": o.TLS.cert, "key_file": o.TLS.key},
+		"ca_sha256":   o.TLS.pin,
 	}
 	if o.OIDC {
 		if oidcDir == "" {
@@ -370,14 +378,27 @@ func (e *env) cliErr(args ...string) ([]byte, error) {
 	return out.Bytes(), err
 }
 
-// hostPolicy is the example host policy of docs/storage.md, for this environment's bucket.
-func (e *env) hostPolicy(fqdn string) string {
-	b, p := e.bucket, "repos/"+fqdn
+// gatewayPolicy is the example gateway policy of docs/storage.md, for this environment's bucket (decision 041): read
+// and write under repos/, delete only lock files, never a version.
+func (e *env) gatewayPolicy() string {
+	b := e.bucket
 	return `{"Version":"2012-10-17","Statement":[
- {"Effect":"Allow","Action":["s3:GetBucketLocation"],"Resource":["arn:aws:s3:::` + b + `"]},
- {"Effect":"Allow","Action":["s3:ListBucket"],"Resource":["arn:aws:s3:::` + b + `"],"Condition":{"StringLike":{"s3:prefix":["` + p + `","` + p + `/*"]}}},
- {"Effect":"Allow","Action":["s3:GetObject","s3:PutObject"],"Resource":["arn:aws:s3:::` + b + `/` + p + `/*"]},
- {"Effect":"Allow","Action":["s3:DeleteObject"],"Resource":["arn:aws:s3:::` + b + `/` + p + `/locks/*"]}]}`
+ {"Effect":"Allow","Action":["s3:ListBucket","s3:GetBucketLocation"],"Resource":["arn:aws:s3:::` + b + `"]},
+ {"Effect":"Allow","Action":["s3:GetObject","s3:PutObject"],"Resource":["arn:aws:s3:::` + b + `/repos/*"]},
+ {"Effect":"Allow","Action":["s3:DeleteObject"],"Resource":["arn:aws:s3:::` + b + `/repos/*/locks/*"]},
+ {"Effect":"Deny","Action":["s3:DeleteObjectVersion"],"Resource":["arn:aws:s3:::` + b + `/*"]}]}`
+}
+
+// setGatewayPolicy gives the gateway key another policy, as an admin would at the S3 server.
+func (e *env) setGatewayPolicy(policy string) {
+	e.t.Helper()
+	name := "hf-" + randHex(6)
+	pf := filepath.Join(e.dir, name+".json")
+	must(e.t, os.WriteFile(pf, []byte(policy), 0o600))
+	mc(e.t, "admin", "policy", "create", "hf", name, pf)
+	mc(e.t, "admin", "policy", "attach", "hf", name, "--user", e.gwKey)
+	mc(e.t, "admin", "policy", "detach", "hf", e.gwPolicy, "--user", e.gwKey)
+	e.gwPolicy = name
 }
 
 // maintPolicy is the example maintenance policy of docs/storage.md, for this environment's bucket.
@@ -393,6 +414,11 @@ func (e *env) maintPolicy() string {
 // makeUser makes a MinIO user with its own policy, as an admin would with the S3 server's own tools.
 // Test-only: mc takes the secret as an argument.
 func (e *env) makeUser(policy string) (accessKey, secret string) {
+	accessKey, secret, _ = e.makeUserWithPolicy(policy)
+	return accessKey, secret
+}
+
+func (e *env) makeUserWithPolicy(policy string) (accessKey, secret, policyName string) {
 	e.t.Helper()
 	accessKey, secret = "HK"+strings.ToUpper(randHex(8)), randHex(20)
 	name := "hf-" + randHex(6)
@@ -401,29 +427,15 @@ func (e *env) makeUser(policy string) (accessKey, secret string) {
 	mc(e.t, "admin", "user", "add", "hf", accessKey, secret)
 	mc(e.t, "admin", "policy", "create", "hf", name, pf)
 	mc(e.t, "admin", "policy", "attach", "hf", name, "--user", accessKey)
-	return accessKey, secret
-}
-
-// makeKey makes a host key with the given policy (docs/storage.md's when empty) and returns a root-only
-// key file for --s3-key-file, and the access key.
-func (e *env) makeKey(fqdn, policy string) (file, accessKey string) {
-	e.t.Helper()
-	if policy == "" {
-		policy = e.hostPolicy(fqdn)
-	}
-	ak, sk := e.makeUser(policy)
-	file = filepath.Join(e.dir, "key-"+randHex(4)+".env")
-	must(e.t, os.WriteFile(file, []byte("AWS_ACCESS_KEY_ID="+ak+"\nAWS_SECRET_ACCESS_KEY="+sk+"\n"), 0o600))
-	return file, ak
+	return accessKey, secret, name
 }
 
 // testAccept accepts the check warnings that test jobs trip: they keep a few snapshots on short schedules,
 // which the checks rightly warn about for real jobs (spec §4.5). TestChecks tests the checks themselves.
 const testAccept = "--accept=R006,R101,R102,R103,S002"
 
-// addHost adds a host with one job through the CLI and returns the enrollment code. Unless the
-// environment has a provisioner, it first makes the host's key, as an admin would. Unless jobArgs say
-// otherwise, it accepts testAccept.
+// addHost adds a host with one job through the CLI and returns the enrollment code. A host needs no S3 key
+// (decision 041). Unless jobArgs say otherwise, it accepts testAccept.
 func (e *env) addHost(fqdn, jobID string, jobArgs ...string) string {
 	e.t.Helper()
 	var res struct {
@@ -433,10 +445,6 @@ func (e *env) addHost(fqdn, jobID string, jobArgs ...string) string {
 	args := []string{"host", "add", fqdn, "--job", jobID}
 	if !slices.ContainsFunc(jobArgs, func(a string) bool { return strings.HasPrefix(a, "--accept") }) {
 		args = append(args, testAccept)
-	}
-	if !e.provisioner {
-		kf, _ := e.makeKey(fqdn, "")
-		args = append(args, "--s3-key-file", kf)
 	}
 	out := e.cli(append(args, jobArgs...)...)
 	if err := json.Unmarshal(out, &res); err != nil || res.Enrollment.Code == "" {
@@ -475,17 +483,52 @@ func (e *env) enrollAgent(fqdn, code string) *agentProc {
 	return a
 }
 
-// enrollAgentWith enrolls through the given server URL (a proxy, say) with extra flags, and
-// returns the error instead of failing, for tests of refused enrollments.
+// enrollAgentWith enrolls through the given server URL (an impostor, say) with extra flags, and
+// returns the error instead of failing, for tests of refused enrollments. The agent pins this
+// environment's server unless extra gives --ca-sha256.
 func (e *env) enrollAgentWith(fqdn, code, server string, extra ...string) (*agentProc, []byte, error) {
+	return e.enrollWithBinary(filepath.Join(binDir, "holdfast-agent"), fqdn, code, server, extra...)
+}
+
+func (e *env) enrollWithBinary(bin, fqdn, code, server string, extra ...string) (*agentProc, []byte, error) {
 	dir := filepath.Join(e.dir, "agent-"+strings.Split(fqdn, ".")[0])
 	must(e.t, os.MkdirAll(dir, 0o700))
 	a := &agentProc{dir: dir, cfgPath: filepath.Join(dir, "agent.yaml")}
-	args := append([]string{"enroll", "--server", server, "--fqdn", fqdn, "--code", code,
+	args := []string{"enroll", "--server", server, "--fqdn", fqdn, "--code", code,
 		"--config", a.cfgPath, "--state-dir", filepath.Join(dir, "state"), "--credentials-dir", filepath.Join(dir, "credentials"),
-		"--restic", resticBin, "--poll-timeout", "2s", "--tick", "250ms"}, extra...)
-	out, err := exec.Command(filepath.Join(binDir, "holdfast-agent"), args...).CombinedOutput()
+		"--restic", resticBin, "--poll-timeout", "2s", "--tick", "250ms"}
+	if !slices.Contains(extra, "--ca-sha256") {
+		args = append(args, "--ca-sha256", e.tls.pin)
+	}
+	out, err := exec.Command(bin, append(args, extra...)...).CombinedOutput()
 	return a, out, err
+}
+
+// identity is an enrolled agent's own key and certificate.
+func (a *agentProc) identity(t *testing.T) *tls.Certificate {
+	t.Helper()
+	id, err := pin.LoadIdentity(filepath.Join(a.dir, "state", "agent.pem"))
+	must(t, err)
+	return id
+}
+
+// agentClient is a client that connects as an enrolled agent: with its certificate, pinning the server.
+func (e *env) agentClient(a *agentProc) *http.Client {
+	e.t.Helper()
+	c, err := pin.Client(e.url, e.tls.pin, a.identity(e.t))
+	must(e.t, err)
+	return c
+}
+
+// pointAgentAt changes the server an enrolled agent talks to, as editing its agent.yaml would.
+func pointAgentAt(t *testing.T, a *agentProc, from, to string) {
+	t.Helper()
+	b, err := os.ReadFile(a.cfgPath)
+	must(t, err)
+	if !strings.Contains(string(b), from) {
+		t.Fatalf("%s does not name %s:\n%s", a.cfgPath, from, b)
+	}
+	must(t, os.WriteFile(a.cfgPath, []byte(strings.ReplaceAll(string(b), from, to)), 0o600))
 }
 
 // event is one run as the API returns it.
@@ -653,18 +696,25 @@ func (p *throttle) handle(c net.Conn) {
 // dropProxy forwards everything to the server, but for the first n event deliveries it throws the
 // server's answer away and tells the agent the delivery failed. The server has stored the events;
 // the agent sends them again.
+//
+// The server knows an agent by its certificate (decision 041), which a proxy cannot pass on. So this one
+// serves the server's own certificate, which the agent pins, and connects to the server as the agent,
+// with the agent's own key: the agent must be enrolled before it is pointed here (pointAgentAt).
 type dropProxy struct {
 	url       string
 	remaining atomic.Int32
 	dropped   atomic.Int32
 }
 
-func newDropProxy(t *testing.T, target string, n int32) *dropProxy {
-	u, _ := url.Parse(target)
+func newDropProxy(t *testing.T, e *env, a *agentProc, n int32) *dropProxy {
+	u, _ := url.Parse(e.url)
 	rp := httputil.NewSingleHostReverseProxy(u)
+	rp.Transport = e.agentClient(a).Transport
 	p := &dropProxy{}
 	p.remaining.Store(n)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	cert, err := tls.LoadX509KeyPair(e.tls.cert, e.tls.key)
+	must(t, err)
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost && r.URL.Path == "/agent/v1/events" && p.remaining.Load() > 0 {
 			rec := httptest.NewRecorder()
 			rp.ServeHTTP(rec, r)
@@ -677,6 +727,8 @@ func newDropProxy(t *testing.T, target string, n int32) *dropProxy {
 		}
 		rp.ServeHTTP(w, r)
 	}))
+	srv.TLS = &tls.Config{Certificates: []tls.Certificate{cert}}
+	srv.StartTLS()
 	t.Cleanup(srv.Close)
 	p.url = srv.URL
 	return p
@@ -774,7 +826,7 @@ type escrowHost struct {
 	FQDN              string `json:"fqdn"`
 	Repository        string `json:"repository"`
 	RepoPassword      string `json:"repo_password"`
-	S3AccessKeyID     string `json:"s3_access_key_id"`
+	S3AccessKeyID     string `json:"s3_access_key_id"` // none for a host (decision 041); a vault's read-only key
 	S3SecretAccessKey string `json:"s3_secret_access_key"`
 }
 
@@ -799,23 +851,30 @@ func (e *env) escrow() map[string]escrowHost {
 	return out
 }
 
-// resticFor opens a host's repository with plain restic, as someone recovering from the escrow
-// bundle would. withHostKey uses the host's own S3 key instead of the storage admin's.
-func (e *env) resticFor(h escrowHost, withHostKey bool) restic.Runner {
+// resticFor opens a host's repository with plain restic, straight from S3 with the storage admin's key, as
+// someone recovering from the escrow bundle would.
+func (e *env) resticFor(h escrowHost) restic.Runner {
 	pf := filepath.Join(e.dir, "pass-"+randHex(4))
 	must(e.t, os.WriteFile(pf, []byte(h.RepoPassword), 0o600))
-	ak, sk := s3User, s3Pass
-	if withHostKey {
-		ak, sk = h.S3AccessKeyID, h.S3SecretAccessKey
-	}
 	return restic.Runner{Bin: resticBin, Repo: h.Repository, PasswordFile: pf, CacheDir: filepath.Join(e.dir, "restic-cache"),
-		Env: []string{"AWS_ACCESS_KEY_ID=" + ak, "AWS_SECRET_ACCESS_KEY=" + sk, "AWS_DEFAULT_REGION=us-east-1"}}
+		Env: []string{"AWS_ACCESS_KEY_ID=" + s3User, "AWS_SECRET_ACCESS_KEY=" + s3Pass, "AWS_DEFAULT_REGION=us-east-1"}}
 }
 
-// metrics scrapes a Prometheus text endpoint into "name{labels}" → value.
+// resticAsAgent is restic as root on an enrolled host would run it by hand: through the gateway, with the agent's
+// own certificate and the pinned server certificate the agent saved (decision 041).
+func (e *env) resticAsAgent(a *agentProc, h escrowHost) restic.Runner {
+	pf := filepath.Join(e.dir, "pass-"+randHex(4))
+	must(e.t, os.WriteFile(pf, []byte(h.RepoPassword), 0o600))
+	return restic.Runner{Bin: resticBin, Repo: "rest:" + e.url + "/gateway/v1/" + h.FQDN + "/", PasswordFile: pf,
+		CacheDir: filepath.Join(e.dir, "restic-cache-agent"), CACert: filepath.Join(a.dir, "state", "server-ca.pem"),
+		TLSClientCert: filepath.Join(a.dir, "state", "agent.pem")}
+}
+
+// metrics scrapes a Prometheus text endpoint into "name{labels}" → value. /metrics needs no client
+// certificate.
 func metrics(t *testing.T, u string) map[string]float64 {
 	t.Helper()
-	resp, err := http.Get(u)
+	resp, err := insecure.Get(u)
 	if err != nil {
 		t.Fatalf("scrape %s: %v", u, err)
 	}

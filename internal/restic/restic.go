@@ -61,6 +61,10 @@ type Runner struct {
 	Options []string
 	// From is a source repository, for init --copy-chunker-params and copy (the vault, decision 039).
 	From *Source
+	// CACert is a PEM file of the only certificate trusted for a rest: repository (--cacert), and TLSClientCert a PEM
+	// file of the certificate and key restic connects with (--tls-client-cert): the agent's, at the gateway
+	// (decision 041). Paths, not secrets.
+	CACert, TLSClientCert string
 }
 
 // Source is the repository a copy reads: its location and its password file. Its credentials go in Env
@@ -119,6 +123,12 @@ func (r Runner) run(ctx context.Context, args ...string) ([]byte, error) {
 	// Global flags go before the subcommand: after "--" restic would read them as paths.
 	for _, o := range r.Options {
 		args = append([]string{"-o", o}, args...)
+	}
+	if r.CACert != "" {
+		args = append([]string{"--cacert", r.CACert}, args...)
+	}
+	if r.TLSClientCert != "" {
+		args = append([]string{"--tls-client-cert", r.TLSClientCert}, args...)
 	}
 	if r.NoLock {
 		args = append([]string{"--no-lock"}, args...)

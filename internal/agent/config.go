@@ -24,7 +24,7 @@ type Config struct {
 	FQDN           string        `yaml:"fqdn"`      // the host's identity
 	CASHA256       string        `yaml:"ca_sha256"` // pins the server's certificate chain; empty: system roots
 	StateDir       string        `yaml:"state_dir"`
-	CredentialsDir string        `yaml:"credentials_dir"` // repo.pass and s3.env, 0600, under /etc/holdfast
+	CredentialsDir string        `yaml:"credentials_dir"` // repo.pass, 0600, under /etc/holdfast
 	ResticBin      string        `yaml:"restic_bin"`
 	PollTimeout    time.Duration `yaml:"poll_timeout"`
 	Tick           time.Duration `yaml:"tick"`       // scheduler resolution

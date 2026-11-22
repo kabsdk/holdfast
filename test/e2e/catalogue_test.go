@@ -34,7 +34,7 @@ func TestSnapshotCatalogueAndReads(t *testing.T) {
 	e := newEnv(t)
 	const fqdn = "cat01.example.com"
 	code := e.addHost(fqdn, "data", "--path", src, "--daily", "03:00")
-	e.startAgent(fqdn, code)
+	agent := e.startAgent(fqdn, code)
 	e.waitProgress(fqdn, "first_backup_done", 2*time.Minute)
 
 	// A second snapshot: one file changed, one added, one removed, one with new permissions only.
@@ -98,9 +98,10 @@ func TestSnapshotCatalogueAndReads(t *testing.T) {
 		t.Fatalf("find a.txt: %+v", found)
 	}
 
-	// A backup made by hand, with the host's own key: shown, and alerted, but left alone.
+	// A backup made by hand on the host, through the gateway with the agent's certificate: shown, and alerted, but
+	// left alone.
 	esc := e.escrow()[fqdn]
-	host := e.resticFor(esc, true)
+	host := e.resticAsAgent(agent, esc)
 	if _, err := host.Backup(context.Background(), restic.BackupOptions{Paths: []string{src}, Host: fqdn}); err != nil {
 		t.Fatal(err)
 	}
@@ -157,10 +158,14 @@ func TestSnapshotCatalogueAndReads(t *testing.T) {
 	if len(sr.Jobs) != 1 || sr.Jobs[0].FQDN != fqdn {
 		t.Fatalf("search for a job: %+v", sr)
 	}
-	// A restic password added by hand, with the host's own key: shown and alerted.
+	// A restic password added by hand. Not by the host: the gateway refuses a host writing the repository's keys
+	// (decision 041). By someone with S3 access, such as the storage admin: shown and alerted.
 	newPass := filepath.Join(t.TempDir(), "new-password")
 	must(t, os.WriteFile(newPass, []byte("someone-elses-password"), 0o600))
-	if out, err := resticCmd(host, "key", "add", "--new-password-file", newPass).CombinedOutput(); err != nil {
+	if out, err := resticCmd(host, "key", "add", "--new-password-file", newPass).CombinedOutput(); err == nil || !strings.Contains(string(out), "403") {
+		t.Fatalf("the host added a restic key through the gateway: %v %s", err, out)
+	}
+	if out, err := resticCmd(e.resticFor(esc), "key", "add", "--new-password-file", newPass).CombinedOutput(); err != nil {
 		t.Fatalf("restic key add: %v %s", err, out)
 	}
 	list("--refresh")

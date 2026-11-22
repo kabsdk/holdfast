@@ -57,8 +57,8 @@ func (s *Server) RemoveJob(ctx context.Context, a Actor, fqdn, jobID string, in 
 }
 
 // RemoveHost saves a revision without the host. Its agent gets an empty config on its next poll, so it
-// stops backing up, and the host is retired once the agent has applied it: from then on the agent's token
-// no longer works. A host that never enrolled is retired at once. The S3 key is the admin's to delete at the
+// stops backing up, and the host is retired once the agent has applied it: from then on the agent's
+// certificate no longer works. A host that never enrolled is retired at once. The S3 key is the admin's to delete at the
 // S3 server; Holdfast never deletes keys (decision 029).
 func (s *Server) RemoveHost(ctx context.Context, a Actor, fqdn string, in RemoveInput) (int64, error) {
 	if strings.TrimSpace(in.Message) == "" {

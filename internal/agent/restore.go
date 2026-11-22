@@ -185,8 +185,9 @@ func isDump(sn restic.Snapshot) bool {
 	return false
 }
 
-// sourceRunner is restic on another host's repository, with its password and the read-only key the admin
-// made. It runs without locks: the key may not write them. cleanup removes the files.
+// sourceRunner is restic on another repository, with its password: another host's, through the gateway, which lets
+// this host read it for this restore (decision 041); or a vault's copy, with the vault's read-only key for it
+// (decision 039). It runs without locks: neither may write them. cleanup removes the files.
 func (a *Agent) sourceRunner(commandID string, src proto.RestoreSource) (restic.Runner, func(), error) {
 	dir := a.path("source-" + commandID)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -197,6 +198,11 @@ func (a *Agent) sourceRunner(commandID string, src proto.RestoreSource) (restic.
 	if err := writeFileAtomic(pf, []byte(src.RepoPassword), 0o600); err != nil {
 		cleanup()
 		return restic.Runner{}, nil, err
+	}
+	if src.S3AccessKeyID == "" {
+		r := a.gatewayRunner(src.FQDN, pf, filepath.Join(dir, "cache"))
+		r.NoLock, r.RetryLock = true, 0
+		return r, cleanup, nil
 	}
 	return restic.Runner{Bin: a.cfg.ResticBin, Repo: src.Repository, PasswordFile: pf, CacheDir: filepath.Join(dir, "cache"), NoLock: true,
 		Env: []string{"AWS_ACCESS_KEY_ID=" + src.S3AccessKeyID, "AWS_SECRET_ACCESS_KEY=" + src.S3SecretAccessKey}}, cleanup, nil

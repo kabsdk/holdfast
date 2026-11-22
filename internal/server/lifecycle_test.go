@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/kabsdk/holdfast/internal/proto"
-	"github.com/kabsdk/holdfast/internal/server/creds"
 )
 
 // Removing never deletes data (spec §3.5, plan-m4 Q7).
@@ -39,8 +38,7 @@ func TestRemoveJobAndHost(t *testing.T) {
 	if h, _ := s.Host(ctx, fqdn); len(h.Jobs) != 1 {
 		t.Fatalf("the job must be gone from the config: %+v", h.Jobs)
 	}
-	tok, err := s.Enroll(ctx, proto.EnrollRequest{FQDN: fqdn, Code: res.Enrollment.Code})
-	if err != nil {
+	if err := s.Enroll(ctx, proto.EnrollRequest{FQDN: fqdn, Code: res.Enrollment.Code}, certOf(fqdn)); err != nil {
 		t.Fatal(err)
 	}
 	first, err := s.Poll(ctx, fqdn, proto.PollRequest{}, 0)
@@ -69,8 +67,8 @@ func TestRemoveJobAndHost(t *testing.T) {
 	if h, _ := q.GetHost(ctx, fqdn); h.State != "retired" {
 		t.Fatalf("retired once the agent runs the empty config: %s", h.State)
 	}
-	if _, err := q.AgentByToken(ctx, creds.HashToken(tok)); err == nil {
-		t.Fatal("a retired host's agent token must stop working")
+	if _, err := q.AgentByCertificate(ctx, certOf(fqdn)); err == nil {
+		t.Fatal("a retired host's agent certificate must stop working")
 	}
 
 	// Adding it again brings it back, with the same repository password.
@@ -81,7 +79,7 @@ func TestRemoveJobAndHost(t *testing.T) {
 	if h, _ := q.GetHost(ctx, fqdn); h.State != "awaiting_enrollment" || h.RemovedAt != nil {
 		t.Fatalf("back after removal: %+v", h)
 	}
-	if _, err := s.Enroll(ctx, proto.EnrollRequest{FQDN: fqdn, Code: again.Enrollment.Code}); err != nil {
+	if err := s.Enroll(ctx, proto.EnrollRequest{FQDN: fqdn, Code: again.Enrollment.Code}, certOf(fqdn)); err != nil {
 		t.Fatal(err)
 	}
 	if p, _ := s.Poll(ctx, fqdn, proto.PollRequest{}, 0); p.Credentials == nil || p.Credentials.RepoPassword != pw {

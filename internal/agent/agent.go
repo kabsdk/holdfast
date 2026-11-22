@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -24,6 +25,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kabsdk/holdfast/internal/gateway"
 	"github.com/kabsdk/holdfast/internal/pin"
 	"github.com/kabsdk/holdfast/internal/proto"
 	"github.com/kabsdk/holdfast/internal/restic"
@@ -67,8 +69,11 @@ type Agent struct {
 	now        func() time.Time
 	runTimeout func(schedule.Schedule) time.Duration // RunTimeout; tests shorten it
 
+	// identity is the agent's own key and certificate, which the server pinned at enrollment (identity.go); nil
+	// before the first enrollment.
+	identity *tls.Certificate
+
 	mu        sync.Mutex
-	token     string
 	hc        *proto.HostConfig
 	credVer   int
 	sched     map[string]*jobState
@@ -99,19 +104,21 @@ func New(cfg Config, log *slog.Logger) (*Agent, error) {
 			return nil, err
 		}
 	}
-	client, err := httpClient(cfg.Server, cfg.CASHA256)
+	a := &Agent{cfg: cfg, log: log, now: time.Now, runTimeout: RunTimeout, sched: map[string]*jobState{}, done: map[string]time.Time{},
+		wake: make(chan struct{}, 1), flushNow: make(chan struct{}, 1)}
+	// The identity made at enrollment. Without one the agent can only enroll.
+	if id, err := pin.LoadIdentity(a.path(identityFile)); err == nil {
+		a.identity = id
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("the agent's identity %s cannot be read (enroll again to make a new one): %w", a.path(identityFile), err)
+	}
+	client, err := pin.Client(cfg.Server, cfg.CASHA256, a.identity)
 	if err != nil {
 		return nil, err
 	}
-	a := &Agent{cfg: cfg, client: client, log: log, now: time.Now, runTimeout: RunTimeout, sched: map[string]*jobState{}, done: map[string]time.Time{},
-		wake: make(chan struct{}, 1), flushNow: make(chan struct{}, 1)}
+	a.client = client
 	a.load()
 	return a, nil
-}
-
-// httpClient pins the server when a fingerprint is given. Without one, the system's roots apply.
-func httpClient(server, fingerprint string) (*http.Client, error) {
-	return pin.Client(server, fingerprint)
 }
 
 var verifyPinned = pin.Verify
@@ -119,9 +126,6 @@ var verifyPinned = pin.Verify
 func (a *Agent) path(name string) string { return filepath.Join(a.cfg.StateDir, name) }
 
 func (a *Agent) load() {
-	if b, err := os.ReadFile(a.path("token")); err == nil {
-		a.token = strings.TrimSpace(string(b))
-	}
 	if b, err := os.ReadFile(a.path("config.json")); err == nil {
 		var hc proto.HostConfig
 		// A cached config that does not match its own hash was edited by hand: report it as drift by
@@ -248,10 +252,28 @@ func nudge(ch chan struct{}) {
 
 /* ---------------- enrollment ---------------- */
 
-// Enroll redeems a code and stores the token. It is run once, by `holdfast-agent enroll`.
+// Enroll makes the agent a new key and certificate, and redeems a code with them: the server pins the certificate
+// the connection was made with (decision 041). It is run once, by `holdfast-agent enroll`. An identity the agent had
+// before stays in place until the server has accepted the new one.
 func Enroll(ctx context.Context, cfg Config, code string, log *slog.Logger) error {
 	a, err := New(cfg, log)
 	if err != nil {
+		return err
+	}
+	id, err := pin.NewIdentity(cfg.FQDN)
+	if err != nil {
+		return err
+	}
+	fresh := a.path(identityFile + ".new")
+	if err := writeFileAtomic(fresh, id, 0o600); err != nil {
+		return err
+	}
+	defer os.Remove(fresh)
+	cert, err := pin.ParseIdentity(id)
+	if err != nil {
+		return err
+	}
+	if a.client, err = pin.Client(cfg.Server, cfg.CASHA256, cert); err != nil {
 		return err
 	}
 	body, _ := json.Marshal(proto.EnrollRequest{FQDN: cfg.FQDN, Code: code, Facts: a.facts(ctx)})
@@ -259,7 +281,13 @@ func Enroll(ctx context.Context, cfg Config, code string, log *slog.Logger) erro
 	if err := a.call(ctx, "/enroll", "", body, &resp); err != nil {
 		return err
 	}
-	if err := writeFileAtomic(a.path("token"), []byte(resp.Token), 0o600); err != nil {
+	if err := os.Rename(fresh, a.path(identityFile)); err != nil {
+		return err
+	}
+	_ = os.Remove(a.path("token")) // an agent from before certificates
+	// The server's certificate may have changed since an earlier enrollment: restic gets the one pinned now.
+	_ = os.Remove(a.path(serverCAFile))
+	if err := a.savePinned(); err != nil {
 		return err
 	}
 	log.Info("enrolled", "fqdn", cfg.FQDN)
@@ -276,13 +304,7 @@ func (a *Agent) call(ctx context.Context, path, query string, body []byte, out a
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	a.mu.Lock()
-	tok := a.token
-	a.mu.Unlock()
-	if tok != "" {
-		req.Header.Set("Authorization", "Bearer "+tok)
-	}
-	resp, err := a.client.Do(req)
+	resp, err := a.client.Do(req) // the agent's certificate, in the TLS handshake, says who it is
 	if err != nil {
 		return err
 	}
@@ -362,7 +384,7 @@ func (a *Agent) readFacts(ctx context.Context) proto.Facts {
 
 // Run starts the agent and blocks until ctx ends.
 func (a *Agent) Run(ctx context.Context) error {
-	if a.token == "" {
+	if a.identity == nil {
 		return errors.New("not enrolled: run holdfast-agent enroll first")
 	}
 	a.recoverInterrupted(ctx)
@@ -384,6 +406,7 @@ func (a *Agent) Run(ctx context.Context) error {
 
 func (a *Agent) pollLoop(ctx context.Context) {
 	backoff := time.Second
+	down := false
 	for ctx.Err() == nil {
 		if err := a.pollOnce(ctx, a.cfg.PollTimeout); err != nil {
 			var old *tooOldError
@@ -394,13 +417,39 @@ func (a *Agent) pollLoop(ctx context.Context) {
 				sleep(ctx, tooOldWait)
 				continue
 			default:
-				a.log.Warn("poll failed; scheduled backups continue from the cached config", "err", err)
+				a.log.Warn("poll failed; backups need the server's gateway, and are retried once it answers", "err", err)
+				down = true
 			}
 			sleep(ctx, backoff)
 			backoff = min(backoff*2, 30*time.Second)
 			continue
 		}
 		backoff = time.Second
+		if down {
+			down = false
+			a.serverBack()
+		}
+	}
+}
+
+// serverBack brings the retries of failed backups forward once the server answers again: backups go through its
+// gateway (decision 041), so a backup that failed while it was away can run now.
+func (a *Agent) serverBack() {
+	a.mu.Lock()
+	now, n := a.now(), 0
+	for _, st := range a.sched {
+		if !st.RetryAt.IsZero() && st.RetryAt.After(now) {
+			st.RetryAt = now
+			n++
+		}
+	}
+	if n > 0 {
+		a.saveSchedule()
+	}
+	a.mu.Unlock()
+	if n > 0 {
+		a.log.Info("the server answers again: retrying the backups that failed while it was away", "jobs", n)
+		nudge(a.wake)
 	}
 }
 
@@ -450,11 +499,9 @@ func (a *Agent) applyCredentials(c proto.Credentials) error {
 	if err := writeFileAtomic(filepath.Join(a.cfg.CredentialsDir, "repo.pass"), []byte(c.RepoPassword), 0o600); err != nil {
 		return err
 	}
-	env := "AWS_ACCESS_KEY_ID=" + c.S3AccessKeyID + "\nAWS_SECRET_ACCESS_KEY=" + c.S3SecretAccessKey + "\n"
-	if err := writeFileAtomic(filepath.Join(a.cfg.CredentialsDir, "s3.env"), []byte(env), 0o600); err != nil {
-		return err
-	}
-	if err := writeFileAtomic(a.path("credentials.sha256"), []byte(credentialsDigest([]byte(c.RepoPassword), []byte(env))), 0o600); err != nil {
+	// An agent from before decision 041 kept an S3 key here. No host holds one now.
+	_ = os.Remove(filepath.Join(a.cfg.CredentialsDir, "s3.env"))
+	if err := writeFileAtomic(a.path("credentials.sha256"), []byte(credentialsDigest([]byte(c.RepoPassword))), 0o600); err != nil {
 		return err
 	}
 	if err := writeFileAtomic(a.path("credentials.version"), []byte(fmt.Sprint(c.Version)), 0o600); err != nil {
@@ -467,8 +514,8 @@ func (a *Agent) applyCredentials(c proto.Credentials) error {
 	return nil
 }
 
-func credentialsDigest(pass, env []byte) string {
-	sum := sha256.Sum256(append(append(append([]byte{}, pass...), 0), env...))
+func credentialsDigest(pass []byte) string {
+	sum := sha256.Sum256(pass)
 	return hex.EncodeToString(sum[:])
 }
 
@@ -481,9 +528,8 @@ func (a *Agent) verifyCredentials() {
 	if err != nil {
 		return // credentials not received yet, or written by an agent from before this check
 	}
-	pass, err1 := os.ReadFile(filepath.Join(a.cfg.CredentialsDir, "repo.pass"))
-	env, err2 := os.ReadFile(filepath.Join(a.cfg.CredentialsDir, "s3.env"))
-	if errors.Join(err1, err2) == nil && credentialsDigest(pass, env) == strings.TrimSpace(string(want)) {
+	pass, err := os.ReadFile(filepath.Join(a.cfg.CredentialsDir, "repo.pass"))
+	if err == nil && credentialsDigest(pass) == strings.TrimSpace(string(want)) {
 		return
 	}
 	a.mu.Lock()
@@ -908,21 +954,41 @@ func (a *Agent) revision() int64 {
 	return a.hc.Revision
 }
 
+// runner is restic on the host's own repository, through the server's gateway (decision 041).
 func (a *Agent) runner() restic.Runner {
-	env := []string{}
-	if b, err := os.ReadFile(filepath.Join(a.cfg.CredentialsDir, "s3.env")); err == nil {
-		for _, line := range strings.Split(string(b), "\n") {
-			if strings.TrimSpace(line) != "" {
-				env = append(env, strings.TrimSpace(line))
-			}
-		}
+	if err := a.savePinned(); err != nil {
+		a.log.Warn("restic cannot reach the gateway without the pinned server certificate", "err", err)
 	}
-	repo := ""
-	if a.hc != nil {
-		repo = a.hc.Repository
+	return a.gatewayRunner(a.cfg.FQDN, filepath.Join(a.cfg.CredentialsDir, "repo.pass"), a.path("cache"))
+}
+
+// gatewayRunner is restic on a repository at the server's gateway: the agent's own certificate says who it is, and
+// the pinned server certificate is the only root restic trusts.
+func (a *Agent) gatewayRunner(fqdn, passwordFile, cacheDir string) restic.Runner {
+	r := restic.Runner{Bin: a.cfg.ResticBin, Repo: gateway.RepoURL(a.cfg.Server, fqdn), PasswordFile: passwordFile, CacheDir: cacheDir,
+		RetryLock: a.cfg.RetryLock, TLSClientCert: a.path(identityFile)}
+	if a.cfg.CASHA256 != "" {
+		r.CACert = a.path(serverCAFile)
 	}
-	return restic.Runner{Bin: a.cfg.ResticBin, Repo: repo, PasswordFile: filepath.Join(a.cfg.CredentialsDir, "repo.pass"),
-		CacheDir: a.path("cache"), Env: env, RetryLock: a.cfg.RetryLock}
+	return r
+}
+
+// serverCAFile is the pinned server certificate, as PEM, for restic's --cacert.
+const serverCAFile = "server-ca.pem"
+
+// savePinned writes the pinned server certificate for restic, if the server is pinned and it is not there yet.
+func (a *Agent) savePinned() error {
+	if a.cfg.CASHA256 == "" {
+		return nil
+	}
+	if _, err := os.Stat(a.path(serverCAFile)); err == nil {
+		return nil
+	}
+	pem, err := pin.PinnedPEM(a.cfg.Server, a.cfg.CASHA256)
+	if err != nil {
+		return fmt.Errorf("fetching the pinned server certificate for restic: %w", err)
+	}
+	return writeFileAtomic(a.path(serverCAFile), pem, 0o644)
 }
 
 func (a *Agent) mark(m runMarker) {
@@ -949,7 +1015,7 @@ func (a *Agent) runBackup(ctx context.Context, j proto.JobConfig, commandID stri
 	a.mu.Unlock()
 	a.mark(runMarker{Kind: proto.KindBackup, JobID: j.ID, CommandID: commandID, Started: started, Revision: rev})
 
-	// The agent's own state (restic cache, spool, token) is never backed up (plan-m1 Q13).
+	// The agent's own state (restic cache, spool, its key) is never backed up (plan-m1 Q13).
 	excludes := append(append([]string(nil), j.Excludes...), a.cfg.StateDir)
 	opts := restic.BackupOptions{Paths: j.Paths, Excludes: excludes, Host: a.cfg.FQDN, Tags: []string{"job=" + j.ID},
 		LimitUploadKiB: j.LimitUploadKiB}

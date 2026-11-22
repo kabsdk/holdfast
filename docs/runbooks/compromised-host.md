@@ -1,11 +1,13 @@
 # Runbook: a host is compromised
 
 Use this when someone else may have had root on a host that Holdfast backs up. Root on the host can read
-the host's restic password and its S3 key, so assume both are known.
+the host's restic password and its agent's private key, so assume both are known. The host has no S3 key
+(decision 041).
 
 What you can rely on (spec §2.3):
-- The host's S3 key may only add data under `repos/<fqdn>/` and delete its own lock files. It cannot
-  delete or overwrite snapshots for good, and it cannot read any other host's repository (B005–B007).
+- The host reaches the bucket only through the server's gateway, with its agent's certificate. The gateway lets it
+  read and add to its own repository, and delete its own lock files. It cannot delete or overwrite snapshots, and
+  it cannot read any other host's repository. Every attempt is refused and audited (`gateway.refused`).
 - Bucket versioning keeps every old object version until the lifecycle rule expires it, even against a
   compromised server (B006, B009, B010).
 
@@ -13,38 +15,30 @@ So the attacker can read this host's backups, and can add new snapshots, but can
 
 ## 1. Cut the host off
 
-1. **Rotate the repository password and revoke the agent's token:**
+1. **Rotate the repository password and unpin the agent's certificate:**
 
    ```
    holdfast host rotate web01.example.com -m "INC-1234: suspected compromise"
    ```
 
-   This adds a new restic password, removes the old one, revokes the agent's token and issues a new
+   This adds a new restic password, removes the old one, unpins the agent's certificate and issues a new
    enrollment code (spec §3.5a). The escrow file in the bucket gets the new password. From now on the
-   host gets nothing from the server, and its backups fail: the old password no longer opens the
-   repository.
+   host's certificate gets nothing from the server, not even its own repository: its backups fail.
 
    If it warns that the old key could not be removed (a backup held the lock for too long, say), run it
    again. The host shows the `rotation` error until the old key is gone.
 
-2. **Make the host a new S3 key** at your S3 server, with the host policy of
-   [storage.md](../storage.md), and **delete the old key there**. Then give the new one to Holdfast:
-
-   ```
-   holdfast host set-key web01.example.com --s3-key-file /root/web01-new.env
-   ```
-
-   Holdfast never deletes S3 keys (decision 029); deleting the old one at the S3 server is what stops the
-   attacker from writing to the bucket.
-
-3. **Look for restic passwords added outside Holdfast.** If `holdfast host show` lists any (the
-   `foreign_keys` alert), an attacker may have added one, and the rotation left it there. Remove each one
-   you did not add, with plain restic and the new password from the escrow file, then acknowledge:
+2. **Look for restic passwords added outside Holdfast.** If `holdfast host show` lists any (the
+   `foreign_keys` alert), an attacker may have added one before the rotation, and it is still there. Remove each
+   one you did not add, with plain restic, the maintenance key and the new password from the escrow file, then
+   acknowledge:
 
    ```
    restic -r s3:https://s3.example.internal/holdfast/repos/web01.example.com key remove <id>
    holdfast host acknowledge web01.example.com
    ```
+
+There is no S3 key to delete: a host never had one.
 
 ## 2. Find the last good snapshot
 
@@ -61,8 +55,8 @@ The attacker may have added snapshots, and may have changed files before the las
 
 1. Rebuild the host, or clean it if you are sure you can. Restore what you need from the last good
    snapshot. Once it is enrolled, a restore runs through its agent (spec §5.4).
-2. Install the agent, and enroll it with the code `holdfast host rotate` printed. If that code has expired
-   (after 15 minutes), get a new one:
+2. Install the agent, and enroll it with the code `holdfast host rotate` printed. Enrolling makes the agent a new
+   key and certificate, and the server pins that one. If the code has expired (after 15 minutes), get a new one:
 
    ```
    holdfast host enroll-code web01.example.com
@@ -74,7 +68,8 @@ The attacker may have added snapshots, and may have changed files before the las
 
 Every step above is in the host's history and in the audit log, with who did it and when:
 `holdfast audit --host web01.example.com`. The rotation is `host.rotated`, the removal of the old key
-`repository.key_removed`, and the new escrow file `escrow.written`.
+`repository.key_removed`, the new escrow file `escrow.written`, the new enrollment `agent.enrolled`, and anything
+the gateway refused the host `gateway.refused`.
 
 If the escrow bundle from `holdfast escrow export` is stored offline, export a new one: the old one holds
-the old password and the old S3 key.
+the old password.

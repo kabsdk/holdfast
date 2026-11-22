@@ -139,7 +139,7 @@ func (s *Server) sourceClient() (*http.Client, error) {
 	s.vault.mu.Lock()
 	defer s.vault.mu.Unlock()
 	if s.vault.client == nil {
-		c, err := pin.Client(s.set.Source.Server, s.set.Source.CASHA256)
+		c, err := pin.Client(s.set.Source.Server, s.set.Source.CASHA256, nil)
 		if err != nil {
 			return nil, err
 		}

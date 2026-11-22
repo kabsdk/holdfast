@@ -16,7 +16,7 @@ import (
 
 func hostOperatingCmds() []*cobra.Command {
 	var rotateMsg string
-	rotate := &cobra.Command{Use: "rotate <fqdn>", Short: "After a compromise: a new repository password, the agent's token revoked, and a new enrollment code (docs/runbooks/compromised-host.md)",
+	rotate := &cobra.Command{Use: "rotate <fqdn>", Short: "After a compromise: a new repository password, the agent's certificate unpinned, and a new enrollment code (docs/runbooks/compromised-host.md)",
 		Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, a []string) error {
 			var res struct {
 				CredentialsVersion int      `json:"credentials_version"`
@@ -39,14 +39,14 @@ func hostOperatingCmds() []*cobra.Command {
 				return nil
 			}
 			fmt.Printf("%s has a new repository password (key %s, credentials version %d); removed key %s.\n"+
-				"Its agent's token is revoked: the host gets nothing more until it enrolls again.\n",
+				"Its agent's certificate is unpinned: the host gets nothing more until it enrolls again.\n",
 				a[0], res.NewKey, res.CredentialsVersion, strings.Join(res.RemovedKeys, ", "))
 			if res.Escrowed {
 				fmt.Println("The escrow file in the bucket holds the new password.")
 			}
 			fmt.Printf("\nOnce the host is clean or rebuilt, enroll it with code %s (valid until %s), as root on the host:\n  %s\n",
 				res.Enrollment.Code, res.Enrollment.ExpiresAt.Local().Format("15:04"), res.Enrollment.InstallCommand)
-			fmt.Printf("\nAlso make the host a new S3 key and give it with holdfast host set-key %s; the old key may be known too.\n", a[0])
+			fmt.Println("\nEnrolling makes the host a new key of its own; the old certificate no longer works.")
 			if res.Warning != "" {
 				fmt.Println("\nwarning:", res.Warning)
 			}

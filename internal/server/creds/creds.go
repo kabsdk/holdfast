@@ -1,4 +1,4 @@
-// Package creds generates and protects secrets: repository passwords, agent tokens and enrollment
+// Package creds generates and protects secrets: repository passwords, session tokens and enrollment
 // codes. Secrets at rest are sealed with AES-256-GCM under a key read from a root-only file
 // (plan-m1 Q5). Nothing here logs or returns a secret except to its one caller.
 package creds
@@ -100,7 +100,7 @@ func Random(n int) []byte {
 // NewPassword returns a repository password: 32 random bytes, hex-encoded.
 func NewPassword() string { return hex.EncodeToString(Random(32)) }
 
-// NewToken returns an agent token: 32 random bytes, hex-encoded.
+// NewToken returns a secret token, such as a login session's: 32 random bytes, hex-encoded.
 func NewToken() string { return hex.EncodeToString(Random(32)) }
 
 // HashToken is how tokens and enrollment codes are stored and looked up.

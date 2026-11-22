@@ -27,8 +27,8 @@ import (
 //   - escrow: each host's repository password, encrypted to an offline age key, in escrow/<fqdn>.age in the
 //     bucket (decision 036);
 //   - size: once a day, each host's prefix is listed with its versions;
-//   - rotate: after a compromise, a new repository password, a revoked agent token and a new enrollment
-//     code;
+//   - rotate: after a compromise, a new repository password, the agent's certificate unpinned and a new
+//     enrollment code;
 //   - decommission: a removed host's repository is deleted, 7 days after an admin asked for it.
 
 const (
@@ -227,7 +227,7 @@ type RotateResult struct {
 
 // RotateHost is what to do when a host is compromised (plan-m5 item 5):
 //  1. a new repository password is added to the repository, and opens it;
-//  2. the server stores it, and the agent's token is revoked, so the host no longer gets anything;
+//  2. the server stores it, and the agent's certificate is unpinned, so the host no longer gets anything;
 //  3. the old password's key is removed from the repository;
 //  4. the escrow file is written again, and a new enrollment code issued.
 //
@@ -319,7 +319,7 @@ func (s *Server) RotateHost(ctx context.Context, a Actor, fqdn string, in Rotate
 			return err
 		}
 		if err := q.Audit(ctx, store.AuditEntry{Actor: a.Name, Source: a.Source, Action: "host.rotated", FQDN: fqdn,
-			Detail: map[string]any{"credentials_version": c.Version, "new_key": newKey, "old_key": oldKey, "agent_token": "revoked", "message": in.Message}}); err != nil {
+			Detail: map[string]any{"credentials_version": c.Version, "new_key": newKey, "old_key": oldKey, "agent_certificate": "unpinned", "message": in.Message}}); err != nil {
 			return err
 		}
 		return q.Audit(ctx, store.AuditEntry{Actor: a.Name, Source: a.Source, Action: "enrollment.code_issued", FQDN: fqdn, Detail: map[string]any{"expires_at": expires}})

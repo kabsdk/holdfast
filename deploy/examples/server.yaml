@@ -1,7 +1,8 @@
 # /etc/holdfast/server.yaml (root only; a change needs a reload, which is audited)
 
-listen: ":8443"                      # agents, /metrics and /healthz
+listen: ":8443"                      # agents, their backups (the gateway), /metrics and /healthz
 public_url: https://holdfast.example.internal:8443
+# Required: agents log in with their own certificates, in the TLS handshake (decision 041).
 tls:
   cert_file: /etc/holdfast/tls/server.crt
   key_file: /etc/holdfast/tls/server.key
@@ -18,10 +19,10 @@ storage:
   endpoint: https://rgw.example.internal
   bucket: holdfast
   region: default
+  # Two keys for the bucket, both made by you at the S3 server with docs/storage.md's policies. Hosts hold none:
+  # they back up through this server's gateway, which uses the gateway key for all of them (decision 041).
   maintenance_credentials_file: /etc/holdfast/maintenance.env   # AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY, root only
-  # You make each host's S3 key and give it with `holdfast host add --s3-key-file` (docs/storage.md).
-  # Optional: a command that makes keys Holdfast generates, so hosts can be added without a key.
-  # provisioner_command: [/usr/local/libexec/holdfast-provision-host]
+  gateway_credentials_file: /etc/holdfast/gateway.env           # the same format, root only
 
 maintenance:
   # Each agent runs restic check on its own repository once a day, right after a backup, reading a

@@ -4,7 +4,6 @@ import (
 	"context"
 	"io"
 	"log/slog"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -81,13 +80,12 @@ exit 0
 	sealer, _ := creds.NewSealer(creds.Random(creds.KeySize))
 	srv, err := server.New(server.Settings{PublicURL: "http://test", StateDir: filepath.Join(dir, "server"), ResticBin: bin, DefaultZone: "UTC", NodeName: "t",
 		Storage: server.StorageSettings{Endpoint: "http://127.0.0.1:1", Bucket: "b"}, Maintenance: server.MaintenanceSettings{CheckCycleDays: 30}},
-		server.Deps{Store: testpg.Store(t), Sealer: sealer, Provisioner: storage.NoopProvisioner{}, Prober: storage.StaticProber{}, Logger: quiet})
+		server.Deps{Store: testpg.Store(t), Sealer: sealer, Prober: storage.StaticProber{}, Logger: quiet})
 	if err != nil {
 		t.Fatal(err)
 	}
 	srv.Run(ctx)
-	ts := httptest.NewServer(srv.AgentHandler())
-	defer ts.Close()
+	url, pinned := agentListener(t, srv.AgentHandler())
 	root := server.Actor{Name: "local:root", Source: "cli", Everywhere: true}
 	job := &config.Job{Paths: []string{dir}, Schedule: schedule.Schedule{Daily: &schedule.Daily{Times: []schedule.ClockTime{"02:00"}}}, LimitUploadKiB: 512,
 		Retention: config.Retention{Daily: &config.Duration{N: 14, Unit: config.Days}, Monthly: &config.Duration{N: 12, Unit: config.Months}, KeepLast: 3}}
@@ -95,7 +93,7 @@ exit 0
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg := Config{Server: ts.URL, FQDN: "web01.example.com", StateDir: filepath.Join(dir, "agent"), CredentialsDir: filepath.Join(dir, "creds"),
+	cfg := Config{Server: url, CASHA256: pinned, FQDN: "web01.example.com", StateDir: filepath.Join(dir, "agent"), CredentialsDir: filepath.Join(dir, "creds"),
 		ResticBin: bin, PollTimeout: time.Second, Tick: 100 * time.Millisecond}
 	if err := Enroll(ctx, cfg, res.Enrollment.Code, quiet); err != nil {
 		t.Fatal(err)

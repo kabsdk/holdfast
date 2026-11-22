@@ -140,12 +140,12 @@ func TestEnrollment(t *testing.T) {
 	if err := q.RedeemEnrollmentCode(ctx, "web01.example.com", code2, now.Add(14*time.Minute)); !errors.Is(err, ErrCodeUsed) {
 		t.Fatalf("reused code: %v", err)
 	}
-	must(t, q.EnrollAgent(ctx, "web01.example.com", creds.HashToken("tok"), now))
-	if f, err := q.AgentByToken(ctx, creds.HashToken("tok")); err != nil || f != "web01.example.com" {
-		t.Fatalf("agent by token: %q %v", f, err)
+	must(t, q.EnrollAgent(ctx, "web01.example.com", creds.HashToken("cert"), now))
+	if f, err := q.AgentByCertificate(ctx, creds.HashToken("cert")); err != nil || f != "web01.example.com" {
+		t.Fatalf("agent by certificate: %q %v", f, err)
 	}
-	if _, err := q.AgentByToken(ctx, creds.HashToken("other")); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("unknown token: %v", err)
+	if _, err := q.AgentByCertificate(ctx, creds.HashToken("other")); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown certificate: %v", err)
 	}
 	h, _ := q.GetHost(ctx, "web01.example.com")
 	if h.State != "enrolled" || h.ConnectedAt == nil {

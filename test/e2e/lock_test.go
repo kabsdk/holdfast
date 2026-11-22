@@ -19,6 +19,12 @@ import (
 
 // resticCmd is restic as a process the test can freeze, with the same repository and identity as r.
 func resticCmd(r restic.Runner, args ...string) *exec.Cmd {
+	if r.CACert != "" {
+		args = append([]string{"--cacert", r.CACert}, args...)
+	}
+	if r.TLSClientCert != "" {
+		args = append([]string{"--tls-client-cert", r.TLSClientCert}, args...)
+	}
 	cmd := exec.Command(r.Bin, args...)
 	cmd.Env = append(os.Environ(), "RESTIC_REPOSITORY="+r.Repo, "RESTIC_PASSWORD_FILE="+r.PasswordFile, "RESTIC_CACHE_DIR="+r.CacheDir)
 	cmd.Env = append(cmd.Env, r.Env...)
@@ -27,7 +33,8 @@ func resticCmd(r restic.Runner, args ...string) *exec.Cmd {
 
 // TestCheckLockIsExclusive asserts the restic behaviour behind two choices (decision 030), with Holdfast's
 // own identities. The agent runs its check inside its one-restic-at-a-time loop, and the server (M3)
-// places its prunes away from backups. Here the maintenance key checks and the host key backs up.
+// places its prunes away from backups. Here the maintenance key checks, and the host backs up through the
+// gateway with its agent's certificate (decision 041).
 //
 // While check holds its lock: the lock is exclusive; a backup without --retry-lock fails at once with
 // exit 11; a locking read fails the same way and a --no-lock read works; unlock leaves the live lock
@@ -42,9 +49,10 @@ func TestCheckLockIsExclusive(t *testing.T) {
 	buf := make([]byte, 32<<20)
 	_, _ = rand.Read(buf)
 	must(t, os.WriteFile(filepath.Join(src, "random.bin"), buf, 0o644))
-	e.addHost(fqdn, "data", "--path", src, "--daily", "03:00") // adding the host initialises its repository
+	// Adding the host initialises its repository; enrolling gives the host its certificate. The agent does not run.
+	a := e.enrollAgent(fqdn, e.addHost(fqdn, "data", "--path", src, "--daily", "03:00"))
 	esc := e.escrow()[fqdn]
-	maint, host := e.resticFor(esc, false), e.resticFor(esc, true)
+	maint, host := e.resticFor(esc), e.resticAsAgent(a, esc)
 	ctx := context.Background()
 	backup := func(r restic.Runner, path string) error {
 		_, err := r.Backup(ctx, restic.BackupOptions{Paths: []string{path}, Tags: []string{"job=data"}, Host: fqdn})

@@ -1,5 +1,5 @@
-// Package pin is the HTTPS client that trusts one pinned certificate: agents use it for their server, and a vault for
-// its source server (decisions 030 and 039).
+// Package pin is Holdfast's pinned TLS (decisions 030 and 041): a client that trusts one pinned server certificate, and
+// the fingerprint by which the server knows an agent's own certificate.
 package pin
 
 import (
@@ -7,30 +7,44 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/hex"
+	"encoding/pem"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 )
 
-// Client pins the server when a fingerprint is given. Without one, the system's roots apply.
-func Client(server, fingerprint string) (*http.Client, error) {
+// Fingerprint is how a certificate is pinned: the sha256 of its DER, in lower-case hex.
+func Fingerprint(c *x509.Certificate) string {
+	sum := sha256.Sum256(c.Raw)
+	return hex.EncodeToString(sum[:])
+}
+
+func normalise(fingerprint string) string {
+	return strings.ToLower(strings.ReplaceAll(fingerprint, ":", ""))
+}
+
+// Client pins the server when a fingerprint is given. Without one, the system's roots apply. With cert, the client
+// identifies itself by that certificate: an agent's own (decision 041).
+func Client(server, fingerprint string, cert *tls.Certificate) (*http.Client, error) {
 	tr := http.DefaultTransport.(*http.Transport).Clone()
+	cfg := &tls.Config{MinVersion: tls.VersionTLS12}
 	if fingerprint != "" {
 		u, err := url.Parse(server)
 		if err != nil || u.Hostname() == "" {
 			return nil, fmt.Errorf("server %q is not a URL", server)
 		}
-		host := u.Hostname()
-		fp := strings.ToLower(strings.ReplaceAll(fingerprint, ":", ""))
-		tr.TLSClientConfig = &tls.Config{
-			InsecureSkipVerify: true, // the standard verification is replaced by Verify
-			VerifyConnection: func(cs tls.ConnectionState) error {
-				return Verify(cs.PeerCertificates, fp, host)
-			},
-		}
+		host, fp := u.Hostname(), normalise(fingerprint)
+		cfg.InsecureSkipVerify = true // the standard verification is replaced by Verify
+		cfg.VerifyConnection = func(cs tls.ConnectionState) error { return Verify(cs.PeerCertificates, fp, host) }
 	}
+	if cert != nil {
+		cfg.Certificates = []tls.Certificate{*cert}
+	}
+	tr.TLSClientConfig = cfg
 	return &http.Client{Transport: tr}, nil
 }
 
@@ -47,8 +61,7 @@ func Verify(chain []*x509.Certificate, fingerprint, host string) error {
 	roots, intermediates := x509.NewCertPool(), x509.NewCertPool()
 	found := false
 	for _, c := range chain {
-		sum := sha256.Sum256(c.Raw)
-		if hex.EncodeToString(sum[:]) == fingerprint {
+		if Fingerprint(c) == fingerprint {
 			roots.AddCert(c)
 			found = true
 		} else {
@@ -62,4 +75,36 @@ func Verify(chain []*x509.Certificate, fingerprint, host string) error {
 		return fmt.Errorf("the server's certificate does not chain to the pinned certificate for %s: %w", host, err)
 	}
 	return nil
+}
+
+// PinnedPEM connects to the server and returns the pinned certificate itself, as PEM: the root that restic is given
+// to verify the gateway with (--cacert). The connection is verified as Client verifies it.
+func PinnedPEM(server, fingerprint string) ([]byte, error) {
+	u, err := url.Parse(server)
+	if err != nil || u.Hostname() == "" {
+		return nil, fmt.Errorf("server %q is not a URL", server)
+	}
+	addr := u.Host
+	if u.Port() == "" {
+		addr = net.JoinHostPort(u.Hostname(), "443")
+	}
+	fp := normalise(fingerprint)
+	var pinned *x509.Certificate
+	conn, err := tls.DialWithDialer(&net.Dialer{Timeout: 15 * time.Second}, "tcp", addr, &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: true,
+		VerifyConnection: func(cs tls.ConnectionState) error {
+			if err := Verify(cs.PeerCertificates, fp, u.Hostname()); err != nil {
+				return err
+			}
+			for _, c := range cs.PeerCertificates {
+				if Fingerprint(c) == fp {
+					pinned = c
+				}
+			}
+			return nil
+		}})
+	if err != nil {
+		return nil, err
+	}
+	conn.Close()
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: pinned.Raw}), nil
 }
