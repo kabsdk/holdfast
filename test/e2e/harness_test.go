@@ -50,7 +50,32 @@ var (
 	s3Endpoint = os.Getenv("HOLDFAST_S3_ENDPOINT")
 	s3User     = os.Getenv("HOLDFAST_S3_ROOT_USER")
 	s3Pass     = os.Getenv("HOLDFAST_S3_ROOT_PASSWORD")
+	// The login and UI tests (M4) need a real OIDC provider and a browser: test/e2e/authelia/setup.sh's
+	// state directory, and a Chrome DevTools URL. Without them they skip.
+	oidcDir    = os.Getenv("HOLDFAST_OIDC_DIR")
+	browserURL = os.Getenv("HOLDFAST_BROWSER")
 )
+
+// The UI listener's fixed address: Authelia's client has its redirect URI.
+const (
+	uiAddr    = "127.0.0.1:58443"
+	uiURL     = "https://ui.holdfast.test:58443"
+	issuerURL = "https://auth.holdfast.test:59091"
+)
+
+// oidcPassword returns a test user's password from Authelia's state.
+func oidcPassword(t *testing.T, user string) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(oidcDir, "users.env"))
+	must(t, err)
+	for _, line := range strings.Split(string(b), "\n") {
+		if v, ok := strings.CutPrefix(line, "HOLDFAST_E2E_PASS_"+strings.ToUpper(user)+"="); ok {
+			return strings.TrimSpace(v)
+		}
+	}
+	t.Fatalf("no password for %s", user)
+	return ""
+}
 
 func TestMain(m *testing.M) {
 	for name, v := range map[string]string{"HOLDFAST_RESTIC": resticBin, "HOLDFAST_MC": mcBin, "HOLDFAST_S3_ENDPOINT": s3Endpoint,
@@ -61,6 +86,17 @@ func TestMain(m *testing.M) {
 		}
 	}
 	repoRoot, _ = filepath.Abs("../..")
+	if oidcDir != "" {
+		// The login tests use real names, as browsers and Authelia's cookies need: both point here.
+		if b, _ := os.ReadFile("/etc/hosts"); !strings.Contains(string(b), "ui.holdfast.test") {
+			f, err := os.OpenFile("/etc/hosts", os.O_APPEND|os.O_WRONLY, 0)
+			if err != nil {
+				panic(err)
+			}
+			_, _ = f.WriteString("127.0.0.1 ui.holdfast.test auth.holdfast.test\n")
+			f.Close()
+		}
+	}
 	dir, err := os.MkdirTemp("", "holdfast-bin-")
 	if err != nil {
 		panic(err)
@@ -182,6 +218,7 @@ type envOpts struct {
 	TLS         *tlsFiles // serve the agent listener over TLS with this certificate
 	Provisioner bool      // configure storage.provisioner_command, and add hosts without a key
 	MaintPolicy string    // give the server a maintenance key with this policy instead of MinIO's root
+	OIDC        bool      // serve the UI listener on uiAddr, with login through the e2e Authelia (M4)
 }
 
 func newEnv(t *testing.T) *env { return newEnvWith(t, envOpts{}) }
@@ -235,6 +272,20 @@ func newEnvWith(t *testing.T, o envOpts) *env {
 	if o.TLS != nil {
 		set["tls"] = map[string]any{"cert_file": o.TLS.cert, "key_file": o.TLS.key}
 		set["ca_sha256"] = o.TLS.pin
+	}
+	if o.OIDC {
+		if oidcDir == "" {
+			t.Skip("needs the e2e OIDC provider (HOLDFAST_OIDC_DIR; make e2e starts it)")
+		}
+		// The client secret goes into a root-only file, as in production.
+		secret := filepath.Join(dir, "oidc-client-secret")
+		b, err := os.ReadFile(filepath.Join(oidcDir, "client-secret"))
+		must(t, err)
+		must(t, os.WriteFile(secret, b, 0o600))
+		set["ui"] = map[string]any{"listen": uiAddr, "public_url": uiURL,
+			"tls": map[string]any{"cert_file": filepath.Join(oidcDir, "tls", "public.crt"), "key_file": filepath.Join(oidcDir, "tls", "private.pem")}}
+		set["auth"] = map[string]any{"oidc": map[string]any{"issuer": issuerURL, "client_id": "holdfast", "client_secret_file": secret,
+			"ca_file": filepath.Join(oidcDir, "ca", "ca.public.crt")}}
 	}
 	b, _ := yaml.Marshal(set)
 	e.cfgPath = filepath.Join(dir, "server.yaml")

@@ -85,6 +85,7 @@ func TestChecks(t *testing.T) {
 }
 
 type auditRow struct {
+	Actor  string         `json:"actor"`
 	Action string         `json:"action"`
 	Detail map[string]any `json:"detail"`
 }

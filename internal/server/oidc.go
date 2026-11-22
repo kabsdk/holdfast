@@ -101,7 +101,11 @@ func (s *Server) oauth(ctx context.Context) (context.Context, *oidc.Provider, *o
 	if err != nil {
 		return ctx, nil, nil, fmt.Errorf("auth.oidc.client_secret_file: %w", err)
 	}
-	return ctx, p, &oauth2.Config{ClientID: o.ClientID, ClientSecret: strings.TrimSpace(string(secret)), Endpoint: p.Endpoint(),
+	// The client authenticates with client_secret_post everywhere: x/oauth2 sends nothing else to the device
+	// authorization endpoint, and one method for both endpoints is one thing to register at the provider.
+	ep := p.Endpoint()
+	ep.AuthStyle = oauth2.AuthStyleInParams
+	return ctx, p, &oauth2.Config{ClientID: o.ClientID, ClientSecret: strings.TrimSpace(string(secret)), Endpoint: ep,
 		RedirectURL: strings.TrimSuffix(s.set.UI.PublicURL, "/") + callbackPath, Scopes: o.Scopes}, nil
 }
 
@@ -275,7 +279,7 @@ func (s *Server) handleDeviceStart(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusServiceUnavailable, "the OIDC provider does not offer the device flow, which holdfast login needs")
 		return
 	}
-	da, err := cfg.DeviceAuth(ctx)
+	da, err := cfg.DeviceAuth(ctx, oauth2.SetAuthURLParam("client_secret", cfg.ClientSecret))
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, "the OIDC provider refused to start a device login: "+err.Error())
 		return

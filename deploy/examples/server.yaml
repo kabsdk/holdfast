@@ -44,8 +44,9 @@ ui:
 
 auth:
   oidc:
-    # Register Holdfast at the provider as a confidential client with the authorization code flow and the
-    # device flow, and the redirect URI <ui.public_url>/auth/callback.
+    # Register Holdfast at the provider as a confidential client: the authorization code flow (with PKCE)
+    # and the device flow, the redirect URI <ui.public_url>/auth/callback, the scopes openid, profile and
+    # groups, and client authentication client_secret_post.
     issuer: https://auth.example.internal
     client_id: holdfast
     client_secret_file: /etc/holdfast/oidc-client-secret   # root only

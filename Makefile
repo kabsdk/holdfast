@@ -20,7 +20,14 @@ RESTIC_VERSION ?= 0.19.1
 
 PROM_IMAGE  ?= prom/prometheus:v2.53.0
 
-.PHONY: build test unit vet fmt pg-up pg-down minio-up minio-down tools e2e rules-test
+# The login and UI tests (M4): a real OIDC provider, and a headless browser driven over the DevTools
+# protocol. Both pinned by digest; both on the host network, on loopback only.
+AUTHELIA_IMAGE ?= authelia/authelia@sha256:bd97cff4fcbf715b5ff1f9ae286afbe6033afce385302520b0368122d43a6f54
+BROWSER_IMAGE  ?= chromedp/headless-shell@sha256:381353d3530ab9d579d2fe8b9c0f4519c995617f5a71daf6bb649e2d12005bd9
+BROWSER_NAME   ?= holdfast-test-browser
+BROWSER_PORT   ?= 59222
+
+.PHONY: build test unit vet fmt pg-up pg-down minio-up minio-down tools e2e rules-test authelia-up authelia-down browser-up browser-down
 
 # promtool: the alert rules parse, and their unit tests pass.
 rules-test:
@@ -59,6 +66,23 @@ minio-up:
 minio-down:
 	-docker rm -f $(MINIO_NAME)
 
+# Authelia for the login tests: its state (a test CA, keys, users) is made once in $(TOOLS)/authelia-e2e.
+authelia-up:
+	@bash test/e2e/authelia/setup.sh $(TOOLS)/authelia-e2e $(AUTHELIA_IMAGE)
+
+authelia-down:
+	-docker rm -f holdfast-test-authelia
+
+# Chrome for the UI tests. *.holdfast.test resolve to loopback; the test CA is not installed in it.
+browser-up:
+	@docker inspect $(BROWSER_NAME) >/dev/null 2>&1 || docker run -d --name $(BROWSER_NAME) --network host --entrypoint /headless-shell/headless-shell \
+		$(BROWSER_IMAGE) --no-sandbox --remote-debugging-address=127.0.0.1 --remote-debugging-port=$(BROWSER_PORT) \
+		'--host-resolver-rules=MAP *.holdfast.test 127.0.0.1' --ignore-certificate-errors >/dev/null
+	@for i in $$(seq 1 30); do curl -fs http://127.0.0.1:$(BROWSER_PORT)/json/version >/dev/null 2>&1 && break; sleep 1; done
+
+browser-down:
+	-docker rm -f $(BROWSER_NAME)
+
 # restic (checksum-verified) and mc (taken from the pinned client image) for the e2e tests.
 tools:
 	@scripts/fetch-restic.sh $(RESTIC_VERSION) >/dev/null
@@ -69,11 +93,12 @@ tools:
 # a PID 1 that reaps orphans, as systemd does on a host: without it a SIGKILLed restic stays a zombie,
 # and restic rightly will not call a lock stale while its process still exists.
 E2E_ARGS ?=
-e2e: tools pg-up minio-up
+e2e: tools pg-up minio-up authelia-up browser-up
 	docker run --rm --init --privileged --network host -v $(CURDIR):/src -w /src \
 		-v holdfast-gomod:/go/pkg/mod -v holdfast-gocache:/root/.cache/go-build -v holdfast-e2e-work:/work \
 		-v $(TOOLS):/tools:ro -e TMPDIR=/work -e GOFLAGS=-buildvcs=false \
 		-e "HOLDFAST_TEST_PG=$(HOLDFAST_TEST_PG)" -e HOLDFAST_S3_ENDPOINT=http://127.0.0.1:$(MINIO_PORT) \
 		-e HOLDFAST_S3_ROOT_USER=$(S3_USER) -e HOLDFAST_S3_ROOT_PASSWORD=$(S3_PASS) \
 		-e HOLDFAST_RESTIC=/tools/restic-$(RESTIC_VERSION) -e HOLDFAST_MC=/tools/mc \
-		$(GO_IMAGE) go test ./test/e2e/ -count=1 -v -timeout 40m $(E2E_ARGS)
+		-e HOLDFAST_OIDC_DIR=/tools/authelia-e2e -e HOLDFAST_BROWSER=http://127.0.0.1:$(BROWSER_PORT) \
+		$(GO_IMAGE) go test ./test/e2e/ -count=1 -v -timeout 50m $(E2E_ARGS)

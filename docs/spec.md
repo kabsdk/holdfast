@@ -67,7 +67,8 @@ supports.
 - Reports the config revision it has applied, which is how drift is detected (§3.1).
 
 **Server** (`holdfast-server`)
-- The configurator.
+- The configurator. It serves the API and the UI to people on a listener of its own, `ui.listen`
+  (decision 034), and to root on the server on a root-only socket.
 - The maintenance leader: it runs forget, prune and check.
   - `restic check` takes an exclusive lock, and a backup that meets it waits or fails. So each agent
     checks its own repository: once a day, right after a backup, inside its one-restic-at-a-time loop,
@@ -368,7 +369,8 @@ Restore and inspection behave like restic does on the host.
 ### 5.2 Job snapshot list
 
 - Shows all snapshots, paginated and filterable by month.
-- For each snapshot it shows which rule keeps it, and whether a pending prune will delete it.
+- For each snapshot it shows which rule keeps it, in restic's own words from `forget --dry-run` (such as
+  "daily within 14d"), and whether a pending prune will delete it, and from when.
 - **Find a file in all snapshots** uses `restic find` to show the versions of a file. Each version links to
   the snapshot, opened at that folder.
 
@@ -401,8 +403,12 @@ host.
 - In place, or into another directory, only on hosts that opt in.
 - Only snapshots this agent made.
 
+**If a file already exists**, in place or in another directory, the choice is restic's own `--overwrite`:
+`always`, `if-changed`, `if-newer` or `never`. The default is restic's.
+
 **Running it**
 - A **dry run** is available. It reports what would be restored, and writes nothing.
+- A reason can be given; it goes into the audit log.
 - The request gives either what was left out (`--exclude`) or only what to restore (`--include`, for
   **Restore only this**), not both. restic always runs with `--sparse --verify`.
 - The restore runs on the host, through its agent, in the agent's one-restic-at-a-time loop. Its result,
@@ -412,13 +418,25 @@ host.
 **Per-file actions**
 - **Restore only this**.
 - **Restore both versions to diff on the host** restores both versions into a directory only root can read,
-  and prints the `diff -u` command to compare them.
+  and prints the `diff -u` command to compare them. It is one API call (`POST …/restore-pair`) and one
+  command (`holdfast restore pair`); the command is given once both restores are done.
 
 ### 5.5 Restores tab
 
 - Shows the restore history for the whole fleet: who restored what, where to, the result, and a link to the
   snapshot.
 - Has a host → job picker that leads to that job's snapshot list.
+
+### 5.5a Problems
+
+The UI's Problems page, and the Fleet's "Needs attention", list what the server knows is wrong, host by
+host, each with a code:
+- errors: `stale`, `failed`, `storage`, `disappeared`, `foreign_keys`;
+- warnings: `incomplete`, `offline`, `drift`, `restic`, `not_made_by_holdfast`, `catalogue`, `retention`,
+  `removing`.
+
+Paging stays with Prometheus and the alert rules that ship with Holdfast. The storage witness is judged
+there too, apart from the server (decisions 008 and 009).
 
 ### 5.6 Search
 

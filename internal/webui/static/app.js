@@ -1,0 +1,105 @@
+// The UI's shell: navigation, the top bar, and the routes (plan-m4 §5). Each page is in pages/.
+import { html, render, useState, useEffect, useRoute, usePoll, go, link, ErrorBox } from './lib.js';
+import { api } from './api.js';
+import { Fleet, Problems } from './pages/fleet.js';
+import { Host, Pending } from './pages/host.js';
+import { JobSnapshots, Snapshot } from './pages/snapshots.js';
+import { Configure } from './pages/configure.js';
+import { Restores } from './pages/restores.js';
+import { History, PruneNow } from './pages/history.js';
+import { AddHost } from './pages/addhost.js';
+import { Audit, Access, Settings } from './pages/admin.js';
+
+function Search() {
+  const [text, setText] = useState('');
+  const [res, setRes] = useState(null);
+  useEffect(() => {
+    if (text.trim().length < 2) { setRes(null); return; }
+    const t = setTimeout(async () => {
+      try { setRes(await api.search(text.trim())); } catch (err) { setRes({ error: err.message }); }
+    }, 250);
+    return () => clearTimeout(t);
+  }, [text]);
+  const pick = (href) => { setText(''); setRes(null); location.hash = href.slice(1); };
+  const n = res && !res.error ? res.hosts.length + res.jobs.length + res.snapshots.length : 0;
+  return html`<div class="searchbox">
+    <input type="search" placeholder="Search FQDN, job or snapshot ID" value=${text} onInput=${(e) => setText(e.target.value)} />
+    ${res && html`<div class="results">
+      ${res.error && html`<p class="muted">${res.error}</p>`}
+      ${!res.error && n === 0 && html`<p class="muted">No host, job or snapshot matches “${text}”. Snapshot IDs need at least 4 hex characters.</p>`}
+      ${!res.error && res.hosts.map((h) => html`<a href="#" onClick=${(e) => { e.preventDefault(); pick(link('hosts', h)); }}>Host · ${h}</a>`)}
+      ${!res.error && res.jobs.map((j) => html`<a href="#" onClick=${(e) => { e.preventDefault(); pick(link('hosts', j.fqdn, 'jobs', j.job_id, 'snapshots')); }}>Job · ${j.fqdn} · ${j.job_id}</a>`)}
+      ${!res.error && res.snapshots.map((s) => html`<a href="#" onClick=${(e) => { e.preventDefault(); pick(link('hosts', s.fqdn, 'snapshots', s.id)); }}>
+        ${s.state === 'present' ? 'Snapshot' : s.state === 'deleted' ? 'Deleted' : 'Disappeared'} · <span class="mono">${s.short_id}</span> · ${s.fqdn} · ${s.job_id}</a>`)}
+      ${!res.error && n > 0 && html`<p class="muted">Same search: <code>holdfast search ${text.trim()}</code></p>`}
+    </div>`}
+  </div>`;
+}
+
+function Shell({ me, settings }) {
+  const path = useRoute();
+  const hosts = usePoll(() => api.hosts(), []);
+  const seg = path.split('/').filter(Boolean).map(decodeURIComponent);
+  const attention = (hosts.data || []).filter((h) => (h.problems || []).length > 0);
+  const errors = attention.filter((h) => h.problems.some((p) => p.severity === 'error'));
+  const ctx = { me, settings, hosts: hosts.data || [], reloadHosts: hosts.reload };
+
+  let page;
+  if (seg.length === 0) page = html`<${Fleet} ...${ctx} />`;
+  else if (seg[0] === 'problems') page = html`<${Problems} ...${ctx} />`;
+  else if (seg[0] === 'restores') page = html`<${Restores} ...${ctx} />`;
+  else if (seg[0] === 'history') page = html`<${History} ...${ctx} />`;
+  else if (seg[0] === 'add-host') page = html`<${AddHost} ...${ctx} />`;
+  else if (seg[0] === 'audit') page = html`<${Audit} ...${ctx} />`;
+  else if (seg[0] === 'access') page = html`<${Access} ...${ctx} />`;
+  else if (seg[0] === 'settings') page = html`<${Settings} ...${ctx} />`;
+  else if (seg[0] === 'hosts' && seg[1]) {
+    const fqdn = seg[1];
+    if (seg.length === 2) page = html`<${Host} fqdn=${fqdn} ...${ctx} />`;
+    else if (seg[2] === 'pending') page = html`<${Pending} fqdn=${fqdn} ...${ctx} />`;
+    else if (seg[2] === 'prune-now') page = html`<${PruneNow} fqdn=${fqdn} ...${ctx} />`;
+    else if (seg[2] === 'configure') page = html`<${Configure} fqdn=${fqdn} job=${seg[3] || ''} ...${ctx} />`;
+    else if (seg[2] === 'jobs' && seg[4] === 'snapshots') page = html`<${JobSnapshots} fqdn=${fqdn} job=${seg[3]} ...${ctx} />`;
+    else if (seg[2] === 'snapshots' && seg[3]) page = html`<${Snapshot} fqdn=${fqdn} id=${seg[3]} tab=${seg[4] || 'files'} ...${ctx} />`;
+  }
+  if (!page) page = html`<h1>Not found</h1><p><a href="#/">Back to the fleet</a></p>`;
+
+  const nav = (href, label, extra) => html`<a href=${href} class=${('#' + path) === href || (href !== '#/' && ('#' + path).startsWith(href)) ? 'on' : ''}>${label}${extra}</a>`;
+  return html`<div class="layout">
+    <nav class="side">
+      <a class="brand" href="#/">Holdfast</a>
+      ${nav('#/', 'Fleet')}
+      ${nav('#/problems', 'Problems', errors.length > 0 && html`<span class="count">${errors.length}</span>`)}
+      ${nav('#/restores', 'Restores')}
+      ${nav('#/history', 'Config history')}
+      ${nav('#/audit', 'Audit log')}
+      ${me.admin_everywhere && nav('#/access', 'Access')}
+      ${nav('#/settings', 'Settings')}
+      ${attention.length > 0 && html`<div class="section">Needs attention</div>
+        <div class="attn">${attention.slice(0, 12).map((h) => html`<a href=${link('hosts', h.fqdn)}>${h.fqdn.split('.')[0]}<span class="muted">${h.fqdn.slice(h.fqdn.indexOf('.'))}</span></a>`)}</div>`}
+    </nav>
+    <main>
+      <header class="top">
+        <div class="crumbs"><a href="#/">Holdfast</a> / ${seg.length ? seg.slice(0, 2).join(' / ') : 'Fleet'}</div>
+        <${Search} />
+        <span>${me.name} · ${me.admin_everywhere ? 'admin' : 'by host'} · via ${settings.login.issuer ? new URL(settings.login.issuer).host : 'the root socket'}</span>
+        <button class="small" onClick=${async () => { try { await api.logout(); } finally { location.href = '/'; } }}>Log out</button>
+      </header>
+      ${hosts.error && html`<${ErrorBox} error=${hosts.error} />`}
+      ${page}
+    </main>
+  </div>`;
+}
+
+function App() {
+  const [state, setState] = useState({});
+  useEffect(() => {
+    Promise.all([api.me(), api.settings()]).then(([me, settings]) => setState({ me, settings }), (error) => setState({ error }));
+  }, []);
+  if (state.error) return html`<div style="padding:2rem"><${ErrorBox} error=${state.error} /></div>`;
+  if (!state.me) return html`<p class="muted" style="padding:2rem">Loading Holdfast…</p>`;
+  return html`<${Shell} me=${state.me} settings=${state.settings} />`;
+}
+
+render(html`<${App} />`, document.getElementById('app'));
+export { go };

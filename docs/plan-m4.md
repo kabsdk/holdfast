@@ -148,6 +148,39 @@ So that the UI stays free of logic (decision 028), the API also gives:
 - every action that changes something takes an optional `message`, the "Reason" in the audit log; restores
   get it too.
 
+## 5a. Progress
+
+**Built:** everything in §2 to §5, with the answers in §7.
+
+**Tests that pass:**
+- e2e, against a pinned Authelia 4.39.28 and a headless Chrome:
+  - `TestLoginAndRoles`:
+    - browser logins;
+    - CLI device logins, approved in the browser;
+    - the permission matrix through the CLI;
+    - the audit log names the provider's user;
+    - logout.
+  - `TestUIPages`: every page as an admin, with one real action per page and no JavaScript error.
+- unit:
+  - `TestPermissions`: every kind of user through the API handler, including invisible hosts and revisions;
+  - `TestBrowserLogin` and `TestDeviceLogin`, against a fake provider;
+  - `TestRemoveJobAndHost`;
+  - the binding matcher;
+  - `TestUIAPICLIParity`: every route has a CLI call and a UI call, except escrow export.
+
+**Where the build differs from §3 to §6, and why:**
+- **The client authenticates with `client_secret_post`.** x/oauth2 sends nothing else to the device
+  authorization endpoint, and one method for both endpoints is one thing to register.
+- **The browser tests use chromedp, not Playwright.** They stay in Go, in the same harness as the other e2e
+  tests. chromedp is pinned at v0.16.0, the last release that keeps a stable API and builds with Go 1.26.
+- **A removed host is retired once its agent has applied the empty config,** not at once. Revoking the token
+  first would leave the agent backing up on the config it had cached.
+- **The fleet-wide retention cuts are `GET /api/v1/retention-cuts`.** They come from the revisions that
+  accepted R104.
+- **The UI pages its lists itself, 25 at a time.** The API gives the whole list.
+
+**Not done yet:** the lab's Authelia (Q9). The e2e tests run against a real Authelia; the lab still has none.
+
 ## 6. Tests
 
 - **Permissions, e2e:** three users in a real OIDC provider (a pinned Authelia container in CI, with a file
