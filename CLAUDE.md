@@ -64,7 +64,8 @@ These also follow from the spec:
 | M4 | API with OIDC and roles, then the UI built from `mockup/App.dc.html`. Every UI action has a matching API call and CLI command. | |
 | M5 | Operating Holdfast (plan-m5): packages and upgrades with protocol version negotiation, run controls, repository size, the repository password in escrow (decision 036), the compromise procedure, alerting without Alertmanager, decommission. | The packages install and upgrade on the Ubuntu, RHEL and Oracle Linux test VMs, and the M5 e2e tests pass. |
 | M6 | Recovering with Holdfast (plan-m6): dumps with commands defined on the host, restore to another host, rolling a repository back from S3 versions, the bare-metal runbook. | The dump, restore-to-another-host and rollback e2e tests pass; the lab's dump test passes on the Ubuntu, RHEL and Oracle Linux VMs; and the bare-metal runbook's first path is walked in the lab. |
-| M7 | Off-site copies with `restic copy` (decision 027), including "Delete here too" (decision 031), and rebuilding Holdfast. No standby failover (decision 030). Starts only after the open questions are decided. | |
+| M7 | Off-site copies (plan-m7): holdfast-vault with `restic copy` (decisions 027, 039), its own retention, "Delete here too" (decision 031), holdfast-server's read-only view and its hold, restores from the other site. No standby failover (decision 030). | |
+| M8 | Rebuilding Holdfast (plan-m7 Q1, decision 040): the nightly export, `holdfast host import`, the rebuild runbook. | |
 
 ## Repository
 

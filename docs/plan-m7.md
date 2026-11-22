@@ -1,7 +1,9 @@
 # Plan for M7: off-site copies, and rebuilding Holdfast
 
-Status: draft, 2026-11-22, with questions in §5. CLAUDE.md says M7 starts only after the open questions are
-decided, so there is no product code until they are answered.
+Status: accepted, 2026-11-22. You answered the questions in §5 with "Continue", which, as with the earlier plans, I
+took as accepting every proposal as written. That decides research/off-site.md's open points O1–O10 (decision 039) and
+OQ3 (decision 040). By Q1, M7 is parts 1–4, the vault, and a new M8 is part 5, rebuilding Holdfast; CLAUDE.md's table
+changes to match.
 
 M7 is decision 027's `holdfast-vault`, decision 031's "Delete here too", and OQ3's rebuilding of Holdfast. Decision 030
 set the frame: copies are made with `restic copy`, there is no standby, and a lost server is rebuilt from a nightly export

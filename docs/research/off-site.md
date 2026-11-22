@@ -123,6 +123,11 @@ its repository lives.
 
 ## 7. Open points
 
+> **Decided on 2026-11-22** by [decision 039](../decisions/039-the-vault-in-detail.md) (plan-m7). O10 went the other
+> way from the proposal below: the vault reads site A through restic's `rclone:` backend, not with the same key on both
+> S3 servers. O5 is the restore command's 24 hours, with a read-only key per host in B. O7 is 7 days (plan-m5 Q7), and O8
+> is B's escrow with plain restic, with no standby (decision 030).
+
 | # | Question | Proposal |
 | --- | --- | --- |
 | O1 | If off-site keeps less than primary: a warning (O101) or an error? | A warning you must accept, since the vault admin is the authority |

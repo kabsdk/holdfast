@@ -4,8 +4,8 @@ None of these is decided, so do not decide or implement any of them. Where a lea
 leaning only.
 
 When a milestone touches one of these questions, the milestone plan names it and asks; it does not work
-around it. M7 (off-site and rebuilding Holdfast; M6 until plan-m5 Q1) waits until the off-site and rebuild
-questions are decided.
+around it. Since 2026-11-22 every question here is decided: OQ1's last points by decision 039 and OQ3 by decision
+040 (plan-m7; you answered "Continue").
 
 ---
 
@@ -17,7 +17,8 @@ questions are decided.
 > - holdfast-server and holdfast-vault can view each other but change nothing.
 > - Restores from site B are granted automatically.
 >
-> The remaining points are in [research/off-site.md](research/off-site.md) §7. The text below is kept as the
+> The remaining points, in [research/off-site.md](research/off-site.md) §7, were decided on 2026-11-22 by
+> [decision 039](decisions/039-the-vault-in-detail.md) (plan-m7). The text below is kept as the
 > history of how the question was framed.
 >
 > **Reopened and closed again on 2026-11-21 ([decision 030](decisions/030-simplify-after-the-architecture-review.md)):**
@@ -59,6 +60,11 @@ A list of prunes, both manual (Prune now) and scheduled, under Config history.
 **Touches:** M3, the Prune now records.
 
 ## OQ3. Rebuilding Holdfast from S3 if PostgreSQL is lost
+
+> **Decided on 2026-11-22 (plan-m7 Q9–Q12; you answered "Continue"):** see
+> [decision 040](decisions/040-rebuilding-holdfast.md). A nightly export to the bucket, encrypted to the escrow key and
+> copied off-site by the vault; agents keep their tokens; `holdfast host import` from escrow files; no hash chain.
+> Built in M8.
 
 **Decided around it (decision 030):**
 - There is no warm standby.
