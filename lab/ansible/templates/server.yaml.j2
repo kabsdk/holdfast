@@ -27,3 +27,22 @@ maintenance:
   check: daily
   check_cycle_days: 30
   retention: daily
+
+# The UI and /api/v1 for people, with login (decision 034). The lab has no CA browsers trust, so the UI has the agent
+# listener's certificate from the lab's CA.
+ui:
+  listen: ":{{ ui.port }}"
+  public_url: {{ lab_ui_url }}
+  tls:
+    cert_file: /etc/holdfast/tls/server.crt
+    key_file: /etc/holdfast/tls/server.key
+
+# Authelia on this VM, Holdfast registered there as the client holdfast (lab/ansible/templates/authelia.yml.j2).
+auth:
+  oidc:
+    issuer: {{ lab_oidc_issuer }}
+    client_id: holdfast
+    client_secret_file: /etc/holdfast/oidc-client-secret   # the lab's credentials/authelia-client.secret
+    ca_file: /etc/holdfast/tls/ca.crt                     # the lab's CA, which signed Authelia's certificate
+    groups_claim: groups
+  bootstrap_admins: []

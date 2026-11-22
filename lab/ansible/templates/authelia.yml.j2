@@ -1,0 +1,53 @@
+# /etc/authelia/configuration.yml on {{ inventory_hostname }}, Authelia {{ authelia.version }}, the lab {{ lab }}'s OIDC
+# provider for Holdfast's login (decision 034, plan-m4 Q9): written by lab/ansible/site.yml (do not edit here; a change is
+# made there and lab/lab up applies it). The same setup as the e2e tests' (test/e2e/authelia/setup.sh). No secret is in
+# this file: the unit names each secret's file in /etc/authelia/secrets (AUTHELIA_*_FILE, authelia-lab.conf), and the
+# template filter (X_AUTHELIA_CONFIG_FILTERS) reads the signing key. The client secret and the passwords are digests.
+server:
+  address: 'tcp://:{{ authelia.port }}/'
+  tls:
+    certificate: '/etc/authelia/tls/authelia.crt'   # from the lab's CA, then the CA's (lab_state/ca/authelia.*)
+    key: '/etc/authelia/tls/authelia.key'
+log:
+  level: 'info'
+# The VMs may have no internet, and their clocks are the host's (kvm-clock).
+ntp:
+  disable_startup_check: true
+authentication_backend:
+  file:
+    path: '/etc/authelia/users.yml'
+access_control:
+  default_policy: 'one_factor'
+session:
+  cookies:
+    - domain: '{{ lab_domain }}'
+      authelia_url: '{{ lab_oidc_issuer }}'
+storage:
+  local:
+    path: '/var/lib/authelia/db.sqlite3'
+notifier:
+  filesystem:
+    filename: '/var/lib/authelia/notification.txt'
+identity_providers:
+  oidc:
+    jwks:
+      - key_id: 'lab'
+        algorithm: 'RS256'
+        use: 'sig'
+        key: {{ '{{' }} secret "/etc/authelia/secrets/jwks.pem" | mindent 10 "|" | msquote {{ '}}' }}
+    clients:
+      # Holdfast, a confidential client (deploy/examples/server.yaml): the code flow with PKCE for browsers, the device
+      # flow for holdfast login, and client_secret_post at both endpoints.
+      - client_id: 'holdfast'
+        client_name: 'Holdfast (the lab {{ lab }})'
+        client_secret: '{{ lookup('ansible.builtin.file', lab_creds ~ '/authelia-client.digest') }}'
+        public: false
+        authorization_policy: 'one_factor'
+        consent_mode: 'implicit'
+        require_pkce: true
+        pkce_challenge_method: 'S256'
+        redirect_uris: ['{{ lab_ui_url }}/auth/callback']
+        scopes: ['openid', 'profile', 'groups', 'email']
+        grant_types: ['authorization_code', 'urn:ietf:params:oauth:grant-type:device_code']
+        response_types: ['code']
+        token_endpoint_auth_method: 'client_secret_post'

@@ -1,0 +1,12 @@
+# /etc/authelia/users.yml on {{ inventory_hostname }}: Authelia's file user database for the lab {{ lab }}, written by
+# lab/ansible/site.yml from lab/labs/{{ lab }}.yml (authelia.users). Each password is a digest; the password itself is in
+# the lab's state, credentials/authelia-<user>.pw.
+users:
+{% for user, group in authelia.users.items() %}
+  {{ user }}:
+    disabled: false
+    displayname: '{{ user }}'
+    email: '{{ user }}@{{ lab_domain }}'
+    password: '{{ lookup('ansible.builtin.file', lab_creds ~ '/authelia-' ~ user ~ '.digest') }}'
+    groups: ['{{ group }}']
+{% endfor %}

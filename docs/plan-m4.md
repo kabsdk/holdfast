@@ -179,7 +179,10 @@ So that the UI stays free of logic (decision 028), the API also gives:
   accepted R104.
 - **The UI pages its lists itself, 25 at a time.** The API gives the whole list.
 
-**Not done yet:** the lab's Authelia (Q9). The e2e tests run against a real Authelia; the lab still has none.
+**The lab (Q9):** Authelia 4.39.28 runs on hfsrv (pinned, sha256-checked, copied in: the VMs have no
+internet), and `lab/lab test m1` checks login on the real deployment as well: discovery, no session →
+401, `/auth/login` → Authelia with PKCE, a full login without a browser as ada, and logout. Result on
+2026-11-22: 39 of 39 properties on 3 VMs, 5 of 5 login checks.
 
 ## 6. Tests
 

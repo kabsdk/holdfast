@@ -72,3 +72,24 @@ postgresql:
   stream: "16"
   database: holdfast
   user: holdfast
+
+# Holdfast's listener for people on hfsrv: the UI and /api/v1, with login (ui.listen, decision 034).
+ui:
+  port: 443
+
+# Authelia on hfsrv, the lab's OIDC provider for that login (plan-m4 Q9), set up as the e2e tests' is
+# (test/e2e/authelia/setup.sh). The release's tarball, pinned by URL and sha256 (the release's checksums.sha256, and
+# GitHub's digest of the asset), is downloaded once into ~/.cache/holdfast-lab and checked there; its binary and unit
+# are copied to hfsrv. Its users are a file database, user: group; their passwords are made once in the lab's state
+# (credentials/authelia-<user>.pw). Holdfast's default bindings make holdfast-admins, -editors and -viewers admin,
+# editor and viewer on every host; web-team has no binding until one is added (holdfast access set).
+authelia:
+  version: 4.39.28
+  url: https://github.com/authelia/authelia/releases/download/v4.39.28/authelia-v4.39.28-linux-amd64.tar.gz
+  sha256: e8ad9ff965cbf3b93138945e13cb4b7874c999c254772b2bb77952863177699c
+  port: 9091
+  users:
+    ada: holdfast-admins
+    ed: holdfast-editors
+    vi: holdfast-viewers
+    wes: web-team

@@ -18,10 +18,12 @@
 #      hf-fidelity compare /srv/hf-fixture <directory>/srv/hf-fixture. The restores of earlier runs are removed first.
 #   4. on SELinux VMs, the denials (AVC, SELINUX_ERR) logged since the VM's run began; on a failure, the agent's and the
 #      server's journal too
-# Then each VM's OS, kernel and SELinux mode, and the 13 properties, PASS or FAIL, on the terminal and in
-# <state>/test-fidelity.txt and test-fidelity.json. Exit 0 when all 13 pass on every VM, 1 when one does not or a step
-# failed, 2 misused, 3 the lab is not up. S3 keys and enrollment codes travel on SSH's stdin only: never in an argument on
-# this host, in the log or on the terminal.
+# Before the VMs, the login check (lab/test-login.sh): Authelia's discovery, the UI's 401 without a session and its
+# redirect to Authelia, and ada's login through Authelia without a browser, then her logout. Then each VM's OS, kernel
+# and SELinux mode, the 13 properties and the login checks, PASS or FAIL, on the terminal and in
+# <state>/test-fidelity.txt and test-fidelity.json. Exit 0 when all 13 pass on every VM and every login check passes, 1
+# when one does not or a step failed, 2 misused, 3 the lab is not up. S3 keys and enrollment codes travel on SSH's stdin
+# only, and the login's password on curl's: never in an argument on this host, in the log or on the terminal.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 lab=${1:-}
@@ -70,6 +72,9 @@ if ! out=$(hf status); then
 	exit 1
 fi
 echo "$out"
+
+# Login on the UI, through Authelia: its checks are in the summary.
+bash lab/test-login.sh "$lab" "$work/login.tsv" || true
 
 # 0. Every agent's RGW user and its prefix in the bucket policy, also the agents not tested now, so the policy always
 # covers every host Holdfast may have.
@@ -271,9 +276,9 @@ done
 
 # The table, on the terminal, in the log and in the lab's state.
 set +e
-python3 -I - "$work" "$HF_STATE" "$server_url" "$HF_RGW_URL" "$HF_BUCKET" "${vms[@]}" <<'EOF' | tee "$HF_STATE/test-fidelity.txt" >&3
+python3 -I - "$work" "$HF_STATE" "$server_url" "$HF_RGW_URL" "$HF_BUCKET" "${HF_UI_URL:-}" "${HF_OIDC_ISSUER:-}" "${HF_AUTHELIA_VERSION:-}" "${vms[@]}" <<'EOF' | tee "$HF_STATE/test-fidelity.txt" >&3
 import datetime, json, os, sys
-work, state, server, rgw, bucket, vms = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6:]
+work, state, server, rgw, bucket, ui, issuer, authelia, vms = *sys.argv[1:9], sys.argv[9:]
 def read(vm, name, default=None):
     try:
         with open(os.path.join(work, vm, name)) as f:
@@ -325,11 +330,35 @@ for vm in vms:
         print(f"FAIL {vm}: {out[vm]['error']}")
     elif len(out[vm]["properties"]) != 13:
         print(f"FAIL {vm}: no comparison")
+# The login checks (lab/test-login.sh): PASS or FAIL, the check, what was seen.
+login = []
+try:
+    with open(os.path.join(work, "login.tsv")) as f:
+        for l in f.read().splitlines():
+            w = l.split("\t", 2)
+            if len(w) == 3:
+                login.append({"check": w[1], "pass": w[0] == "PASS", "seen": w[2]})
+except OSError:
+    pass
+login_ok = bool(login) and all(c["pass"] for c in login)
+print()
+print(f"login on {ui or '?'} through Authelia {authelia or '?'} at {issuer or '?'}, from this host")
+if login:
+    for c in login:
+        print(f"{c['check']:<68}  {'PASS' if c['pass'] else 'FAIL'}")
+    for c in login:
+        if not c["pass"]:
+            print(f"FAIL login: {c['check']}: {c['seen']}")
+else:
+    print("FAIL login: no checks ran (lab/test-login.sh; the log has why)")
 passed = sum(p["pass"] for r in out.values() for p in r["properties"])
 print()
-print(f"result: {'PASS' if ok else 'FAIL'}, {passed} of {13 * len(vms)} properties kept on {len(vms)} VMs")
+print(f"result: {'PASS' if ok and login_ok else 'FAIL'}, {passed} of {13 * len(vms)} properties kept on {len(vms)} VMs, "
+      f"{sum(c['pass'] for c in login)} of {len(login)} login checks passed")
+ok = ok and login_ok
 with open(os.path.join(state, "test-fidelity.json"), "w") as f:
-    json.dump({"at": now, "server": server, "rgw": rgw, "bucket": bucket, "pass": ok, "vms": out}, f, indent=2)
+    json.dump({"at": now, "server": server, "rgw": rgw, "bucket": bucket, "pass": ok, "vms": out,
+               "login": {"ui": ui, "issuer": issuer, "authelia": authelia, "pass": login_ok, "checks": login}}, f, indent=2)
 sys.exit(0 if ok else 1)
 EOF
 rc=${PIPESTATUS[0]}

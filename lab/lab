@@ -13,7 +13,8 @@
 #   deploy <lab>             build this checkout (as up does) and install its binaries on hfsrv and the agents
 #                            (hf-fidelity in /usr/local/bin on the agents), restarting the Holdfast services that run there
 #   test <lab> [<vm>...]     M2's "done when", the fidelity test (lab/test-fidelity.sh): build and deploy this checkout,
-#                            provision the server (site.yml --tags binaries,hfserver), then on each agent VM (or those
+#                            provision the server and Authelia (site.yml --tags binaries,hfserver), check login on the
+#                            UI through Authelia from this host (lab/test-login.sh), then on each agent VM (or those
 #                            named) back up the metadata fixture and restore it through Holdfast, enrolling the agent
 #                            first, and compare the 13 properties; the table is in <state>/test-fidelity.txt
 #   status <lab> [--json]    the lab's state: absent, off, ready or broken, with its VMs, what each answered, the RGW
@@ -157,6 +158,7 @@ probe() {
 			for bin in holdfast-server holdfast holdfast-freshness; do c+="; echo bin-$bin \$(sha256sum /usr/bin/$bin 2>/dev/null | cut -c1-64)"; done
 			for u in holdfast-server holdfast-freshness; do c+="; echo unit-$u \$(systemctl is-enabled $u 2>/dev/null)"; done
 			c+="; echo holdfast-server \$(systemctl is-active holdfast-server 2>/dev/null)"
+			c+="; echo authelia \$(systemctl is-active authelia 2>/dev/null)"
 		elif [[ $vm != "$HF_STORAGE_VM" ]]; then
 			c+="; echo bin-holdfast-agent \$(sha256sum /usr/bin/holdfast-agent 2>/dev/null | cut -c1-64)"
 			c+="; echo unit-holdfast-agent \$(systemctl is-enabled holdfast-agent 2>/dev/null)"
@@ -182,6 +184,8 @@ probe() {
 		[[ $vm != "$HF_SERVER_VM" || ${got[$vm.postgresql]:-} == active ]] || reasons+=("PostgreSQL on $vm is ${got[$vm.postgresql]:-unknown}")
 		[[ $vm != "$HF_SERVER_VM" || ${got[$vm.holdfast-server]:-} == active ]] ||
 			notes+=("holdfast-server on $vm is ${got[$vm.holdfast-server]:-unknown}, not active (lab/lab up $lab configures and starts it)")
+		[[ $vm != "$HF_SERVER_VM" || ${got[$vm.authelia]:-} == active ]] ||
+			notes+=("Authelia on $vm is ${got[$vm.authelia]:-unknown}, not active (lab/lab up $lab configures and starts it)")
 		for k in "${!got[@]}"; do
 			[[ $k == "$vm".bin-* ]] || continue
 			bin=${k#"$vm".bin-}
@@ -225,6 +229,7 @@ check() {
 	source "$state/lab.env"
 	{
 		echo "lab: RGW: $HF_RGW_URL from the VMs, $HF_RGW_URL_HOST from this host; bucket $HF_BUCKET (versioned)"
+		[[ -z ${HF_UI_URL:-} ]] || echo "lab: the UI: $HF_UI_URL, login through Authelia at $HF_OIDC_ISSUER (users ${HF_LOGIN_USERS[*]}, passwords in credentials/authelia-<user>.pw)"
 		echo "lab: lab/lab status $lab; lab/lab ssh $lab <vm>; credentials in $state/credentials/"
 	} >&3
 }
@@ -254,9 +259,9 @@ test)
 	[[ $st == ready ]] || { echo "lab: the lab $lab is $st, not ready: lab/lab up $lab first (lab/lab status $lab says why)" >&3; exit 3; }
 	resume="lab/lab test $lab $* runs it again"
 	build
-	step "installing the binaries, and the Holdfast server's TLS, settings and service (site.yml --tags binaries,hfserver)"
+	step "installing the binaries, Authelia, and the Holdfast server's TLS, settings and service (site.yml --tags binaries,hfserver)"
 	play site.yml "$state/inventory.yml" --tags binaries,hfserver -e lab_deploy=true
-	step "the fidelity test through Holdfast: lab/test-fidelity.sh $lab $*"
+	step "the login check and the fidelity test through Holdfast: lab/test-fidelity.sh $lab $*"
 	shown=1
 	bash lab/test-fidelity.sh "$lab" "$@" ;;
 isolation)

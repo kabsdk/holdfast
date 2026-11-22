@@ -2,15 +2,19 @@
 # Provisions the Holdfast lab's VMs once vms.yml has made them: every step checks before it changes, so a second run
 # changes nothing and a run after a failure resumes. lab/lab up runs it after `make build`, and lab/lab deploy runs its
 # binaries part (--tags binaries -e lab_deploy=true).
-#   - localhost: the lab's credentials, made once in its state (credentials/, 0600), and restic, checked
+#   - localhost: the lab's credentials, made once in its state (credentials/, 0600), restic, checked, lab.env written
+#     again, and Authelia's release tarball, downloaded once into the image cache and checked, and unpacked there
 #   - every VM: the lab's names in /etc/hosts
 #   - storage (s3a): MicroCeph, its loop-file OSDs and RGW; the users holdfast-maint (owns the bucket) and
 #     holdfast-provisioner (Admin Ops and IAM user policies); the bucket, versioned; awscli and s3req for experiments
 #   - server (hfsrv): PostgreSQL from AppStream, its database and user
 #   - server and agents: Holdfast's binaries in /usr/bin, restic in /usr/libexec/holdfast, the systemd units (the
 #     agents' not enabled: lab/lab test enrolls them); on the agents, the lab's fidelity tool in /usr/local/bin
-#   - server (hfsrv, tag hfserver): a TLS certificate from the lab's own CA (made in the lab's state), server.yaml, the
-#     maintenance key and the credentials key, and holdfast-server running, its /healthz answering over TLS
+#   - server (hfsrv, tag hfserver): Authelia, the lab's OIDC provider, running with a certificate from the lab's own CA
+#     (made in the lab's state), the lab's users and Holdfast as its client, its /api/health answering over TLS
+#   - server (hfsrv, tag hfserver): a TLS certificate from the lab's CA, server.yaml (the agents' listener, and the UI's
+#     with login through Authelia), the maintenance key, the OIDC client secret and the credentials key, and
+#     holdfast-server running, its /healthz answering over TLS and the UI's /api/v1/me 401 without a session
 # Usage: ansible-playbook -i <state>/inventory.yml lab/ansible/site.yml -e lab=<lab> [--tags binaries[,hfserver] -e lab_deploy=true]
 - name: The lab's credentials and what goes onto the VMs, on this host
   hosts: localhost
@@ -62,6 +66,59 @@
         that: lab_restic.stat.checksum == restic.sha256
         fail_msg: "{{ lab_restic_cache }} has sha256 {{ lab_restic.stat.checksum }}, not {{ restic.sha256 }}: remove it, and lab/lab up fetches it again"
         quiet: true
+
+    - name: Write lab.env again (as render.yml does), so a lab made before a setting was added has it too
+      ansible.builtin.template:
+        src: lab.env.j2
+        dest: "{{ lab_state }}/lab.env"
+        mode: "0644"
+
+    - name: Make the image cache, where Authelia's release goes too
+      ansible.builtin.file:
+        path: "{{ lab_cache }}"
+        state: directory
+        mode: "0755"
+
+    # get_url checks the sha256 of a file already there too, and downloads it again when it differs.
+    - name: Download Authelia {{ authelia.version }}'s release tarball once, checked against its pinned sha256
+      ansible.builtin.get_url:
+        url: "{{ authelia.url }}"
+        dest: "{{ lab_authelia_tarball }}"
+        checksum: "sha256:{{ authelia.sha256 }}"
+        mode: "0644"
+        timeout: 60
+
+    - name: Make the directory it is unpacked into, beside it
+      ansible.builtin.file:
+        path: "{{ lab_authelia_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Unpack it there once (the binary authelia, its unit authelia.service, the example configuration)
+      ansible.builtin.unarchive:
+        src: "{{ lab_authelia_tarball }}"
+        dest: "{{ lab_authelia_dir }}"
+        remote_src: true
+        creates: "{{ lab_authelia_dir }}/authelia"
+
+    - name: Read the unpacked authelia's version
+      ansible.builtin.command:
+        argv: ["{{ lab_authelia_dir }}/authelia", --version]
+        chdir: "{{ lab_authelia_dir }}"
+      register: lab_authelia_version
+      changed_when: false
+
+    - name: Refuse an authelia that is not {{ authelia.version }}
+      ansible.builtin.assert:
+        that: lab_authelia_version.stdout | trim == 'authelia version v' ~ authelia.version
+        fail_msg: "{{ lab_authelia_dir }}/authelia says '{{ lab_authelia_version.stdout | trim }}': remove {{ lab_authelia_dir }}, and lab/lab up unpacks the tarball again"
+        quiet: true
+
+    - name: Make Authelia's secrets, its users' passwords and Holdfast's client secret once (files/authelia-credentials.sh)
+      ansible.builtin.command:
+        argv: "{{ ['bash', playbook_dir ~ '/files/authelia-credentials.sh', lab_authelia_dir ~ '/authelia', lab_creds] + (authelia.users.keys() | list) }}"
+      register: lab_authelia_creds
+      changed_when: lab_authelia_creds.stdout is search('(?m)^made ')
 
     - name: Read this checkout's binaries (make build, and the lab's fidelity tool)
       ansible.builtin.stat:
@@ -563,9 +620,198 @@
       ansible.builtin.debug:
         msg: "{{ hf_units | zip(lab_enabled.stdout_lines) | map('join', ': ') | join(', ') }}"
 
+# Authelia on the server, the lab's OIDC provider (plan-m4 Q9, decision 034), set up as the e2e tests' is
+# (test/e2e/authelia/setup.sh): the pinned release's binary in /usr/bin and its own authelia.service, run as the system
+# user authelia, with TLS from the lab's CA, the lab's users in a file database, and Holdfast as its one client. Its
+# secrets are files in /etc/authelia/secrets that the unit names (files/authelia-lab.conf), so configuration.yml holds
+# none. lab/lab up runs it with the rest, and lab/lab test before every test (--tags binaries,hfserver).
+- name: Authelia, the lab's OIDC provider
+  hosts: server
+  gather_facts: false
+  tags: [hfserver]
+  vars_files:
+    - "../labs/{{ lab }}.yml"
+    - lab-vars.yml
+  handlers:
+    - name: Restart Authelia
+      ansible.builtin.systemd:
+        name: authelia
+        state: restarted
+        daemon_reload: true
+  tasks:
+    - name: A certificate for Authelia on {{ lab_server_fqdn }} from the lab's CA, with a key of its own (lab-ca.sh, ca/authelia.*)
+      ansible.builtin.command:
+        argv: [bash, "{{ playbook_dir }}/files/lab-ca.sh", "{{ lab_ca }}", "Holdfast lab {{ lab }} CA", "{{ lab_server_fqdn }}",
+               "DNS:{{ lab_server_fqdn }}, DNS:{{ lab_server_vm }}, IP:{{ vms[lab_server_vm].addresses[0] }}", authelia]
+      delegate_to: localhost
+      register: lab_authelia_ca
+      changed_when: lab_authelia_ca.stdout is search('(?m)^made ')
+
+    - name: The system user authelia, without a login
+      ansible.builtin.user:
+        name: authelia
+        system: true
+        shell: /sbin/nologin
+        home: /var/lib/authelia
+        create_home: false
+        comment: Authelia
+
+    - name: Authelia {{ authelia.version }}'s binary in /usr/bin, and the release's own unit
+      ansible.builtin.copy:
+        src: "{{ lab_authelia_dir }}/{{ item.src }}"
+        dest: "{{ item.dest }}"
+        mode: "{{ item.mode }}"
+      loop:
+        - {src: authelia, dest: /usr/bin/authelia, mode: "0755"}
+        - {src: authelia.service, dest: /usr/lib/systemd/system/authelia.service, mode: "0644"}
+      loop_control:
+        label: "{{ item.dest }}"
+      notify: Restart Authelia
+
+    - name: Read its version on {{ inventory_hostname }}
+      ansible.builtin.command:
+        argv: [/usr/bin/authelia, --version]
+        chdir: /
+      register: lab_authelia_version
+      changed_when: false
+
+    - name: Refuse an authelia that is not {{ authelia.version }}
+      ansible.builtin.assert:
+        that: lab_authelia_version.stdout | trim == 'authelia version v' ~ authelia.version
+        fail_msg: "/usr/bin/authelia on {{ inventory_hostname }} says '{{ lab_authelia_version.stdout | trim }}'"
+        quiet: true
+
+    - name: Make the unit's drop-in directory
+      ansible.builtin.file:
+        path: /etc/systemd/system/authelia.service.d
+        state: directory
+        mode: "0755"
+
+    - name: The drop-in that names the secrets' files (files/authelia-lab.conf)
+      ansible.builtin.copy:
+        src: files/authelia-lab.conf
+        dest: /etc/systemd/system/authelia.service.d/lab.conf
+        mode: "0644"
+      notify: Restart Authelia
+
+    - name: Make /etc/authelia, its secrets/ and tls/, authelia's own
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: authelia
+        group: authelia
+        mode: "0700"
+      loop: [/etc/authelia, /etc/authelia/secrets, /etc/authelia/tls]
+
+    - name: Its secrets, from the lab's state (0600)
+      ansible.builtin.copy:
+        src: "{{ lab_creds }}/{{ item.src }}"
+        dest: "/etc/authelia/secrets/{{ item.dest }}"
+        owner: authelia
+        group: authelia
+        mode: "0600"
+      loop:
+        - {src: authelia-jwks.pem, dest: jwks.pem}
+        - {src: authelia-jwt.secret, dest: jwt}
+        - {src: authelia-session.secret, dest: session}
+        - {src: authelia-storage.secret, dest: storage}
+        - {src: authelia-hmac.secret, dest: hmac}
+      loop_control:
+        label: "{{ item.dest }}"
+      diff: false
+      notify: Restart Authelia
+
+    - name: Its certificate with the CA's after it, its key (0600), and the CA's certificate
+      ansible.builtin.copy:
+        src: "{{ lab_ca }}/{{ item.src }}"
+        dest: "/etc/authelia/tls/{{ item.dest }}"
+        owner: authelia
+        group: authelia
+        mode: "{{ item.mode }}"
+      loop:
+        - {src: authelia.chain.crt, dest: authelia.crt, mode: "0644"}
+        - {src: authelia.key, dest: authelia.key, mode: "0600"}
+        - {src: ca.crt, dest: ca.crt, mode: "0644"}
+      loop_control:
+        label: "{{ item.dest }}"
+      diff: false
+      notify: Restart Authelia
+
+    - name: /etc/authelia/configuration.yml and users.yml (0600)
+      ansible.builtin.template:
+        src: "{{ item.src }}"
+        dest: "/etc/authelia/{{ item.dest }}"
+        owner: authelia
+        group: authelia
+        mode: "0600"
+      loop:
+        - {src: authelia.yml.j2, dest: configuration.yml}
+        - {src: authelia-users.yml.j2, dest: users.yml}
+      loop_control:
+        label: "{{ item.dest }}"
+      diff: false
+      notify: Restart Authelia
+
+    - name: Read whether firewalld runs
+      ansible.builtin.command:
+        argv: [systemctl, is-active, firewalld]
+      register: lab_fw
+      changed_when: false
+      failed_when: false
+
+    - name: Open Authelia's port in it
+      ansible.builtin.shell:
+        cmd: |
+          set -e
+          if firewall-cmd -q --permanent --query-port={{ authelia.port }}/tcp; then echo changed=0; exit 0; fi
+          firewall-cmd -q --permanent --add-port={{ authelia.port }}/tcp
+          firewall-cmd -q --reload
+          echo changed=1
+      register: lab_fw_open
+      changed_when: "'changed=1' in lab_fw_open.stdout"
+      when: lab_fw.stdout | trim == 'active'
+
+    - name: Restart Authelia now if any of that changed
+      ansible.builtin.meta: flush_handlers
+
+    - name: Start it, and at every boot
+      ansible.builtin.systemd:
+        name: authelia
+        state: started
+        enabled: true
+        daemon_reload: true
+
+    - name: Check that it serves
+      block:
+        - name: Wait for its /api/health over TLS, the certificate checked against the lab's CA
+          ansible.builtin.uri:
+            url: "{{ lab_oidc_issuer }}/api/health"
+            ca_path: /etc/authelia/tls/ca.crt
+            status_code: 200
+          register: lab_authelia_health
+          retries: 24
+          delay: 5
+          until: lab_authelia_health.status == 200
+      rescue:
+        - name: Read Authelia's journal
+          ansible.builtin.command:
+            argv: [journalctl, -u, authelia, -n, "40", --no-pager, -o, cat]
+          register: lab_authelia_journal
+          changed_when: false
+          failed_when: false
+
+        - name: Say why it does not serve
+          ansible.builtin.fail:
+            msg: "Authelia on {{ inventory_hostname }} does not serve. Its journal:\n{{ lab_authelia_journal.stdout }}"
+
+    - name: Say it
+      ansible.builtin.debug:
+        msg: "Authelia {{ authelia.version }} at {{ lab_oidc_issuer }}, users {{ authelia.users.keys() | join(', ') }} (passwords in {{ lab_creds }}/authelia-<user>.pw)"
+
 # The server as an admin would set it up (deploy/examples/server.yaml, docs/storage.md): TLS from the lab's own CA, the
-# maintenance key, no provisioner command (each host's RGW key is the lab's, given with holdfast host add). lab/lab up
-# runs it with the rest, and lab/lab test runs it before every test (--tags binaries,hfserver).
+# maintenance key, no provisioner command (each host's RGW key is the lab's, given with holdfast host add), and the UI
+# with login through Authelia. lab/lab up runs it with the rest, and lab/lab test runs it before every test
+# (--tags binaries,hfserver).
 - name: The Holdfast server, configured and running
   hosts: server
   gather_facts: false
@@ -623,6 +869,14 @@
       diff: false
       notify: Restart holdfast-server
 
+    - name: Holdfast's client secret at Authelia (/etc/holdfast/oidc-client-secret, 0600)
+      ansible.builtin.copy:
+        src: "{{ lab_creds }}/authelia-client.secret"
+        dest: /etc/holdfast/oidc-client-secret
+        mode: "0600"
+      diff: false
+      notify: Restart holdfast-server
+
     - name: The credentials key, made once on the server (holdfast-server keygen)
       ansible.builtin.command:
         argv: [/usr/bin/holdfast-server, keygen, /etc/holdfast/credentials.key]
@@ -635,6 +889,25 @@
         dest: /etc/holdfast/server.yaml
         mode: "0600"
       notify: Restart holdfast-server
+
+    - name: Read whether firewalld runs
+      ansible.builtin.command:
+        argv: [systemctl, is-active, firewalld]
+      register: lab_fw
+      changed_when: false
+      failed_when: false
+
+    - name: Open the UI's port in it
+      ansible.builtin.shell:
+        cmd: |
+          set -e
+          if firewall-cmd -q --permanent --query-port={{ ui.port }}/tcp; then echo changed=0; exit 0; fi
+          firewall-cmd -q --permanent --add-port={{ ui.port }}/tcp
+          firewall-cmd -q --reload
+          echo changed=1
+      register: lab_fw_open
+      changed_when: "'changed=1' in lab_fw_open.stdout"
+      when: lab_fw.stdout | trim == 'active'
 
     - name: Restart holdfast-server now if any of that changed
       ansible.builtin.meta: flush_handlers
@@ -657,6 +930,16 @@
           delay: 5
           until: lab_healthz.status == 200
 
+        - name: Wait for the UI's listener, whose /api/v1/me answers 401 without a session
+          ansible.builtin.uri:
+            url: "{{ lab_ui_url }}/api/v1/me"
+            ca_path: /etc/holdfast/tls/ca.crt
+            status_code: 401
+          register: lab_ui_me
+          retries: 12
+          delay: 5
+          until: lab_ui_me.status == 401
+
         - name: holdfast status, as root over the API socket
           ansible.builtin.command:
             argv: [holdfast, status]
@@ -676,4 +959,4 @@
 
     - name: Say it
       ansible.builtin.debug:
-        msg: "{{ lab_hf_status.stdout }}; https://{{ lab_server_fqdn }}:8443, agents pin ca_sha256 {{ hf_ca_sha256 }}"
+        msg: "{{ lab_hf_status.stdout }}; https://{{ lab_server_fqdn }}:8443, agents pin ca_sha256 {{ hf_ca_sha256 }}; the UI {{ lab_ui_url }}, login through {{ lab_oidc_issuer }}"

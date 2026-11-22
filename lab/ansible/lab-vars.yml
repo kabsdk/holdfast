@@ -38,6 +38,13 @@ lab_restic_cache: "{{ lookup('ansible.builtin.env', 'HOLDFAST_CACHE', default=la
 # the lab's state (ca/: ca.key and the server's key 0600; ca.sha256 is the pin agents check).
 lab_server_fqdn: "{{ lab_server_vm }}.{{ lab_domain }}"
 lab_ca: "{{ lab_state }}/ca"
+# Holdfast's UI (ui.public_url) and Authelia (auth.oidc.issuer), both on the server under its name. Authelia's release
+# tarball is cached with the images, and unpacked beside it so that this host can run its authelia when it makes the
+# lab's Authelia credentials (crypto hash generate).
+lab_ui_url: "https://{{ lab_server_fqdn }}{{ '' if ui.port | int == 443 else ':' ~ ui.port }}"
+lab_oidc_issuer: "https://{{ lab_server_fqdn }}:{{ authelia.port }}"
+lab_authelia_tarball: "{{ lab_cache }}/{{ authelia.url | basename }}"
+lab_authelia_dir: "{{ lab_cache }}/{{ authelia.url | basename | regex_replace('\\.tar\\.gz$', '') }}"
 
 # The x86-64 levels by the flags /proc/cpuinfo shows for them (pni is SSE3, abm LZCNT), and those this host has.
 lab_cpu_levels:

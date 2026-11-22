@@ -7,15 +7,16 @@ one command. One lab ships, `m1`.
 | VM | Role | OS (image) | vCPU | MiB | Disk GiB | Address |
 | --- | --- | --- | --- | --- | --- | --- |
 | `s3a` | site A's storage: MicroCeph (Squid 19.2.3, snap `squid/stable`, held), 3 loop-file OSDs of 4 GiB, RGW on port 80 | Ubuntu 24.04 | 2 | 4096 | 40 | 10.79.20.10 |
-| `hfsrv` | Holdfast server: PostgreSQL 16 (AppStream module), database and user `holdfast`; `holdfast-server`, `holdfast`, `holdfast-freshness` in /usr/bin | AlmaLinux 9.8 | 2 | 2048 | 20 | 10.79.20.20 |
+| `hfsrv` | Holdfast server: PostgreSQL 16 (AppStream module), database and user `holdfast`; `holdfast-server`, `holdfast`, `holdfast-freshness` in /usr/bin; Authelia 4.39.28, the OIDC provider for login | AlmaLinux 9.8 | 2 | 2048 | 20 | 10.79.20.20 |
 | `ub24` | agent | Ubuntu 24.04 | 1 | 1024 | 12 | 10.79.20.31 |
 | `el9` | agent (the RHEL stand-in) | AlmaLinux 9.8 | 1 | 1024 | 12 | 10.79.20.32 |
 | `ol9` | agent | Oracle Linux 9.8 (KVM template, UEK) | 1 | 1024 | 37 (the image's own size) | 10.79.20.33 |
 
 hfsrv and the agents have restic 0.19.1 at `/usr/libexec/holdfast/restic`. Each agent has `/usr/bin/holdfast-agent`,
 `holdfast-agent.service` (installed; `lab/lab test` enrolls and starts it) and the lab's fidelity tool
-`/usr/local/bin/hf-fidelity`. On hfsrv, `holdfast-server` runs, configured as an admin would (below), and
-`holdfast-freshness` is installed but not configured. Every VM has the others' names in `/etc/hosts`
+`/usr/local/bin/hf-fidelity`. On hfsrv, `holdfast-server` runs, configured as an admin would (below), with the UI and
+`/api/v1` for people on port 443 and login through Authelia on port 9091 (below), and `holdfast-freshness` is
+installed but not configured. Every VM has the others' names in `/etc/hosts`
 (`<vm>.m1.holdfast.test` and `<vm>`). SELinux is enforcing on the EL VMs. The network is `hf-m1` (10.79.20.0/24, bridge
 `hfbr-m1`), and every libvirt object the lab makes is named `hf-m1-*`.
 
@@ -28,14 +29,14 @@ hfsrv and the agents have restic 0.19.1 at `/usr/libexec/holdfast/restic`. Each 
 | `lab/lab status m1 [--json]` | absent, off, ready or broken, with what each VM answered and why it is not ready |
 | `lab/lab ssh m1 <vm> [command]` | SSH as root with the lab's key |
 | `lab/lab deploy m1` | builds this checkout and installs its binaries on hfsrv and the agents, restarting any Holdfast service that runs |
-| `lab/lab test m1 [<vm>...]` | M2's "done when", the fidelity test through Holdfast (below): builds and deploys, provisions the server, then backs up and restores the metadata fixture on each agent VM (or those named) and compares the 13 properties |
+| `lab/lab test m1 [<vm>...]` | M2's "done when", the fidelity test through Holdfast (below): builds and deploys, provisions the server and Authelia, checks login on the UI through Authelia, then backs up and restores the metadata fixture on each agent VM (or those named) and compares the 13 properties |
 | `lab/lab isolation m1 account` | the RGW-accounts test (below) |
 | `lab/lab isolation m1 <user-policy\|bucket-policy> [--maint-policy]` | the same question without accounts |
 | `lab/lab stop m1` | shuts the VMs down; `up` starts them again |
 | `lab/lab destroy m1 [--yes]` | removes the VMs, volumes, network and state; the image cache stays |
 
-Exit codes: 0 done (status: ready; test: every property kept on every VM), 1 a step failed (the log says which) or a
-property was lost, 2 refused or misused, 3 the lab is not there, off or broken, 75 busy (another command holds the
+Exit codes: 0 done (status: ready; test: every property kept on every VM and every login check passed), 1 a step failed
+(the log says which), a property was lost or a login check failed, 2 refused or misused, 3 the lab is not there, off or broken, 75 busy (another command holds the
 lab's lock). `up`, `deploy`, `test`, `isolation`, `stop` and `destroy` write `<state>/runs/<UTC time>-<command>/log`.
 
 First time on a host: `ansible-galaxy collection install -r lab/ansible/requirements.yml`, then `lab/lab doctor m1`.
@@ -48,17 +49,34 @@ is needed: libvirt owns every disk and seed in the pool `default`.
   file paths), `inventory.yml`, the SSH key, `ceph-version`, and `credentials/` (0700, each file 0600):
   `holdfast-maint.env` and `holdfast-provisioner.env` (`AWS_ACCESS_KEY_ID=`, `AWS_SECRET_ACCESS_KEY=`, the format
   `storage.ReadKeyFile` reads), `postgresql-holdfast.pw` and `.dsn`, the agents' RGW keys (`host-<vm>.env`, made by
-  `lab/lab test`), and the experiments' keys (`test-host.env`, `acct-*.env`, `test-host.restic.pw`). The experiments'
-  transcripts are `isolation-*.txt`, and the fidelity test's results `test-fidelity.txt` and `.json`.
+  `lab/lab test`), and the experiments' keys (`test-host.env`, `acct-*.env`, `test-host.restic.pw`). Authelia's, made
+  once by `lab/ansible/files/authelia-credentials.sh` with the release's own `authelia`: each user's password
+  (`authelia-<user>.pw`) and its argon2id digest (`.digest`), Holdfast's client secret (`authelia-client.secret`) and its
+  pbkdf2 digest, the ID-token signing key (`authelia-jwks.pem`), and `authelia-{jwt,session,storage,hmac}.secret`. The
+  experiments' transcripts are `isolation-*.txt`, and the fidelity test's results `test-fidelity.txt` and `.json`.
 - **The lab's CA:** `ca/` in the state (0700): `ca.key` and the server's key (0600), `ca.crt`, the server's certificate
-  and its chain, and `ca.sha256`, the pin (sha256 of `ca.crt`'s DER) that is `ca_sha256` in `server.yaml` and that the
-  agents check. `lab/ansible/files/lab-ca.sh` makes them once, and the certificate again only when it nears expiry.
-- **Holdfast's server:** `https://hfsrv.m1.holdfast.test:8443`, and the CLI `holdfast` as root on hfsrv
-  (`lab/lab ssh m1 hfsrv holdfast host list`). `/etc/holdfast/` holds `server.yaml` (0600, from
-  `lab/ansible/templates/server.yaml.j2`), `tls/` (the certificate with the CA's after it, its key), `maintenance.env`
-  (holdfast-maint's key), `credentials.key` (made once there by `holdfast-server keygen`; no copy is kept elsewhere, so
-  a rebuilt hfsrv starts with a new database too) and `db.dsn`. There is no `provisioner_command`: each host's RGW key is
-  the lab's, given with `holdfast host add --s3-key-file`.
+  and its chain, Authelia's (`authelia.key`, 0600, `authelia.crt`, `authelia.chain.crt`; the same names as the
+  server's, with a key of its own), and `ca.sha256`, the pin (sha256 of `ca.crt`'s DER) that is `ca_sha256` in
+  `server.yaml` and that the agents check. `lab/ansible/files/lab-ca.sh` makes them once, and a certificate again only
+  when it nears expiry.
+- **Holdfast's server:** `https://hfsrv.m1.holdfast.test:8443` for the agents, the UI and `/api/v1` with login at
+  `https://hfsrv.m1.holdfast.test` (`ui.listen: ":443"`, the same certificate: the lab has no CA browsers trust), and
+  the CLI `holdfast` as root on hfsrv (`lab/lab ssh m1 hfsrv holdfast host list`). `/etc/holdfast/` holds `server.yaml`
+  (0600, from `lab/ansible/templates/server.yaml.j2`), `tls/` (the certificate with the CA's after it, its key, the
+  CA's, which `auth.oidc.ca_file` names), `maintenance.env` (holdfast-maint's key), `oidc-client-secret`,
+  `credentials.key` (made once there by `holdfast-server keygen`; no copy is kept elsewhere, so a rebuilt hfsrv starts
+  with a new database too) and `db.dsn`. There is no `provisioner_command`: each host's RGW key is the lab's, given
+  with `holdfast host add --s3-key-file`. `auth.bootstrap_admins` is empty: the default bindings make ada admin.
+- **Authelia:** `https://hfsrv.m1.holdfast.test:9091`, the issuer in `server.yaml` (plan-m4 Q9), set up as the e2e
+  tests' (`test/e2e/authelia/setup.sh`). Its release tarball `authelia-v4.39.28-linux-amd64.tar.gz` is pinned by URL
+  and sha256 in `lab/labs/m1.yml`, downloaded once into `~/.cache/holdfast-lab` and unpacked beside it, and its
+  `authelia` and the release's `authelia.service` copied to hfsrv (`/usr/bin`, `/usr/lib/systemd/system`). It runs as
+  the user `authelia`, with `/etc/authelia/`: `configuration.yml` (from `templates/authelia.yml.j2`), `users.yml`
+  (a file user database: ada in `holdfast-admins`, ed in `holdfast-editors`, vi in `holdfast-viewers`, wes in
+  `web-team`), `tls/` and `secrets/` (0600), which the drop-in `authelia.service.d/lab.conf` names
+  (`AUTHELIA_*_FILE`). Its database is `/var/lib/authelia/db.sqlite3`. Holdfast is its one client: the code flow with
+  PKCE, the device flow, implicit consent, `client_secret_post`, the redirect URI
+  `https://hfsrv.m1.holdfast.test/auth/callback`. Its journal: `lab/lab ssh m1 hfsrv journalctl -u authelia`.
 - **RGW:** `http://s3a.m1.holdfast.test` from the VMs, `http://10.79.20.10` from this host (`HF_RGW_URL`,
   `HF_RGW_URL_HOST`). The region is `default`, requests are path-style, and the bucket is `holdfast`, owned by
   `holdfast-maint` as `up` makes it, with versioning `Enabled` (GetBucketVersioning is checked on every `up`). Holdfast
@@ -68,6 +86,19 @@ is needed: libvirt owns every disk and seed in the pool `default`.
   `/etc/holdfast/db.dsn` on hfsrv is the localhost DSN.
 - **Images:** `~/.cache/holdfast-lab`, each pinned by URL and sha256 in `lab/labs/m1.yml` and checked on download. An
   image another lab's cache already holds with that sha256 is copied from there, read only (`lab_cache_peers`).
+
+## Logging in to the lab's UI
+
+The users are `ada` (admin on every host), `ed` (editor), `vi` (viewer) and `wes` (`web-team`, which has no binding
+until you add one with `holdfast access set`, so wes sees no host). Each one's password is in the lab's state, in
+`credentials/authelia-<user>.pw`. From this host:
+
+- **A browser:** put hfsrv's line from `lab/lab status m1` in `/etc/hosts`, then open `https://hfsrv.m1.holdfast.test`.
+  The UI sends you to Authelia's form on port 9091, and back. Both certificates are from the lab's CA,
+  `ca/ca.crt` in the state: import it into the browser, or accept its warning on both ports.
+- **The CLI:** `holdfast login --server https://hfsrv.m1.holdfast.test --ca-file ~/.local/state/holdfast/labs/m1/ca/ca.crt`
+  starts the device flow. It shows a code and Authelia's page for it, which you confirm in a browser that is logged
+  in to Authelia.
 
 ## What it costs
 
@@ -151,13 +182,30 @@ HOLDFAST_PROBE_EXPECT=B003 go test ./internal/server/storage/ -run TestS3ProberL
 ## The fidelity test through Holdfast: M2's "done when"
 
 `lab/lab test m1` (`lab/test-fidelity.sh`) checks that a backup and a restore made through Holdfast keep all 13
-metadata properties on the three agent VMs, against site A's Ceph RGW (docs/plan-m2.md, Q9). It needs a ready lab
-(`lab/lab up m1`) and no internet on the VMs. It holds the lab's lock, and takes about two minutes. It:
+metadata properties on the three agent VMs, against site A's Ceph RGW (docs/plan-m2.md, Q9). It also checks login on
+the UI through Authelia (plan-m4 Q9). It needs a ready lab (`lab/lab up m1`) and no internet on the VMs. It holds the
+lab's lock, and takes about two minutes. It:
 
-1. builds this checkout and deploys it (as `deploy`), and provisions the server (`site.yml --tags binaries,hfserver`);
-2. makes each agent's RGW user and its key once (`credentials/host-<vm>.env`), and puts them in the bucket policy
+1. builds this checkout and deploys it (as `deploy`), and provisions Authelia and the server
+   (`site.yml --tags binaries,hfserver`);
+2. checks login from this host with curl (`lab/test-login.sh`). curl goes to hfsrv's address (`--resolve`) and checks
+   both certificates against the lab's CA:
+   - Authelia's discovery document has the issuer that `server.yaml` names, and lists the
+     `device_authorization_endpoint`;
+   - `GET /api/v1/me` on the UI without a session answers 401;
+   - `GET /auth/login` answers 302 to Authelia's authorization endpoint, with PKCE S256 and the redirect URI
+     `https://hfsrv.m1.holdfast.test/auth/callback`;
+   - ada logs in without a browser. Her password from `credentials/authelia-ada.pw` goes on curl's stdin to Authelia's
+     first factor, `POST /api/firstfactor`. With that cookie, the same authorization request is answered with a
+     redirect to Holdfast's callback. The callback sets Holdfast's session cookie, and with it `GET /api/v1/me` is
+     `ada`, `admin_everywhere: true`;
+   - `POST /auth/logout` (from the UI's origin) answers 204, and `/api/v1/me` answers 401 again.
+
+   Each check is a line in the summary. The password, the cookies and the authorization code are never in an
+   argument, the log or the terminal, and the cookie jar is removed afterwards;
+3. makes each agent's RGW user and its key once (`credentials/host-<vm>.env`), and puts them in the bucket policy
    (`rgw-documented-layout.sh --keep-data`);
-3. on each agent VM, or each one named (`lab/lab test m1 el9`):
+4. on each agent VM, or each one named (`lab/lab test m1 el9`):
    - makes the fixture anew: `hf-fidelity build /srv/hf-fixture` (`lab/fidelity`, the e2e suite's
      `internal/fidelity`);
    - on hfsrv, `holdfast host add <fqdn> --s3-key-file - --job fidelity --path /srv/hf-fixture --daily 03:00 --keep-daily 14d --keep-monthly 12mo`, with
@@ -173,7 +221,8 @@ metadata properties on the three agent VMs, against site A's Ceph RGW (docs/plan
      runs `hf-fidelity compare /srv/hf-fixture <directory>/srv/hf-fixture` on the VM;
    - on the EL VMs, reads the SELinux denials logged since its run began (`ausearch -m AVC,USER_AVC,SELINUX_ERR`);
      on a failure, the agent's and the server's journal too;
-4. prints each VM's OS, kernel and SELinux mode, and the 13 properties, and exits 1 if any is lost.
+5. prints each VM's OS, kernel and SELinux mode, the 13 properties and the login checks, and exits 1 if a property
+   is lost or a login check fails.
 
 The earlier runs' restores in `/var/restore` are removed first; the last one stays for a look. S3 keys and enrollment
 codes only ever travel on SSH's stdin: none is in an argument on this host, in the log or on the terminal.
@@ -211,6 +260,20 @@ on el9 (`chcon -t var_t`) fails `security.selinux label`, and removing one resto
 `POSIX access ACLs`. On el9 the restored `selinux-file.txt` is `system_u:object_r:httpd_sys_content_t:s0`, as its
 source is, and the agent and restic run as `unconfined_service_t`. An agent given a wrong `--ca-sha256` is refused
 before it sends anything ("the server's certificate chain does not match the pinned fingerprint").
+
+**Result with the login check, 2026-11-22** (Holdfast at `ca4964b`, Authelia 4.39.28): 39 of 39 properties kept, as
+above, and
+
+```
+login on https://hfsrv.m1.holdfast.test through Authelia 4.39.28 at https://hfsrv.m1.holdfast.test:9091, from this host
+Authelia's discovery lists the device_authorization_endpoint          PASS
+GET /api/v1/me without a session answers 401                          PASS
+GET /auth/login redirects to Authelia's authorization endpoint        PASS
+ada logs in through Authelia: /api/v1/me is ada, admin everywhere     PASS
+POST /auth/logout ends the session: /api/v1/me 401 again              PASS
+
+result: PASS, 39 of 39 properties kept on 3 VMs, 5 of 5 login checks passed
+```
 
 **What the run found in the product.** Both bugs are fixed; see `docs/plan-m2.md`.
 - The agent and the server now default `restic_bin` to `/usr/libexec/holdfast/restic`.
