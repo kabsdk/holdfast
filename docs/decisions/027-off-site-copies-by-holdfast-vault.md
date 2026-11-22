@@ -54,8 +54,8 @@ the vault, and a vault admin can choose **Delete here too** ([decision 031](031-
 ## Consequences
 
 - **Off-site settings are an exception to UI = API = CLI across programs.** They exist only in the vault's
-  UI, API and CLI, and holdfast-server shows them read-only. spec §3.3 must list this exception when M6
-  lands.
+  UI, API and CLI, and holdfast-server shows them read-only. spec §3.3 must list this exception when M7
+  lands (M6 until plan-m5 Q1).
 - **The vault's independence from the identity provider depends on how the provider is set up.** If someone
   can log in as both a Holdfast admin and a vault admin, the storage floor in site B is the backstop
   (research/off-site.md §4).

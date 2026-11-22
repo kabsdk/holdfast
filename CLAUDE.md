@@ -61,8 +61,9 @@ These also follow from the spec:
 | M2 | Snapshot catalogue (as a cache), snapshot list, Files, Changes, restore via the agent, and a CLI command for each. | The restore and metadata/ACL tests pass on Ubuntu, RHEL and Oracle Linux test VMs. |
 | M3 | Checks engine, protection items, retention (decided by restic's `forget --dry-run`), the 7-day protection, Prune now, deleting a snapshot (decision 031). | |
 | M4 | API with OIDC and roles, then the UI built from `mockup/App.dc.html`. Every UI action has a matching API call and CLI command. | |
-| M5 | The library, profiles and "Jobs with the old values" were cut (decision 030). To be re-planned with what 030 adds: dumps, restore to another host, rollback from S3 versions, run controls. | |
-| M6 | Off-site copies with `restic copy` (decision 027), including "Delete here too" (decision 031), and rebuilding Holdfast. No standby failover (decision 030). Starts only after the open questions are decided. | |
+| M5 | Operating Holdfast (plan-m5): packages and upgrades with protocol version negotiation, run controls, repository size, the repository password in escrow (decision 036), the compromise procedure, alerting without Alertmanager, decommission. | The packages install and upgrade on the Ubuntu, RHEL and Oracle Linux test VMs, and the M5 e2e tests pass. |
+| M6 | Recovering with Holdfast (plan-m5 Q1): dumps with commands defined on the host, restore to another host, rolling a repository back from S3 versions, the bare-metal runbook. | |
+| M7 | Off-site copies with `restic copy` (decision 027), including "Delete here too" (decision 031), and rebuilding Holdfast. No standby failover (decision 030). Starts only after the open questions are decided. | |
 
 ## Repository
 

@@ -4,7 +4,8 @@ None of these is decided, so do not decide or implement any of them. Where a lea
 leaning only.
 
 When a milestone touches one of these questions, the milestone plan names it and asks; it does not work
-around it. M6 waits until the off-site and rebuild questions are decided.
+around it. M7 (off-site and rebuilding Holdfast; M6 until plan-m5 Q1) waits until the off-site and rebuild
+questions are decided.
 
 ---
 

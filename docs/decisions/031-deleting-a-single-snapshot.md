@@ -34,4 +34,4 @@ Status: accepted, 2026-11-21.
 ## Where it lands
 
 - **M3:** deletion in site A, together with the pending-prune machinery.
-- **M6:** the click in site B, with the vault.
+- **M7** (M6 until plan-m5 Q1): the click in site B, with the vault.

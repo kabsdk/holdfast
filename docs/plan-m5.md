@@ -1,7 +1,9 @@
 # Plan for M5: operating Holdfast, and recovering with it
 
-Status: draft, 2026-11-22. Waiting for your answers to the questions in §5. No product code is written
-until they are answered.
+Status: accepted, 2026-11-22. You answered the questions in §5 with "Go", so every proposal stands as
+written. By Q1, M5 is items 1–7, and items 8–10 are a new M6 (recovering with Holdfast), with off-site copies
+moving to M7 (CLAUDE.md is changed to match). M6 gets its own plan, which carries Q5, Q6 and Q8 over as
+answered. Q3 is decision 036.
 
 ## 1. What M5 holds
 
@@ -21,7 +23,7 @@ which M4 left out (plan-m4 Q7):
 | 9 | **Restore to another host**, and the bare-metal recovery runbook | 030 §15 |
 | 10 | **Roll a host's repository back** to a point in time, from S3's old versions | 030 §15, decision 032 |
 
-**Not in M5:** off-site copies and the vault (M6), where site B's own hosts back up to (M6), and automation
+**Not in M5:** off-site copies and the vault (M7), where site B's own hosts back up to (M7), and automation
 tokens (plan-m4 Q4).
 
 ## 2. Design in brief
