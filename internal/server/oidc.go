@@ -30,6 +30,10 @@ import (
 const (
 	loginTimeout = 10 * time.Minute // a browser login must finish within this
 	callbackPath = "/auth/callback"
+	// Logins under way are held in memory until they finish or expire. Starting one needs no session, so
+	// their number is capped: a device login also has a goroutine polling the provider.
+	maxPendingLogins  = 1000
+	maxPendingDevices = 100
 )
 
 type pendingLogin struct {
@@ -194,6 +198,11 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 			delete(c.logins, k)
 		}
 	}
+	if len(c.logins) >= maxPendingLogins {
+		c.mu.Unlock()
+		http.Error(w, "too many logins are under way; try again in a few minutes", http.StatusServiceUnavailable)
+		return
+	}
 	c.logins[state] = pendingLogin{verifier: verifier, nonce: nonce, next: safeNext(r.URL.Query().Get("next")), expires: now.Add(loginTimeout)}
 	c.mu.Unlock()
 	http.Redirect(w, r, cfg.AuthCodeURL(state, oauth2.S256ChallengeOption(verifier), oidc.Nonce(nonce)), http.StatusFound)
@@ -279,16 +288,6 @@ func (s *Server) handleDeviceStart(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusServiceUnavailable, "the OIDC provider does not offer the device flow, which holdfast login needs")
 		return
 	}
-	da, err := cfg.DeviceAuth(ctx, oauth2.SetAuthURLParam("client_secret", cfg.ClientSecret))
-	if err != nil {
-		writeErr(w, http.StatusBadGateway, "the OIDC provider refused to start a device login: "+err.Error())
-		return
-	}
-	id := creds.NewToken()
-	d := &pendingDevice{expires: da.Expiry}
-	if d.expires.IsZero() {
-		d.expires = time.Now().Add(loginTimeout)
-	}
 	c := &s.oidc
 	c.mu.Lock()
 	if c.devices == nil {
@@ -299,6 +298,24 @@ func (s *Server) handleDeviceStart(w http.ResponseWriter, r *http.Request) {
 			delete(c.devices, k)
 		}
 	}
+	busy := len(c.devices) >= maxPendingDevices
+	c.mu.Unlock()
+	if busy {
+		writeErr(w, http.StatusServiceUnavailable, "too many logins are under way; try again in a few minutes")
+		return
+	}
+	da, err := cfg.DeviceAuth(ctx, oauth2.SetAuthURLParam("client_secret", cfg.ClientSecret))
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, "the OIDC provider refused to start a device login: "+err.Error())
+		return
+	}
+	id := creds.NewToken()
+	// The provider says when the code expires; Holdfast waits no longer than its own login timeout.
+	d := &pendingDevice{expires: time.Now().Add(loginTimeout)}
+	if !da.Expiry.IsZero() && da.Expiry.Before(d.expires) {
+		d.expires = da.Expiry
+	}
+	c.mu.Lock()
 	c.devices[id] = d
 	c.mu.Unlock()
 	// The server polls the provider for the CLI, so the CLI never holds the client secret.
