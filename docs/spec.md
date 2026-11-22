@@ -117,7 +117,13 @@ supports.
   version for good or change the bucket's settings. So whatever is deleted can be recovered until the
   bucket's lifecycle rule expires its old versions. That holds against a compromised host, a compromised
   server and Prune now. The 7-day protection (§3.4) is Holdfast's own rule on top of it.
-- Keys are escrowed in an offline escrow bundle.
+- **Repository passwords are escrowed in the bucket** (decision 036). `escrow.age_recipient` in
+  `server.yaml` names an age public key whose private key the admin keeps offline. At host add, and whenever
+  a host's password changes, the server writes `escrow/<fqdn>.age`: the FQDN, the repository URL and the
+  password, encrypted to that key. The S3 key is not in it. A write that fails is shown on the host and tried
+  again every 15 minutes; a host added before the recipient was set is written at the next pass. Without a
+  recipient nothing is written, and every host and `holdfast_escrow_configured` say so.
+- `holdfast escrow export` still writes every host's credentials, S3 keys included, to an offline bundle.
 - Credentials are never shown in the UI.
 - There is no raw restic console.
 
@@ -222,8 +228,34 @@ disappeared (§3.6).
   - A removed job leaves the config. Its snapshots stay, and the daily run no longer touches them.
   - A removed host is retired: its agent's token is revoked, and its repository stays and can still be
     browsed. Adding the same FQDN again brings it back, with its repository, after a new enrollment.
-- Deleting data is a separate **decommission** action. It requires typing the FQDN, it has a grace period,
-  and it is audited.
+- Deleting data is a separate **decommission** action (plan-m5 item 7):
+  - only for a removed (retired) host, only by an admin (`host.decommission`), who types the FQDN:
+    `holdfast host decommission <fqdn> --confirm <fqdn>`;
+  - it waits 7 days, like every other deletion, and `--cancel` stops it meanwhile. A host waiting for it
+    cannot be added back until it is cancelled;
+  - then the server deletes every current object under `repos/<fqdn>/`, and the escrow file, with the
+    maintenance key. S3 keeps their old versions until the lifecycle rule expires them, so the host's page
+    gives the date the data is really gone: the decommission's date plus the rule's days (B011). Its
+    snapshots keep tombstones marked **Deleted by Holdfast**;
+  - a decommissioned host added again starts over, with a new repository and a new password, and needs a
+    new S3 key.
+- The repository's size is measured once a day: one listing of the prefix with its versions gives the
+  current bytes and objects, and the bytes of the old versions S3 keeps. The host's page and the metrics
+  `holdfast_repository_bytes{versions="current"|"noncurrent"}` and `holdfast_repository_objects` show it.
+
+### 3.5a A compromised host
+
+`holdfast host rotate <fqdn>` (`config.storage`) does, in this order:
+1. adds a new restic password to the repository, and checks that it opens it;
+2. stores it, revokes the agent's token (the host waits for a new enrollment) and issues a new enrollment
+   code;
+3. removes the old password's key from the repository. If that fails, the host shows the `rotation`
+   error, and the next rotation removes it first;
+4. writes the escrow file again.
+
+The new password is stored before the old key goes, so the server always has a password that opens the
+repository. The runbook, [runbooks/compromised-host.md](runbooks/compromised-host.md), says what else to
+do: a new S3 key, rebuilding or cleaning the host, and finding the last good snapshot.
 
 ### 3.6 Changes made outside Holdfast
 
@@ -350,6 +382,7 @@ cannot enroll.
 | B009 | The maintenance key can delete an object version for good. |
 | B010 | The maintenance key can change the bucket's settings: versioning, the lifecycle rule or the bucket policy. |
 | B011 | No enabled lifecycle rule expires noncurrent versions under `repos/`. |
+| B012 | The maintenance key cannot write and delete under `escrow/`. Tested only when `escrow.age_recipient` is set (decision 036). |
 
 - The accepted codes are stored in the revision and in the audit log.
 - The CLI takes them explicitly, for example `holdfast job set … --accept R102,R104`. Without them it
@@ -439,9 +472,11 @@ host.
 
 The UI's Problems page, and the Fleet's "Needs attention", list what the server knows is wrong, host by
 host, each with a code:
-- errors: `stale`, `failed`, `storage`, `disappeared`, `foreign_keys`;
+- errors: `stale`, `failed`, `storage`, `disappeared`, `foreign_keys`, `rotation` (an old password still
+  opens the repository), and `decommission` when a due decommission could not delete;
 - warnings: `incomplete`, `offline`, `drift`, `restic`, `not_made_by_holdfast`, `catalogue`, `retention`,
-  `removing`.
+  `removing`, `enroll` (waiting to enroll again), `escrow` (no recipient, or the write failed), `size`, and
+  `decommission` while one waits.
 
 Paging stays with Prometheus and the alert rules that ship with Holdfast. The storage witness is judged
 there too, apart from the server (decisions 008 and 009).
@@ -498,13 +533,15 @@ There are three roles. Each has a flat set of permissions, and roles do not inhe
 | `config.storage` | | | ✓ |
 | `maintenance`: acknowledge changes made outside Holdfast, `holdfast check` | | | ✓ |
 | `host.remove`: remove a host or a job (never deletes data) | | | ✓ |
+| `host.decommission`: delete a removed host's repository, after 7 days (§3.5) | | | ✓ |
 
 A user can have several bindings. They combine per host. **A host you have no binding for does not exist
 for you:** it is not listed, not searchable and not counted (decision 033). Asking for it answers "not
 found". Revisions and the audit log are cut down to your hosts. Nobody sees file contents.
 
 Actions the table does not name (plan-m4 Q6):
-- adding a host, replacing its S3 key and issuing an enrollment code need `config.storage`;
+- adding a host, replacing its S3 key, issuing an enrollment code and rotating its password
+  (`holdfast host rotate`) need `config.storage`;
 - a restore into another directory needs `restore.in_place`;
 - saving a job needs `config.jobs`, and also `retention.cut` when it accepts R104;
 - `holdfast retention run` needs `retention.cut`;
@@ -538,6 +575,8 @@ auth:
     client_secret_file: /etc/holdfast/oidc-client-secret
     groups_claim: groups
   bootstrap_admins: []   # usernames that are admin everywhere, for the first login; each use is audited
+escrow:
+  age_recipient: age1…   # decision 036: an age public key; its private key is kept offline
 ```
 
 ### 6.5 File contents

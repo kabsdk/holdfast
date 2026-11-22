@@ -304,6 +304,13 @@ type Host struct {
 	// RemovedAt is when the host was removed (M4). It is retired once its agent has applied the empty
 	// config, or at once if it never enrolled.
 	RemovedAt *time.Time `json:"removed_at,omitempty"`
+	// M5 (operating.go): the escrow file, the repository's size, a rotation not finished, decommission.
+	Escrow          HostEscrow    `json:"escrow"`
+	Size            *storage.Size `json:"size,omitempty"` // nil before the first measurement
+	SizeError       string        `json:"size_error,omitempty"`
+	SizeTriedAt     *time.Time    `json:"-"`
+	RepoKeyRetiring string        `json:"repo_key_retiring,omitempty"`
+	Decommission    *Decommission `json:"decommission,omitempty"`
 }
 
 // MarkRemoved records that a host was removed. A host that never enrolled has no agent to tell, so it is
@@ -321,9 +328,12 @@ func (q *Q) RetireHost(ctx context.Context, fqdn string) error {
 }
 
 // ReviveHost brings a removed host back, waiting for a new enrollment. Its credentials and its catalogue
-// stay.
+// stay. A decommissioned host's record of it is cleared: it starts over with a new repository.
 func (q *Q) ReviveHost(ctx context.Context, fqdn string, rev int64) error {
-	_, err := q.db.Exec(ctx, `UPDATE hosts SET state = 'awaiting_enrollment', retired_at = NULL, added_revision = $2 WHERE fqdn = $1`, fqdn, rev)
+	_, err := q.db.Exec(ctx, `UPDATE hosts SET state = 'awaiting_enrollment', retired_at = NULL, added_revision = $2,
+		decommission_requested_at = NULL, decommission_requested_by = '', decommission_due_at = NULL, decommission_tried_at = NULL,
+		decommission_error = '', decommissioned_at = NULL, decommissioned_objects = 0
+		WHERE fqdn = $1`, fqdn, rev)
 	return err
 }
 
@@ -337,22 +347,49 @@ func (q *Q) CreateHost(ctx context.Context, fqdn string, rev int64, now time.Tim
 }
 
 const hostCols = `fqdn, state, added_revision, added_at, connected_at, first_backup_at, storage_checked_at, storage_findings,
-	storage_noncurrent_days, catalogue_refreshed_at, catalogue_error, prune_needed, retired_at`
+	storage_noncurrent_days, catalogue_refreshed_at, catalogue_error, prune_needed, retired_at,
+	(SELECT c.version FROM host_credentials c WHERE c.fqdn = hosts.fqdn), escrowed_version, escrowed_at, escrow_tried_at, escrow_error,
+	size_at, size_tried_at, size_current_bytes, size_noncurrent_bytes, size_objects, size_error, repo_key_retiring,
+	decommission_requested_at, decommission_requested_by, decommission_due_at, decommission_tried_at, decommission_error,
+	decommissioned_at, decommissioned_objects`
 
 func scanHost(row pgx.Row) (Host, error) {
 	var h Host
-	var checked *time.Time
+	var checked, sizeAt *time.Time
 	var findings []byte
 	var days int
+	var credVersion *int
+	var sz storage.Size
+	var d Decommission
+	var dReq, dDue *time.Time
 	err := row.Scan(&h.FQDN, &h.State, &h.AddedRevision, &h.AddedAt, &h.ConnectedAt, &h.FirstBackupAt, &checked, &findings,
-		&days, &h.CatalogueRefreshedAt, &h.CatalogueError, &h.PruneNeeded, &h.RemovedAt)
-	if err == nil && checked != nil {
+		&days, &h.CatalogueRefreshedAt, &h.CatalogueError, &h.PruneNeeded, &h.RemovedAt,
+		&credVersion, &h.Escrow.Version, &h.Escrow.At, &h.Escrow.TriedAt, &h.Escrow.Error,
+		&sizeAt, &h.SizeTriedAt, &sz.Current, &sz.Noncurrent, &sz.Objects, &h.SizeError, &h.RepoKeyRetiring,
+		&dReq, &d.RequestedBy, &dDue, &d.TriedAt, &d.Error, &d.DoneAt, &d.Objects)
+	if err != nil {
+		return h, notFound(err)
+	}
+	if checked != nil {
 		h.Storage = &storage.Report{CheckedAt: *checked, Findings: []storage.Finding{}, NoncurrentDays: days}
 		if len(findings) > 0 {
 			err = json.Unmarshal(findings, &h.Storage.Findings)
 		}
 	}
-	return h, notFound(err)
+	h.Escrow.Current = credVersion != nil && h.Escrow.Version != nil && *credVersion == *h.Escrow.Version
+	if sizeAt != nil {
+		sz.At = *sizeAt
+		h.Size = &sz
+	}
+	if dReq != nil {
+		d.RequestedAt, d.DueAt = *dReq, *dDue
+		if d.DoneAt != nil && days > 0 {
+			gone := d.DoneAt.AddDate(0, 0, days)
+			d.GoneAt = &gone
+		}
+		h.Decommission = &d
+	}
+	return h, err
 }
 
 // RecordStorageCheck keeps a host's latest storage contract test.

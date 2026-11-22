@@ -175,6 +175,43 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		gauge("holdfast_escrow_missing_hosts", "Hosts whose current credentials are in no escrow bundle.")
 		fmt.Fprintf(&b, "holdfast_escrow_missing_hosts %d\n", n)
 	}
+	// Decision 036: the escrow files in the bucket. Without a recipient none is written.
+	on := 0
+	if s.escrowOn() {
+		on = 1
+	}
+	gauge("holdfast_escrow_configured", "1 if server.yaml names an age recipient, so repository passwords are escrowed in the bucket.")
+	fmt.Fprintf(&b, "holdfast_escrow_configured %d\n", on)
+	gauge("holdfast_escrow_current", "1 if escrow/<fqdn>.age in the bucket holds the host's current repository password.")
+	gauge("holdfast_repository_bytes", "The host's repository in the bucket: current objects, and old versions kept until the lifecycle rule expires them.")
+	gauge("holdfast_repository_objects", "Current objects under the host's prefix.")
+	gauge("holdfast_repository_size_timestamp_seconds", "When the host's repository was last measured.")
+	gauge("holdfast_host_decommission_due_timestamp_seconds", "When a removed host's repository is to be deleted; 0 once done.")
+	for _, h := range hosts {
+		if d := h.Decommission; d != nil {
+			due := "0"
+			if d.DoneAt == nil {
+				due = ts(&d.DueAt)
+			}
+			fmt.Fprintf(&b, "holdfast_host_decommission_due_timestamp_seconds{host=%q} %s\n", h.FQDN, due)
+			if d.DoneAt != nil {
+				continue
+			}
+		}
+		if s.escrowOn() {
+			cur := 0
+			if h.Escrow.Current {
+				cur = 1
+			}
+			fmt.Fprintf(&b, "holdfast_escrow_current{host=%q} %d\n", h.FQDN, cur)
+		}
+		if sz := h.Size; sz != nil {
+			fmt.Fprintf(&b, "holdfast_repository_bytes{host=%q,versions=\"current\"} %d\n", h.FQDN, sz.Current)
+			fmt.Fprintf(&b, "holdfast_repository_bytes{host=%q,versions=\"noncurrent\"} %d\n", h.FQDN, sz.Noncurrent)
+			fmt.Fprintf(&b, "holdfast_repository_objects{host=%q} %d\n", h.FQDN, sz.Objects)
+			fmt.Fprintf(&b, "holdfast_repository_size_timestamp_seconds{host=%q} %s\n", h.FQDN, ts(&sz.At))
+		}
+	}
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
 	_, _ = w.Write([]byte(b.String()))
 }

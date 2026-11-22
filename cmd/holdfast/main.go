@@ -205,7 +205,28 @@ type hostView struct {
 	Disappeared       int            `json:"disappeared"`
 	ForeignKeys       []string       `json:"foreign_keys"`
 	CatalogueError    string         `json:"catalogue_error"`
-	Agent             *struct {
+	Escrow            struct {
+		Current   bool       `json:"current"`
+		WrittenAt *time.Time `json:"written_at"`
+		Error     string     `json:"error"`
+	} `json:"escrow"`
+	Size *struct {
+		Current    int64     `json:"current_bytes"`
+		Noncurrent int64     `json:"noncurrent_bytes"`
+		Objects    int       `json:"objects"`
+		At         time.Time `json:"measured_at"`
+	} `json:"size"`
+	SizeError       string `json:"size_error"`
+	RepoKeyRetiring string `json:"repo_key_retiring"`
+	Decommission    *struct {
+		RequestedBy string     `json:"requested_by"`
+		DueAt       time.Time  `json:"due_at"`
+		DoneAt      *time.Time `json:"done_at"`
+		Objects     int        `json:"objects_deleted"`
+		GoneAt      *time.Time `json:"really_gone_at"`
+		Error       string     `json:"error"`
+	} `json:"decommission"`
+	Agent *struct {
 		LastSeenAt      *time.Time `json:"last_seen_at"`
 		AgentVersion    string     `json:"agent_version"`
 		ResticVersion   string     `json:"restic_version"`
@@ -301,6 +322,7 @@ func hostCmd() *cobra.Command {
 				fmt.Printf("storage: checks failed at %s (docs/storage.md):%s\n", h.Storage.CheckedAt.Local().Format("2006-01-02 15:04"), h.Storage.lines())
 			}
 		}
+		printOperating(h)
 		w := table()
 		fmt.Fprintln(w, "\nJOB\tLAST STATUS\tLAST SUCCESS\tNEXT RUN\tLONGEST GAP\tWORST-CASE LOSS")
 		for _, j := range h.Jobs {
@@ -429,6 +451,7 @@ func hostCmd() *cobra.Command {
 		}}
 	removeHost.Flags().StringVarP(&removeMsg, "message", "m", "", "revision message")
 	c.AddCommand(removeHost)
+	c.AddCommand(hostOperatingCmds()...)
 	c.AddCommand(&cobra.Command{Use: "enroll-code <fqdn>", Short: "Issue a new 15-minute enrollment code (revokes the open one)", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, a []string) error {
 		var e struct {
 			Code           string    `json:"code"`

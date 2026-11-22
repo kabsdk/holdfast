@@ -33,17 +33,39 @@ func ago(d time.Duration) string {
 }
 
 // problems works out a host's problems from its view. retentionFailed says whether its last forget-and-prune
-// failed.
-func problems(v HostView, now time.Time, retentionFailed bool) []Problem {
+// failed; escrowOn whether server.yaml names an age recipient.
+func problems(v HostView, now time.Time, retentionFailed, escrowOn bool) []Problem {
 	out := []Problem{}
 	add := func(code, sev, job, format string, a ...any) {
 		out = append(out, Problem{Code: code, Severity: sev, JobID: job, Message: fmt.Sprintf(format, a...)})
 	}
 	if v.RemovedAt != nil {
-		if v.State != "retired" {
+		d := v.Decommission
+		switch {
+		case v.State != "retired":
 			add("removing", "warning", "", "removed; waiting for its agent to take the empty config, after which the host is retired")
+		case d != nil && d.DoneAt == nil && d.Error != "":
+			add("decommission", "error", "", "the decommission asked for by %s could not delete the repository: %s; it is tried again", d.RequestedBy, d.Error)
+		case d != nil && d.DoneAt == nil:
+			add("decommission", "warning", "", "its repository is deleted on %s, as %s asked (holdfast host decommission %s --cancel stops it)",
+				d.DueAt.UTC().Format("2006-01-02 15:04 UTC"), d.RequestedBy, v.FQDN)
 		}
 		return out
+	}
+	if v.RepoKeyRetiring != "" {
+		add("rotation", "error", "", "the old repository password still opens the repository (key %s): run holdfast host rotate %s again", v.RepoKeyRetiring, v.FQDN)
+	}
+	if v.State == "awaiting_enrollment" && v.Agent != nil {
+		add("enroll", "warning", "", "waiting for the host to enroll again with its new code; until then it gets no config and reports nothing")
+	}
+	switch {
+	case !escrowOn:
+		add("escrow", "warning", "", "server.yaml names no escrow.age_recipient, so the repository password is not escrowed in the bucket (decision 036)")
+	case !v.Escrow.Current && v.Escrow.Error != "":
+		add("escrow", "warning", "", "the escrow file could not be written: %s", v.Escrow.Error)
+	}
+	if v.SizeError != "" {
+		add("size", "warning", "", "the repository's size could not be measured: %s", v.SizeError)
 	}
 	if v.State == "enrolled" && v.Agent != nil && v.Agent.LastSeenAt != nil && now.Sub(*v.Agent.LastSeenAt) > OfflineAfter {
 		add("offline", "warning", "", "the agent has not been in touch for %s; it backs up on its own meanwhile", ago(now.Sub(*v.Agent.LastSeenAt)))

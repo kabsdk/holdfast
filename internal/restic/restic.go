@@ -393,6 +393,38 @@ func (r Runner) Keys(ctx context.Context) ([]RepoKey, error) {
 	return keys, json.Unmarshal(out, &keys)
 }
 
+// AddKey adds a password to the repository, read from a file: never from argv. It returns the new key's
+// ID. Only the server's rotation uses it (plan-m5 item 5).
+func (r Runner) AddKey(ctx context.Context, newPasswordFile string) (string, error) {
+	before, err := r.Keys(ctx)
+	if err != nil {
+		return "", err
+	}
+	if _, err := r.run(ctx, "key", "add", "--new-password-file", newPasswordFile); err != nil {
+		return "", err
+	}
+	after, err := r.Keys(ctx)
+	if err != nil {
+		return "", err
+	}
+	known := map[string]bool{}
+	for _, k := range before {
+		known[k.ID] = true
+	}
+	for _, k := range after {
+		if !known[k.ID] {
+			return k.ID, nil
+		}
+	}
+	return "", errors.New("restic key add: no new key in the repository")
+}
+
+// RemoveKey removes one password from the repository. restic refuses to remove the key that opened it.
+func (r Runner) RemoveKey(ctx context.Context, id string) error {
+	_, err := r.run(ctx, "key", "remove", id)
+	return err
+}
+
 func eachJSONLine(out []byte, fn func([]byte) error) error {
 	sc := bufio.NewScanner(bytes.NewReader(out))
 	sc.Buffer(make([]byte, 1<<20), 1<<24)

@@ -33,6 +33,13 @@ maintenance:
   # forgets nothing by itself; holdfast retention run, Prune now and Delete now still work.
   retention: daily
 
+# Each host's repository password, encrypted to this age public key, in escrow/<fqdn>.age in the bucket
+# (decision 036). Make the key pair offline with age-keygen, keep the private key offline, and put only the
+# public key here. The maintenance key then needs s3:PutObject and s3:DeleteObject on escrow/* (B012,
+# docs/storage.md). Without it nothing is escrowed in the bucket, and every host warns.
+escrow:
+  age_recipient: age1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq   # replace with yours
+
 # The UI and the API for people, over HTTPS, with OIDC login (spec §6, decision 034). Off while ui.listen
 # is not set; root on the server can always use the socket. Use a certificate browsers trust, not the agents'.
 ui:

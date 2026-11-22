@@ -39,6 +39,7 @@ type Server struct {
 	seal     *creds.Sealer
 	prov     storage.Provisioner // nil: the admin gives every host's key (decision 029)
 	prober   storage.Prober
+	bucket   storage.Bucket // size, escrow files and decommission, with the maintenance key
 	loc      storage.Location
 	maintKey storage.Key
 	zone     *time.Location
@@ -50,6 +51,7 @@ type Server struct {
 	refresher catalogueRefresher
 	maintBusy busyHosts  // one forget-or-prune at a time per host
 	oidc      oidcClient // the server's side of the OIDC provider (decision 034)
+	op        operating  // escrow, size and decommission (operating.go)
 }
 
 // background is the context for work that outlives a request, such as a catalogue refresh.
@@ -66,6 +68,7 @@ type Deps struct {
 	Sealer      *creds.Sealer
 	Provisioner storage.Provisioner // optional: makes the keys Holdfast generates
 	Prober      storage.Prober      // tests the storage contract; S3Prober when nil
+	Bucket      storage.Bucket      // S3Bucket when nil
 	Maintenance storage.Key
 	Logger      *slog.Logger
 	Now         func() time.Time
@@ -88,9 +91,12 @@ func New(set Settings, d Deps) (*Server, error) {
 	}
 	loc := storage.Location{Endpoint: set.Storage.Endpoint, Bucket: set.Storage.Bucket, Region: set.Storage.Region}
 	if d.Prober == nil {
-		d.Prober = storage.S3Prober{Location: loc, Maint: d.Maintenance}
+		d.Prober = storage.S3Prober{Location: loc, Maint: d.Maintenance, Escrow: set.Escrow.AgeRecipient != ""}
 	}
-	return &Server{set: set, st: d.Store, seal: d.Sealer, prov: d.Provisioner, prober: d.Prober, maintKey: d.Maintenance,
+	if d.Bucket == nil {
+		d.Bucket = storage.S3Bucket{Location: loc, Maint: d.Maintenance}
+	}
+	return &Server{set: set, st: d.Store, seal: d.Sealer, prov: d.Provisioner, prober: d.Prober, bucket: d.Bucket, maintKey: d.Maintenance,
 		loc: loc, zone: zone, log: d.Logger, hub: newHub(), now: d.Now,
 		refresher: catalogueRefresher{running: map[string]bool{}, again: map[string]bool{}}}, nil
 }
@@ -355,12 +361,17 @@ func (s *Server) AddHost(ctx context.Context, a Actor, in AddHostInput) (AddHost
 		return AddHostResult{}, err
 	}
 	// A removed host comes back with its repository, its password and its history (spec §3.5).
-	revive := false
+	// A decommissioned host starts over: its repository is gone, so it gets a new password, and its old S3
+	// key, which the admin was told to delete, is not used again.
+	revive, fresh := false, false
 	if h, err := s.st.Q().GetHost(ctx, in.FQDN); err == nil {
-		if h.State != "retired" {
+		switch {
+		case h.State != "retired":
 			return AddHostResult{}, fmt.Errorf("host %s exists already: %w", in.FQDN, ErrConflict)
+		case h.Decommission != nil && h.Decommission.DoneAt == nil:
+			return AddHostResult{}, fmt.Errorf("host %s is waiting to be decommissioned; cancel that first (holdfast host decommission %s --cancel): %w", in.FQDN, in.FQDN, ErrConflict)
 		}
-		revive = true
+		revive, fresh = true, decommissioned(h)
 	}
 	var key storage.Key
 	source := store.KeyByAdmin
@@ -372,7 +383,7 @@ func (s *Server) AddHost(ctx context.Context, a Actor, in AddHostInput) (AddHost
 			return AddHostResult{}, err
 		}
 		key = k
-	case revive:
+	case revive && !fresh:
 		k, src, err := s.hostKey(ctx, in.FQDN)
 		if err != nil {
 			return AddHostResult{}, err
@@ -449,13 +460,16 @@ func (s *Server) AddHost(ctx context.Context, a Actor, in AddHostInput) (AddHost
 			if err := q.ReviveHost(ctx, in.FQDN, rev.Number); err != nil {
 				return err
 			}
-			if newKey { // the repository password stays: it is what opens the repository
+			if newKey { // the repository password stays, unless the repository was decommissioned: it is what opens it
 				c, err := q.GetCredentials(ctx, in.FQDN)
 				if err != nil {
 					return err
 				}
 				c.Version++
 				c.S3AccessKeyID, c.S3Secret, c.S3KeySource, c.CreatedAt = key.AccessKeyID, s.seal.Seal(key.SecretAccessKey, in.FQDN), source, now
+				if fresh {
+					c.RepoPassword = s.seal.Seal(creds.NewPassword(), in.FQDN)
+				}
 				if err := q.PutCredentials(ctx, c); err != nil {
 					return err
 				}
@@ -469,6 +483,9 @@ func (s *Server) AddHost(ctx context.Context, a Actor, in AddHostInput) (AddHost
 			return err
 		}
 		detail := map[string]any{"message": in.Message, "s3_key_by": source, "back_after_removal": revive}
+		if fresh {
+			detail["after_decommission"] = true
+		}
 		if in.Job != nil {
 			detail["job"] = in.JobID
 			detail["accepted_codes"] = accepted
@@ -491,6 +508,10 @@ func (s *Server) AddHost(ctx context.Context, a Actor, in AddHostInput) (AddHost
 		s.log.Warn("repository initialisation failed; enrollment will retry it", "host", in.FQDN, "err", err)
 		res.Warning = "the host was added, but its repository could not be initialised yet (" + err.Error() + "); enrollment will try again"
 		_ = s.st.Q().Audit(ctx, store.AuditEntry{Actor: systemActor.Name, Source: systemActor.Source, Action: "storage.setup_failed", FQDN: in.FQDN, Detail: map[string]any{"error": err.Error()}})
+	}
+	// The password goes into escrow at once (decision 036). A failure is tried again in the background.
+	if err := s.writeEscrow(ctx, in.FQDN); err != nil {
+		res.Warning = strings.TrimPrefix(res.Warning+"; the escrow file could not be written yet ("+err.Error()+"); it is tried again", "; ")
 	}
 	return res, nil
 }
@@ -887,7 +908,7 @@ func (s *Server) Hosts(ctx context.Context) ([]HostView, error) {
 			jv.Stale = h.State == "enrolled" && since != nil && now.Sub(*since) > j.Schedule.StaleAfter()
 			v.Jobs = append(v.Jobs, jv)
 		}
-		v.Problems = problems(v, now, retentionFailed[h.FQDN])
+		v.Problems = problems(v, now, retentionFailed[h.FQDN], s.escrowOn())
 		out = append(out, v)
 	}
 	return out, nil

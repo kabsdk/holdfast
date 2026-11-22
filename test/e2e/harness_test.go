@@ -36,6 +36,7 @@ import (
 	"testing"
 	"time"
 
+	"filippo.io/age"
 	"go.yaml.in/yaml/v3"
 
 	"github.com/kabsdk/holdfast/internal/restic"
@@ -210,6 +211,9 @@ type env struct {
 	// provisioner: Holdfast generates host keys and runs provision-minio.sh. Otherwise each test makes
 	// the keys itself, as an admin would (decision 029).
 	provisioner bool
+	// escrowKey is the offline age key: server.yaml names its recipient, so the server writes each host's
+	// escrow file (decision 036), and only this key reads them.
+	escrowKey *age.X25519Identity
 }
 
 // envOpts change one test environment.
@@ -256,6 +260,9 @@ func newEnvWith(t *testing.T, o envOpts) *env {
 	}
 	mak, msk := e.makeUser(policy)
 	must(t, os.WriteFile(maint, []byte("AWS_ACCESS_KEY_ID="+mak+"\nAWS_SECRET_ACCESS_KEY="+msk+"\n"), 0o600))
+	id, err := age.GenerateX25519Identity()
+	must(t, err)
+	e.escrowKey = id
 	stor := map[string]any{"endpoint": endpoint, "bucket": e.bucket, "region": "us-east-1", "maintenance_credentials_file": maint}
 	if o.Provisioner {
 		stor["provisioner_command"] = []string{"bash", filepath.Join(repoRoot, "test", "e2e", "provision-minio.sh")}
@@ -268,6 +275,7 @@ func newEnvWith(t *testing.T, o envOpts) *env {
 		// Tests run `holdfast check` and `holdfast retention run` themselves; a background check would race
 		// their lock counts, and a daily retention run their snapshot counts.
 		"maintenance": map[string]any{"check": "off", "check_cycle_days": 30, "retention": "off"},
+		"escrow":      map[string]any{"age_recipient": id.Recipient().String()},
 	}
 	if o.TLS != nil {
 		set["tls"] = map[string]any{"cert_file": o.TLS.cert, "key_file": o.TLS.key}
@@ -377,6 +385,7 @@ func (e *env) maintPolicy() string {
 	return `{"Version":"2012-10-17","Statement":[
  {"Effect":"Allow","Action":["s3:ListBucket","s3:GetBucketLocation","s3:GetBucketVersioning","s3:GetLifecycleConfiguration"],"Resource":["arn:aws:s3:::` + b + `"]},
  {"Effect":"Allow","Action":["s3:GetObject","s3:PutObject","s3:DeleteObject"],"Resource":["arn:aws:s3:::` + b + `/repos/*"]},
+ {"Effect":"Allow","Action":["s3:PutObject","s3:DeleteObject"],"Resource":["arn:aws:s3:::` + b + `/escrow/*"]},
  {"Effect":"Deny","Action":["s3:DeleteObjectVersion"],"Resource":["arn:aws:s3:::` + b + `/*"]}]}`
 }
 
@@ -711,6 +720,29 @@ type hostView struct {
 		ID     string     `json:"id"`
 		Status *jobStatus `json:"status"`
 	} `json:"jobs"`
+	// M5: the escrow file, the repository's size, a rotation not finished, decommission.
+	Escrow struct {
+		Current bool   `json:"current"`
+		Error   string `json:"error"`
+	} `json:"escrow"`
+	Size *struct {
+		Current    int64 `json:"current_bytes"`
+		Noncurrent int64 `json:"noncurrent_bytes"`
+		Objects    int   `json:"objects"`
+	} `json:"size"`
+	RepoKeyRetiring string `json:"repo_key_retiring"`
+	Decommission    *struct {
+		DueAt   time.Time  `json:"due_at"`
+		DoneAt  *time.Time `json:"done_at"`
+		Objects int        `json:"objects_deleted"`
+		GoneAt  *time.Time `json:"really_gone_at"`
+	} `json:"decommission"`
+	Problems []problem `json:"problems"`
+}
+
+type problem struct {
+	Code     string `json:"code"`
+	Severity string `json:"severity"`
 }
 
 func (e *env) host(fqdn string) hostView {

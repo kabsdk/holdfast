@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"filippo.io/age"
 	"go.yaml.in/yaml/v3"
 
 	"github.com/kabsdk/holdfast/internal/restic"
@@ -31,6 +32,7 @@ type Settings struct {
 
 	Storage     StorageSettings     `yaml:"storage"`
 	Maintenance MaintenanceSettings `yaml:"maintenance"`
+	Escrow      EscrowSettings      `yaml:"escrow"`
 
 	UI   UISettings   `yaml:"ui"`
 	Auth AuthSettings `yaml:"auth"`
@@ -89,6 +91,13 @@ type MaintenanceSettings struct {
 	// stretch, behind the 7-day protection (plan-m3). "off" forgets nothing by itself; `holdfast retention
 	// run`, Prune now and Delete now still work.
 	Retention string `yaml:"retention"`
+}
+
+// EscrowSettings name who can read the escrow files the server writes to the bucket (decision 036).
+type EscrowSettings struct {
+	// AgeRecipient is an age public key, age1…, whose private key the admin keeps offline. Empty: no escrow
+	// file is written, and every host's page warns.
+	AgeRecipient string `yaml:"age_recipient"`
 }
 
 // Values of MaintenanceSettings.Check and MaintenanceSettings.Retention.
@@ -179,6 +188,11 @@ func (s Settings) validate() error {
 	}
 	if c := s.Maintenance.Retention; c != CheckDaily && c != CheckOff {
 		errs = append(errs, fmt.Errorf("maintenance.retention is %q; it must be %q or %q", c, CheckDaily, CheckOff))
+	}
+	if r := s.Escrow.AgeRecipient; r != "" {
+		if _, err := age.ParseX25519Recipient(r); err != nil {
+			errs = append(errs, fmt.Errorf("escrow.age_recipient: %w (it is an age public key, age1…, made with age-keygen)", err))
+		}
 	}
 	if s.UI.Listen != "" {
 		need(s.UI.PublicURL, "ui.public_url (ui.listen is set)")

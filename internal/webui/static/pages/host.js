@@ -1,4 +1,4 @@
-import { html, useState, usePoll, useAction, link, go, ago, fmtTime, fmtDay, dur, scheduleText, retentionText, Pill, Snap, can, ErrorBox, Loading, CopyButton } from '../lib.js';
+import { html, useState, usePoll, useAction, link, go, ago, fmtTime, fmtDay, dur, bytes, scheduleText, retentionText, Pill, Snap, can, ErrorBox, Loading, CopyButton } from '../lib.js';
 import { api } from '../api.js';
 import { jobState } from './fleet.js';
 
@@ -42,6 +42,57 @@ function KeyPanel({ host, done }) {
     <${ErrorBox} error=${act.error} />
     ${act.done && html`<div class="banner ok">The new key passed every storage check and is credentials version ${act.done.credentials_version}. The agent gets it on its next poll. Export a new escrow bundle on the server: the last one has the old key.</div>`}
   </div>`;
+}
+
+// After a compromise (docs/runbooks/compromised-host.md). The server does every step; this only asks.
+function RotatePanel({ host, done }) {
+  const [msg, setMsg] = useState('');
+  const act = useAction();
+  const r = act.done;
+  return html`<div class="panel">
+    <h3>Rotate the repository password</h3>
+    <p class="muted">For a host you think is compromised. Holdfast adds a new restic password to the repository, removes the old one, revokes the agent's token and issues a new enrollment code. The host backs up again only once it is clean and enrolled again.</p>
+    <label class="field"><span>Why (audit log)</span><input value=${msg} onInput=${(e) => setMsg(e.target.value)} /></label>
+    <div class="row">
+      <button class="danger" disabled=${act.busy || !!r} onClick=${() => act.run(() => api.rotate(host.fqdn, { message: msg }))}>Rotate now</button>
+      <button onClick=${done}>Close</button>
+    </div>
+    <${ErrorBox} error=${act.error} />
+    ${r && html`<div class="banner ok">New password: key <code>${r.new_key}</code>, credentials version ${r.credentials_version}; removed key ${r.removed_keys.join(', ') || '—'}. ${r.escrowed ? 'The escrow file holds the new password.' : ''}</div>
+      ${r.warning && html`<div class="banner warning">${r.warning}</div>`}
+      <p>Once the host is clean or rebuilt, enroll it with code <strong class="mono">${r.enrollment.code}</strong>, valid until ${fmtTime(r.enrollment.expires_at)}. As root on the host:</p>
+      <pre>${r.enrollment.install_command}</pre><${CopyButton} text=${r.enrollment.install_command} />
+      <p class="muted">Also make the host a new S3 key at your S3 server and give it with Replace S3 key: the old key may be known too.</p>`}
+  </div>`;
+}
+
+function DecommissionPanel({ host, done }) {
+  const [typed, setTyped] = useState('');
+  const [msg, setMsg] = useState('');
+  const act = useAction();
+  return html`<div class="panel">
+    <h3>Decommission ${host.fqdn}</h3>
+    <p>This deletes the host's repository and its escrow file, <strong>7 days</strong> from now. Until then it can be cancelled. Afterwards, S3 keeps the old versions until the bucket's lifecycle rule expires them${host.storage?.noncurrent_days ? ` (${host.storage.noncurrent_days} days)` : ''}; then the data is really gone.</p>
+    <label class="field"><span>Type the FQDN to confirm</span><input value=${typed} onInput=${(e) => setTyped(e.target.value)} autocomplete="off" /></label>
+    <label class="field"><span>Why (audit log)</span><input value=${msg} onInput=${(e) => setMsg(e.target.value)} /></label>
+    <div class="row">
+      <button class="danger" disabled=${act.busy || typed !== host.fqdn} onClick=${() => act.run(() => api.decommission(host.fqdn, { confirm: typed, message: msg })).then(done)}>Decommission after 7 days</button>
+      <button onClick=${done}>Close</button>
+    </div>
+    <${ErrorBox} error=${act.error} />
+  </div>`;
+}
+
+// The repository in the bucket: its size, the escrow file, and a decommission.
+function Repository({ host }) {
+  const s = host.size, d = host.decommission, esc = host.escrow || {};
+  return html`<dl class="facts">
+    <dt>Repository</dt><dd><code>repos/${host.fqdn}</code>${s ? ` · ${bytes(s.current_bytes)} in ${s.objects} objects, and ${bytes(s.noncurrent_bytes)} in old versions S3 keeps · measured ${ago(s.measured_at)}` : ' · not measured yet'}</dd>
+    <dt>Escrow</dt><dd>${esc.current ? `the bucket's escrow file holds the current password (written ${fmtTime(esc.written_at)})` : esc.error ? `not written: ${esc.error}` : 'not written'}</dd>
+    ${d && html`<dt>Decommission</dt><dd>${d.done_at
+      ? `done ${fmtTime(d.done_at)}: ${d.objects_deleted} objects deleted, as ${d.requested_by} asked. The data is really gone ${d.really_gone_at ? fmtDay(d.really_gone_at) : 'when the lifecycle rule expires the old versions'}.`
+      : `asked by ${d.requested_by}; the repository is deleted ${fmtTime(d.due_at)}`}</dd>`}
+  </dl>`;
 }
 
 function JobCard({ host, job, cuts, onDone }) {
@@ -105,17 +156,23 @@ export function Host({ fqdn, reloadHosts }) {
         ${can(h, 'retention.cut') && html`<a class="button" href=${link('hosts', h.fqdn, 'prune-now')}>Prune now…</a>`}
         ${can(h, 'config.storage') && html`<button onClick=${() => setPanel('enroll')}>New enrollment code</button>`}
         ${can(h, 'config.storage') && html`<button onClick=${() => setPanel('key')}>Replace S3 key</button>`}
+        ${can(h, 'config.storage') && h.state !== 'retired' && html`<button onClick=${() => setPanel('rotate')}>Rotate password…</button>`}
         ${can(h, 'host.remove') && h.state !== 'retired' && !h.removed_at && html`<button onClick=${() => {
           if (confirm(`Remove ${h.fqdn}? Its agent stops backing up; its repository and snapshots stay, and adding it again brings it back.`))
             act.run(() => api.removeHost(h.fqdn, {})).then(refresh);
         }}>Remove host…</button>`}
+        ${can(h, 'host.decommission') && h.state === 'retired' && !h.decommission && html`<button class="danger" onClick=${() => setPanel('decommission')}>Decommission…</button>`}
+        ${can(h, 'host.decommission') && h.decommission && !h.decommission.done_at && html`<button onClick=${() => act.run(() => api.cancelDecommission(h.fqdn, {})).then(refresh)}>Cancel decommission</button>`}
       </div>
     </div>
     <${ErrorBox} error=${act.error} />
     ${act.done && act.done.run && html`<div class="banner ok">The daily retention run started (run ${act.done.run}). Config history lists past prunes.</div>`}
     ${panel === 'enroll' && html`<${EnrollPanel} host=${h} done=${() => setPanel('')} />`}
     ${panel === 'key' && html`<${KeyPanel} host=${h} done=${() => setPanel('')} />`}
+    ${panel === 'rotate' && html`<${RotatePanel} host=${h} done=${() => { setPanel(''); refresh(); }} />`}
+    ${panel === 'decommission' && html`<${DecommissionPanel} host=${h} done=${() => { setPanel(''); refresh(); }} />`}
     <${Banners} host=${h} onAck=${() => act.run(() => api.acknowledge(h.fqdn)).then(refresh)} />
+    <${Repository} host=${h} />
     <h2>${h.jobs.length} backup jobs</h2>
     <p class="muted">One repository per host, shared by its jobs: <code>repos/${h.fqdn}</code>. They run one at a time.</p>
     ${h.jobs.map((j) => html`<${JobCard} key=${j.id} host=${h} job=${j} cuts=${cuts.data || []} onDone=${refresh} />`)}

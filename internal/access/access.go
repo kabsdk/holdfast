@@ -29,6 +29,8 @@ const (
 	ConfigStorage  = "config.storage"   // add a host, its S3 key, enrollment codes
 	Maintenance    = "maintenance"      // acknowledge changes made outside Holdfast, holdfast check
 	HostRemove     = "host.remove"      // remove a host or a job; never deletes data
+	// HostDecommission deletes a removed host's repository, after a 7-day wait (plan-m5 item 7).
+	HostDecommission = "host.decommission"
 )
 
 // Roles are the three roles and their permissions.
@@ -36,7 +38,7 @@ var Roles = map[string][]string{
 	"viewer": {View},
 	"editor": {View, Browse, BackupRun, RestoreNewDir, ConfigJobs},
 	"admin": {View, Browse, BackupRun, RestoreNewDir, ConfigJobs, RestoreInPlace, RetentionCut, SnapshotDelete,
-		ConfigAccess, ConfigStorage, Maintenance, HostRemove},
+		ConfigAccess, ConfigStorage, Maintenance, HostRemove, HostDecommission},
 }
 
 // All lists every permission, in the order of spec §6.2.

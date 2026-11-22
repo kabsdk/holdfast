@@ -30,6 +30,7 @@ const (
 	CodeMaintVersionDel   = "B009" // the maintenance key can delete an object version for good
 	CodeMaintSettings     = "B010" // the maintenance key can change the bucket's settings
 	CodeLifecycle         = "B011" // no lifecycle rule expires noncurrent versions under repos/
+	CodeEscrowWrite       = "B012" // the maintenance key cannot write and delete under escrow/ (decision 036)
 )
 
 // Finding is one storage check that failed.
@@ -91,6 +92,8 @@ type S3Prober struct {
 	Location Location
 	Maint    Key
 	Timeout  time.Duration // for the whole test; 60s when zero
+	// Escrow tests B012 too: the server writes escrow files when server.yaml names an age recipient.
+	Escrow bool
 }
 
 var probeBody = []byte("holdfast storage probe; safe to delete\n")
@@ -200,6 +203,21 @@ func (p S3Prober) Probe(ctx context.Context, fqdn string, host Key) Report {
 	}
 	if err := list(ctx, hc, b, "repos/"); err == nil {
 		add(CodeHostOtherPrefix, "the host key can list repos/, so it sees every host's name")
+	}
+
+	// The escrow files (decision 036).
+	if p.Escrow {
+		esc := "escrow/" + tag
+		if _, err := put(ctx, mc, b, esc); err != nil {
+			add(CodeEscrowWrite, "the maintenance key cannot write %s: %s; it needs s3:PutObject and s3:DeleteObject on escrow/* (docs/storage.md)", esc, s3err(err))
+		} else {
+			if err := get(ctx, hc, b, esc); err == nil {
+				add(CodeHostOtherPrefix, "the host key read %s, outside its prefix", esc)
+			}
+			if err := mc.RemoveObject(ctx, b, esc, minio.RemoveObjectOptions{}); err != nil {
+				add(CodeEscrowWrite, "the maintenance key cannot delete %s: %s", esc, s3err(err))
+			}
+		}
 	}
 	return rep
 }
