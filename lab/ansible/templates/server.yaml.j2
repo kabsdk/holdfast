@@ -19,9 +19,19 @@ storage:
   endpoint: {{ lab_rgw_url }}
   bucket: {{ storage.bucket }}
   region: {{ storage.region }}
+  # Decision 041: two keys for the bucket, and none on any host (lab/rgw-documented-layout.sh gives them their
+  # statements in the bucket policy).
   maintenance_credentials_file: /etc/holdfast/maintenance.env   # holdfast-maint's key
-  # No provisioner_command: each host's RGW key is the lab's (lab/rgw-documented-layout.sh), given with
-  # holdfast host add --s3-key-file (decision 029).
+  gateway_credentials_file: /etc/holdfast/gateway.env           # holdfast-gateway's key
+
+# Off-site copies (spec §3.7): the lab has one RGW, so the off-site bucket is a second bucket on it, holdfast-offsite
+# (lab/rgw-offsite-layout.sh), with holdfast-offsite's key.
+offsite:
+  endpoint: {{ lab_rgw_url }}
+  bucket: holdfast-offsite
+  region: {{ storage.region }}
+  maintenance_credentials_file: /etc/holdfast/offsite.env
+  poll: 30s
 
 maintenance:
   check: daily

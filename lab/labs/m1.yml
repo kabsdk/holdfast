@@ -1,6 +1,6 @@
 ---
 # lab/labs/m1.yml: the lab m1, for milestone 1 and the RGW provisioning experiment. lab/ansible/ reads it, and
-# lab/lab up m1 brings it up (lab/README.md). The VMs are site A's storage (MicroCeph with RGW), the Holdfast server
+# lab/lab up m1 brings it up (lab/README.md). The VMs are the storage (MicroCeph with RGW), the Holdfast server
 # with PostgreSQL, and one agent host per family Holdfast supports.
 lab_name: m1
 index: 0                              # each lab has its own network, 10.<79+index>.20.0/24 (Clusterlane has 10.77, 10.78)
@@ -65,6 +65,8 @@ storage:
   region: default
   users:
     holdfast-maint: {display_name: Holdfast maintenance, caps: ""}                         # owns the bucket
+    holdfast-gateway: {display_name: Holdfast gateway, caps: ""}                           # decision 041: every host's reads and writes
+    holdfast-offsite: {display_name: Holdfast off-site, caps: ""}                          # the off-site bucket's key (spec §3.7)
     holdfast-provisioner: {display_name: Holdfast provisioner, caps: "users=*;user-policy=*"}  # Admin Ops, IAM user policies
 
 # PostgreSQL on hfsrv, from AppStream's module stream.

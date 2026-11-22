@@ -7,6 +7,3 @@ local	{{ postgresql.database }}	{{ postgresql.user }}		scram-sha-256
 host	{{ postgresql.database }}	{{ postgresql.user }}	127.0.0.1/32	scram-sha-256
 host	{{ postgresql.database }}	{{ postgresql.user }}	::1/128	scram-sha-256
 host	{{ postgresql.database }}	{{ postgresql.user }}	{{ network.subnet }}	scram-sha-256
-# The vault's database (M7, lab/test-vault.sh), on the same PostgreSQL in the lab.
-local	{{ postgresql.database }}_vault	{{ postgresql.user }}		scram-sha-256
-host	{{ postgresql.database }}_vault	{{ postgresql.user }}	127.0.0.1/32	scram-sha-256

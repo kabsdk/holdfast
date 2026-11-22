@@ -3,16 +3,17 @@
 # all 13 metadata properties on each agent VM, against the lab's RGW. lab/lab test <lab> runs it, holding the lab's lock,
 # after building and deploying this checkout and provisioning the server (site.yml --tags binaries,hfserver). For each
 # agent VM, or each one named:
-#   0. (once, for every agent) the host's RGW user host-<vm>: its key made once in the lab's state (credentials/host-<vm>.env,
-#      0600) and put on the storage VM, then lab/rgw-documented-layout.sh --keep-data, which makes the users and gives each
-#      docs/storage.md's host statements for repos/<vm>.<domain>/ in the bucket policy, keeping the bucket's data
+#   0. (once) lab/rgw-documented-layout.sh --keep-data, which gives holdfast-maint and holdfast-gateway docs/storage.md's
+#      statements in the bucket policy, keeping the bucket's data, and lab/rgw-offsite-layout.sh, the off-site bucket.
+#      No host has an RGW user: hosts back up through the server's gateway (decision 041)
 #   1. the fixture, made anew: hf-fidelity build /srv/hf-fixture
-#   2. Holdfast, on the server: holdfast host add <fqdn> --s3-key-file - --job fidelity --path /srv/hf-fixture --daily 03:00 --keep-daily 14d --keep-monthly 12mo
-#      (the key on stdin); on the VM: holdfast-agent enroll against https://<server>:8443 with the lab CA's pin,
-#      restore.root /var/restore in agent.yaml, and holdfast-agent.service enabled and started. The first backup runs at
-#      once. A host Holdfast knows whose agent is enrolled to this server: holdfast job run <fqdn> fidelity instead. A host
-#      Holdfast knows whose agent is not, or whose repository is gone (restic exit 10: the bucket was made again): a new
-#      code (holdfast host enroll-code), and the agent enrolled afresh, which makes Holdfast initialise the repository.
+#   2. Holdfast, on the server: holdfast host add <fqdn> --job fidelity --path /srv/hf-fixture --daily 03:00 --keep-daily 14d --keep-monthly 12mo;
+#      on the VM: holdfast-agent enroll against https://<server>:8443 with the lab CA's pin, which makes the agent's own
+#      key and certificate, restore.root /var/restore in agent.yaml, and holdfast-agent.service enabled and started. The
+#      first backup runs at once. A host Holdfast knows whose agent is enrolled to this server with a certificate:
+#      holdfast job run <fqdn> fidelity instead. A host Holdfast knows whose agent is not (an agent from before M8 has
+#      a token, not a certificate), or whose repository is gone (restic exit 10: the bucket was made again): a new code
+#      (holdfast host enroll-code), and the agent enrolled afresh, which makes Holdfast initialise the repository.
 #   3. the backup's event (holdfast host events --json), the job's newest snapshot (holdfast snapshot list --refresh --json),
 #      a restore of it through the agent into a new directory (holdfast restore --wait --json), then on the VM
 #      hf-fidelity compare /srv/hf-fixture <directory>/srv/hf-fixture. The restores of earlier runs are removed first.
@@ -22,8 +23,8 @@
 # redirect to Authelia, and ada's login through Authelia without a browser, then her logout. Then each VM's OS, kernel
 # and SELinux mode, the 13 properties and the login checks, PASS or FAIL, on the terminal and in
 # <state>/test-fidelity.txt and test-fidelity.json. Exit 0 when all 13 pass on every VM and every login check passes, 1
-# when one does not or a step failed, 2 misused, 3 the lab is not up. S3 keys and enrollment codes travel on SSH's stdin
-# only, and the login's password on curl's: never in an argument on this host, in the log or on the terminal.
+# when one does not or a step failed, 2 misused, 3 the lab is not up. Enrollment codes travel on SSH's stdin only, and
+# the login's password on curl's: never in an argument on this host, in the log or on the terminal.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 lab=${1:-}
@@ -38,7 +39,6 @@ vms=("$@")
 for vm in "${vms[@]}"; do
 	[[ " ${HF_AGENTS[*]} " == *" $vm "* ]] || { echo "test-fidelity: '$vm' is not an agent of the lab $lab (${HF_AGENTS[*]})" >&2; exit 2; }
 done
-creds=$HF_STATE/credentials
 server_url=https://$HF_SERVER_VM.$HF_DOMAIN:8443
 pin_file=$HF_STATE/ca/ca.sha256
 [[ -s $pin_file ]] || { echo "test-fidelity: no $pin_file: the server is not provisioned (lab/lab test $lab does it, or lab/lab up $lab)" >&2; exit 3; }
@@ -76,20 +76,18 @@ echo "$out"
 # Login on the UI, through Authelia: its checks are in the summary.
 bash lab/test-login.sh "$lab" "$work/login.tsv" || true
 
-# 0. Every agent's RGW user and its prefix in the bucket policy, also the agents not tested now, so the policy always
-# covers every host Holdfast may have.
-say "the hosts' RGW users and the bucket policy (lab/rgw-documented-layout.sh --keep-data on $HF_STORAGE_VM)"
-list=
-for vm in "${HF_AGENTS[@]}"; do
-	python3 lab/ansible/files/credential.py s3 "$creds/host-$vm.env" "HFH${vm^^}"
-	vm_ssh "$HF_STORAGE_VM" "umask 077 && mkdir -p /root/hf-lab && cat >/root/hf-lab/host-$vm.env" <"$creds/host-$vm.env"
-	list+="host-$vm $vm.$HF_DOMAIN"$'\n'
-done
-vm_ssh "$HF_STORAGE_VM" "umask 077 && cat >/root/hf-lab/hosts" <<<"$list"
+# 0. The bucket policy for the server's two keys, and the off-site bucket. No host has an RGW user (decision 041).
+say "the bucket policy and the off-site bucket (lab/rgw-documented-layout.sh --keep-data, lab/rgw-offsite-layout.sh on $HF_STORAGE_VM)"
 if ! vm_ssh "$HF_STORAGE_VM" 'bash -s -- --keep-data' <lab/rgw-documented-layout.sh; then
 	say "lab/rgw-documented-layout.sh --keep-data failed on $HF_STORAGE_VM: the log has why"
 	exit 1
 fi
+if ! vm_ssh "$HF_STORAGE_VM" 'bash -s' <lab/rgw-offsite-layout.sh; then
+	say "lab/rgw-offsite-layout.sh failed on $HF_STORAGE_VM: the log has why"
+	exit 1
+fi
+# The keys of before M8 in the lab's state, whose users the two scripts removed: each agent's, and M7's vault's.
+rm -f "$HF_STATE"/credentials/{host,hfb}-*.env "$HF_STATE"/credentials/holdfast-vault-{read,maint}.env
 
 run_vm() {
 	local vm=$1 fqdn=$1.$HF_DOMAIN res=$work/$1 out rc t0 hosts hstate enrolled ids0 mode cmd ev status snap newest dir i
@@ -134,7 +132,7 @@ run_vm() {
 	hosts=$(hf host list --json) || { fail "holdfast host list failed"; return 1; }
 	hstate=$(js 'h = [h for h in j or [] if h["fqdn"] == sys.argv[1]]
 print(h[0]["state"] if h else "absent")' "$fqdn" <<<"$hosts")
-	enrolled=$(vm_ssh "$vm" "f=/etc/holdfast/agent.yaml; test -s /var/lib/holdfast-agent/token &&
+	enrolled=$(vm_ssh "$vm" "f=/etc/holdfast/agent.yaml; test -s /var/lib/holdfast-agent/agent.pem &&
 		grep -qE '^fqdn: \"?$fqdn\"?\$' \$f && grep -qE '^server: \"?$server_url\"?\$' \$f && grep -qE '^ca_sha256: \"?$pin\"?\$' \$f &&
 		echo yes || echo no" </dev/null)
 	echo "Holdfast's state of $fqdn: $hstate; its agent enrolled to $server_url with the lab's pin: $enrolled"
@@ -165,9 +163,9 @@ print(h[0]["state"] if h else "absent")' "$fqdn" <<<"$hosts")
 		vm_ssh "$vm" 'systemctl disable -q --now holdfast-agent 2>/dev/null; rm -rf /etc/holdfast/agent.yaml /etc/holdfast/credentials /var/lib/holdfast-agent' </dev/null
 		local code
 		if [[ $hstate == absent ]]; then
-			say "  $vm: holdfast host add $fqdn --s3-key-file - --job $job --path $fixture --daily 03:00 --keep-daily 14d --keep-monthly 12mo (its key credentials/host-$vm.env on stdin)"
-			out=$(vm_ssh "$HF_SERVER_VM" "holdfast host add $fqdn --s3-key-file - --job $job --path $fixture --daily 03:00 --keep-daily 14d --keep-monthly 12mo -m 'lab/lab test: the fidelity fixture' --json" \
-				<"$creds/host-$vm.env") || { fail "holdfast host add failed (the log has its answer)"; return 1; }
+			say "  $vm: holdfast host add $fqdn --job $job --path $fixture --daily 03:00 --keep-daily 14d --keep-monthly 12mo"
+			out=$(vm_ssh "$HF_SERVER_VM" "holdfast host add $fqdn --job $job --path $fixture --daily 03:00 --keep-daily 14d --keep-monthly 12mo -m 'lab/lab test: the fidelity fixture' --json" \
+				</dev/null) || { fail "holdfast host add failed (the log has its answer)"; return 1; }
 			code=$(js 'print(j["enrollment"]["code"])' <<<"$out")
 			js 'print("added in revision %s; storage checks: %s%s" % (j["revision"], ", ".join(f["code"] for f in (j.get("storage") or {}).get("findings") or []) or "all passed", "; warning: " + j["warning"] if j.get("warning") else ""))' <<<"$out"
 		else

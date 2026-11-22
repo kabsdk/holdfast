@@ -116,9 +116,9 @@ print(j["state"] == "enrolled" and (a.get("restore_bounds") or {}).get("allow_in
 
 # 2. The dump test.
 dump_vm() {
-	local vm=$1 fqdn=$1.$HF_DOMAIN out cmd ev snap dir n pgv
+	local vm=$1 fqdn=$1.$HF_DOMAIN out cmd ev snap dir n pgv prep
 	say "$vm: the dump test with the distribution's PostgreSQL"
-	pgv=$(vm_ssh "$vm" bash -s <<'EOF') || { result FAIL "$vm dump" "preparing the database or agent.yaml failed: is PostgreSQL there (site.yml --tags agentdb)?"; return 1; }
+	prep=$(cat <<'EOF'
 set -eu
 cd /
 pg() { runuser -u postgres -- psql -X -q -v ON_ERROR_STOP=1 "$@"; }
@@ -131,6 +131,8 @@ if ! grep -q '^dumps:' "$f"; then
 fi
 runuser -u postgres -- psql -X -tA -c 'SHOW server_version'
 EOF
+)
+	pgv=$(vm_ssh "$vm" bash -s <<<"$prep") || { result FAIL "$vm dump" "preparing the database or agent.yaml failed: is PostgreSQL there (site.yml --tags agentdb)?"; return 1; }
 	for ((i = 0; i < 60; i++)); do
 		out=$(hf host show "$fqdn" --json 2>/dev/null) && [[ $(js 'print("postgresql" in ((j.get("agent") or {}).get("dumps") or []))' <<<"$out") == True ]] && break
 		sleep 2

@@ -12,18 +12,15 @@
 #   - owned by `holdfast-bucket-owner`, an identity of the admin's own, not by the maintenance key (B010);
 #   - versioning on (B008), and a lifecycle rule that expires noncurrent versions in the whole bucket (B011);
 #   - a bucket policy: the maintenance user `holdfast-maint` may read, write, list and delete under repos/,
-#     including what host users wrote (B003, B004), write and delete under escrow/ (B012), and is denied version
-#     deletes (B009); each host user gets
-#     docs/storage.md's host statements for its own prefix, repos/<fqdn>/, and may delete only under its locks/
-#     (B001-B007).
-# The host users: `test-host` for repos/test.example.com/ (the isolation experiments' and TestS3ProberLive's), and one
-# per line "<user> <fqdn>" of /root/hf-lab/hosts, which lab/lab test writes (host-<vm> for <vm>.m1.holdfast.test).
-# Each user's key is /root/hf-lab/<user>.env (0600, put there from the lab's state, credentials/<user>.env); a user
-# that is missing is made with that key, and one that lacks it is given it. No key is printed.
-# Plain RGW users, no account: the bucket-policy grant is what lets the maintenance user read the host's
+#     including what the gateway user wrote (B003, B004), write and delete under escrow/ (B012), and is denied version
+#     deletes (B009); the gateway user `holdfast-gateway` (decision 041) gets docs/storage.md's gateway statements: read
+#     and write under repos/, delete only under repos/*/locks/, and is denied version deletes (B001, B002, B005-B007).
+# No host has a user: hosts back up through the server's gateway. `test-host` keeps docs/storage.md's former host
+# statements for repos/test.example.com/, for the isolation experiments (lab/rgw-isolation.sh). Its key is
+# /root/hf-lab/test-host.env (0600, from the lab's state); it is made with it when it is missing. lab/ansible/site.yml
+# makes holdfast-maint and holdfast-gateway. No key is printed.
+# Plain RGW users, no account: the bucket-policy grant is what lets the maintenance user read the gateway's
 # objects (docs/storage.md, "If B003 fails").
-# A vault's read user (M7, docs/storage.md "The vault's keys"): each line "<user>" of /root/hf-lab/readers, with its
-# key in /root/hf-lab/<user>.env, may list the bucket and read repos/, and nothing else. lab/test-vault.sh writes it.
 set -euo pipefail
 keep=0
 case $# in
@@ -46,25 +43,11 @@ fi
 k = json.load(sys.stdin)["keys"][0]
 print("AWS_ACCESS_KEY_ID=" + k["access_key"]); print("AWS_SECRET_ACCESS_KEY=" + k["secret_key"])' >holdfast-bucket-owner.env)
 
-# The host users, each with the key in its file.
-hosts=("test-host test.example.com")
-if [[ -f hosts ]]; then
-	while read -r u f _; do
-		[[ -z $u || $u == \#* ]] || hosts+=("$u $f")
-	done <hosts
-fi
-readers=()
-if [[ -f readers ]]; then
-	while read -r u _; do
-		[[ -z $u || $u == \#* ]] || readers+=("$u")
-	done <readers
-fi
-users=("${hosts[@]}")
-for u in "${readers[@]}"; do users+=("$u repos"); done
-for h in "${users[@]}"; do
+# The experiments' host user, with the key in its file, when the lab's state has one there.
+hosts=()
+[[ -s test-host.env ]] && hosts=("test-host test.example.com")
+for h in "${hosts[@]}"; do
 	read -r u f <<<"$h"
-	[[ $u =~ ^[a-z0-9][a-z0-9-]*$ && $f =~ ^[a-z0-9][a-z0-9.-]*$ ]] || { echo "refused: '$u $f' is not '<user> <fqdn>' (/root/hf-lab/hosts)" >&2; exit 1; }
-	[[ -s $u.env ]] || { echo "refused: no key for $u: /root/hf-lab/$u.env is missing" >&2; exit 1; }
 	k=$(key_id "$u")
 	if ! info=$(radosgw-admin user info --uid "$u" 2>/dev/null </dev/null); then
 		(set -a; . "./$u.env"; set +a
@@ -79,6 +62,15 @@ for h in "${users[@]}"; do
 	fi
 done
 unset info
+
+# Each agent's user of before M8 (host-<vm>), with its key file: no host has a user since decision 041.
+for u in $(radosgw-admin user list </dev/null | python3 -c 'import json, re, sys
+print(" ".join(u for u in json.load(sys.stdin) if re.fullmatch(r"host-[a-z0-9]+", u)))'); do
+	radosgw-admin user rm --uid "$u" >/dev/null </dev/null
+	rm -f "$u.env"
+	echo "user $u: removed (no host has a user since M8)"
+done
+rm -f hosts readers
 
 # The bucket's owner and how many objects (every version) it holds; nothing when it is missing.
 read -r owner objects < <(radosgw-admin bucket stats --bucket "$B" 2>/dev/null </dev/null | python3 -c 'import json, sys
@@ -119,13 +111,12 @@ cat >lifecycle.json <<'EOF'
 EOF
 as holdfast-bucket-owner aws --endpoint-url "$RGW" s3api put-bucket-lifecycle-configuration --bucket "$B" --lifecycle-configuration file://lifecycle.json
 
-# The maintenance statements, then docs/storage.md's four host statements for each host user, on its own prefix.
+# The maintenance statements, docs/storage.md's gateway statements, then the experiments' host user on its own prefix.
 python3 -I -c '
 import json, sys
-b, rest = sys.argv[1], sys.argv[2:]
-hosts = [h.split() for h in rest if not h.startswith("reader:")]
-readers = [h[len("reader:"):] for h in rest if h.startswith("reader:")]
+b, hosts = sys.argv[1], [h.split() for h in sys.argv[2:]]
 m = {"AWS": ["arn:aws:iam:::user/holdfast-maint"]}
+g = {"AWS": ["arn:aws:iam:::user/holdfast-gateway"]}
 st = [
     {"Sid": "MaintBucket", "Effect": "Allow", "Principal": m,
      "Action": ["s3:ListBucket", "s3:ListBucketVersions", "s3:GetBucketLocation", "s3:GetBucketVersioning",
@@ -136,6 +127,14 @@ st = [
     {"Sid": "MaintEscrow", "Effect": "Allow", "Principal": m,
      "Action": ["s3:PutObject", "s3:DeleteObject"], "Resource": [f"arn:aws:s3:::{b}/escrow/*"]},
     {"Sid": "MaintNoVersionDeletes", "Effect": "Deny", "Principal": m,
+     "Action": ["s3:DeleteObjectVersion"], "Resource": [f"arn:aws:s3:::{b}/*"]},
+    {"Sid": "GatewayBucket", "Effect": "Allow", "Principal": g, "Action": ["s3:ListBucket", "s3:GetBucketLocation"],
+     "Resource": [f"arn:aws:s3:::{b}"]},
+    {"Sid": "GatewayObjects", "Effect": "Allow", "Principal": g, "Action": ["s3:GetObject", "s3:PutObject"],
+     "Resource": [f"arn:aws:s3:::{b}/repos/*"]},
+    {"Sid": "GatewayLocks", "Effect": "Allow", "Principal": g, "Action": ["s3:DeleteObject"],
+     "Resource": [f"arn:aws:s3:::{b}/repos/*/locks/*"]},
+    {"Sid": "GatewayNoVersionDeletes", "Effect": "Deny", "Principal": g,
      "Action": ["s3:DeleteObjectVersion"], "Resource": [f"arn:aws:s3:::{b}/*"]},
 ]
 for user, fqdn in hosts:
@@ -151,17 +150,10 @@ for user, fqdn in hosts:
         {"Sid": "HostLocks" + sid, "Effect": "Allow", "Principal": h, "Action": ["s3:DeleteObject"],
          "Resource": [f"arn:aws:s3:::{b}/{p}/locks/*"]},
     ]
-for user in readers:
-    r, sid = {"AWS": [f"arn:aws:iam:::user/{user}"]}, "".join(w.capitalize() for w in user.split("-"))
-    st += [
-        {"Sid": "ReaderBucket" + sid, "Effect": "Allow", "Principal": r, "Action": ["s3:GetBucketLocation", "s3:ListBucket"],
-         "Resource": [f"arn:aws:s3:::{b}"]},
-        {"Sid": "ReaderObjects" + sid, "Effect": "Allow", "Principal": r, "Action": ["s3:GetObject"], "Resource": [f"arn:aws:s3:::{b}/repos/*"]},
-    ]
 json.dump({"Version": "2012-10-17", "Statement": st}, sys.stdout, indent=1)
 print()
-' "$B" "${hosts[@]}" "${readers[@]/#/reader:}" >documented-policy.json </dev/null
+' "$B" "${hosts[@]}" >documented-policy.json </dev/null
 as holdfast-bucket-owner aws --endpoint-url "$RGW" s3api put-bucket-policy --bucket "$B" --policy file://documented-policy.json
 echo "bucket $B: owner $(radosgw-admin bucket stats --bucket "$B" </dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["owner"])'), versioning $(as holdfast-bucket-owner aws --endpoint-url "$RGW" s3api get-bucket-versioning --bucket "$B" --query Status --output text)"
-echo "bucket policy: holdfast-maint, and the host users $(for h in "${hosts[@]}"; do read -r u f <<<"$h"; printf '%s (repos/%s/) ' "$u" "$f"; done)"
-((${#readers[@]} == 0)) || echo "bucket policy: the read users ${readers[*]} (repos/, read only)"
+echo "bucket policy: holdfast-maint and holdfast-gateway"
+((${#hosts[@]} == 0)) || echo "bucket policy: and test-host on repos/test.example.com/, for the experiments"

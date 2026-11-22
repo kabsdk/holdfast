@@ -5,15 +5,16 @@
 #   - localhost: the lab's credentials, made once in its state (credentials/, 0600), restic, checked, lab.env written
 #     again, and Authelia's release tarball, downloaded once into the image cache and checked, and unpacked there
 #   - every VM: the lab's names in /etc/hosts
-#   - storage (s3a): MicroCeph, its loop-file OSDs and RGW; the users holdfast-maint (owns the bucket) and
-#     holdfast-provisioner (Admin Ops and IAM user policies); the bucket, versioned; awscli and s3req for experiments
+#   - storage (s3a): MicroCeph, its loop-file OSDs and RGW; the users holdfast-maint (owns the bucket), holdfast-gateway
+#     and holdfast-offsite (decision 041) and holdfast-provisioner (Admin Ops and IAM user policies); the bucket,
+#     versioned; awscli and s3req for experiments
 #   - server (hfsrv): PostgreSQL from AppStream, its database and user
 #   - server and agents: Holdfast's binaries in /usr/bin, restic in /usr/libexec/holdfast, the systemd units (the
 #     agents' not enabled: lab/lab test enrolls them); on the agents, the lab's fidelity tool in /usr/local/bin
 #   - server (hfsrv, tag hfserver): Authelia, the lab's OIDC provider, running with a certificate from the lab's own CA
 #     (made in the lab's state), the lab's users and Holdfast as its client, its /api/health answering over TLS
 #   - server (hfsrv, tag hfserver): a TLS certificate from the lab's CA, server.yaml (the agents' listener, and the UI's
-#     with login through Authelia), the maintenance key, the OIDC client secret and the credentials key, and
+#     with login through Authelia), the maintenance, gateway and off-site keys, the OIDC client secret and the credentials key, and
 #     holdfast-server running, its /healthz answering over TLS and the UI's /api/v1/me 401 without a session
 # Usage: ansible-playbook -i <state>/inventory.yml lab/ansible/site.yml -e lab=<lab> [--tags binaries[,hfserver] -e lab_deploy=true]
 - name: The lab's credentials and what goes onto the VMs, on this host
@@ -270,6 +271,7 @@
       until: lab_rgw.status == 200
 
     - name: Read each RGW user
+      tags: [rgwusers]  # lab/lab test makes users that are new since the lab came up
       ansible.builtin.command:
         argv: ["{{ rgw_admin }}", user, info, --uid, "{{ item }}"]
       register: lab_users
@@ -278,6 +280,7 @@
       loop: "{{ storage.users.keys() | list }}"
 
     - name: Create the users that are missing, with the keys in the lab's state
+      tags: [rgwusers]  # lab/lab test makes users that are new since the lab came up
       ansible.builtin.command:
         argv: ["{{ rgw_admin }}", user, create, --uid, "{{ item.item }}", --display-name, "{{ storage.users[item.item].display_name }}",
                --access-key, "{{ cred.AWS_ACCESS_KEY_ID }}", --secret-key, "{{ cred.AWS_SECRET_ACCESS_KEY }}"]
@@ -289,6 +292,7 @@
       loop: "{{ lab_users.results }}"
 
     - name: Read each RGW user again
+      tags: [rgwusers]  # lab/lab test makes users that are new since the lab came up
       ansible.builtin.command:
         argv: ["{{ rgw_admin }}", user, info, --uid, "{{ item }}"]
       register: lab_users
@@ -297,6 +301,7 @@
       no_log: true
 
     - name: Give a user the key in the lab's state when it lacks it
+      tags: [rgwusers]  # lab/lab test makes users that are new since the lab came up
       ansible.builtin.command:
         argv: ["{{ rgw_admin }}", key, create, --uid, "{{ item.item }}", --key-type, s3,
                --access-key, "{{ cred.AWS_ACCESS_KEY_ID }}", --secret-key, "{{ cred.AWS_SECRET_ACCESS_KEY }}"]
@@ -308,6 +313,7 @@
       loop: "{{ lab_users.results }}"
 
     - name: Give each user its admin caps
+      tags: [rgwusers]  # lab/lab test makes users that are new since the lab came up
       ansible.builtin.command:
         argv: ["{{ rgw_admin }}", caps, add, --uid, "{{ item.item }}", --caps, "{{ storage.users[item.item].caps }}"]
       vars:
@@ -319,12 +325,14 @@
       loop: "{{ lab_users.results }}"
 
     - name: Make /root/hf-lab, root's own, for the lab's experiments
+      tags: [rgwusers]  # lab/lab test makes users that are new since the lab came up
       ansible.builtin.file:
         path: /root/hf-lab
         state: directory
         mode: "0700"
 
     - name: Put the users' key files there (0600)
+      tags: [rgwusers]  # lab/lab test makes users that are new since the lab came up
       ansible.builtin.copy:
         src: "{{ lab_creds }}/{{ item }}.env"
         dest: "/root/hf-lab/{{ item }}.env"
@@ -610,8 +618,8 @@
     lab_deploy: false
     is_server: "{{ inventory_hostname in groups['server'] }}"
     is_debian: "{{ images[vms[inventory_hostname].image].family == 'debian' }}"
-    hf_packages: "{{ ['holdfast-restic', 'holdfast-cli', 'holdfast-server', 'holdfast-freshness', 'holdfast-vault'] if is_server else ['holdfast-restic', 'holdfast-agent'] }}"
-    hf_units: "{{ ['holdfast-server.service', 'holdfast-freshness.service', 'holdfast-vault.service'] if is_server else ['holdfast-agent.service'] }}"
+    hf_packages: "{{ ['holdfast-restic', 'holdfast-cli', 'holdfast-server', 'holdfast-freshness'] if is_server else ['holdfast-restic', 'holdfast-agent'] }}"
+    hf_units: "{{ ['holdfast-server.service', 'holdfast-freshness.service'] if is_server else ['holdfast-agent.service'] }}"
     hf_version: "{{ hostvars['localhost'].lab_pkg_version }}"
     hf_suffix: "{{ ('_' ~ hf_version ~ '_amd64.deb') if is_debian else ('-' ~ hf_version ~ '.x86_64.rpm') }}"
     hf_files: "{{ hf_packages | product([hf_suffix]) | map('join') | list }}"
@@ -622,6 +630,27 @@
         that: hf_files | difference(hostvars['localhost'].lab_pkg_files) == []
         fail_msg: "dist/SHA256SUMS lacks {{ hf_files | difference(hostvars['localhost'].lab_pkg_files) | join(', ') }}: make packages"
         quiet: true
+
+    # M8 removed holdfast-vault (decision 041): the server makes the off-site copies. On a lab made before M8, its
+    # package, its settings, its state and its database (lab/test-vault.sh made them) go, once.
+    - name: Read whether M7's holdfast-vault is installed
+      ansible.builtin.command:
+        argv: [rpm, -q, holdfast-vault]
+      register: hf_vault_pkg
+      changed_when: false
+      failed_when: false
+      when: is_server
+
+    - name: Remove it, its settings, its state and its database holdfast_vault
+      ansible.builtin.shell: |
+        set -euo pipefail
+        systemctl disable --now holdfast-vault.service || true
+        rpm -e holdfast-vault
+        rm -rf /etc/holdfast-vault /var/lib/holdfast-vault
+        runuser -u postgres -- psql -X -q -v ON_ERROR_STOP=1 -c 'DROP DATABASE IF EXISTS holdfast_vault'
+      args:
+        executable: /bin/bash
+      when: is_server and hf_vault_pkg.rc == 0
 
     - name: Make {{ hf_dir }}
       ansible.builtin.file:
@@ -871,8 +900,8 @@
         msg: "Authelia {{ authelia.version }} at {{ lab_oidc_issuer }}, users {{ authelia.users.keys() | join(', ') }} (passwords in {{ lab_creds }}/authelia-<user>.pw)"
 
 # The server as an admin would set it up (deploy/examples/server.yaml, docs/storage.md): TLS from the lab's own CA, the
-# maintenance key, no provisioner command (each host's RGW key is the lab's, given with holdfast host add), and the UI
-# with login through Authelia. lab/lab up runs it with the rest, and lab/lab test runs it before every test
+# maintenance and gateway keys (no host has a key, decision 041), off-site copies to a second bucket with its own key,
+# and the UI with login through Authelia. lab/lab up runs it with the rest, and lab/lab test runs it before every test
 # (--tags binaries,hfserver).
 - name: The Holdfast server, configured and running
   hosts: server
@@ -923,11 +952,17 @@
       diff: false
       notify: Restart holdfast-server
 
-    - name: The maintenance key, holdfast-maint's (/etc/holdfast/maintenance.env, 0600)
+    - name: The bucket's keys, and the off-site bucket's (0600)
       ansible.builtin.copy:
-        src: "{{ lab_creds }}/holdfast-maint.env"
-        dest: /etc/holdfast/maintenance.env
+        src: "{{ lab_creds }}/{{ item.src }}"
+        dest: "/etc/holdfast/{{ item.dest }}"
         mode: "0600"
+      loop:
+        - {src: holdfast-maint.env, dest: maintenance.env}
+        - {src: holdfast-gateway.env, dest: gateway.env}
+        - {src: holdfast-offsite.env, dest: offsite.env}
+      loop_control:
+        label: "{{ item.dest }}"
       diff: false
       notify: Restart holdfast-server
 

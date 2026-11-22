@@ -6,7 +6,7 @@ one command. One lab ships, `m1`.
 
 | VM | Role | OS (image) | vCPU | MiB | Disk GiB | Address |
 | --- | --- | --- | --- | --- | --- | --- |
-| `s3a` | site A's storage: MicroCeph (Squid 19.2.3, snap `squid/stable`, held), 3 loop-file OSDs of 4 GiB, RGW on port 80 | Ubuntu 24.04 | 2 | 4096 | 40 | 10.79.20.10 |
+| `s3a` | the storage: MicroCeph (Squid 19.2.3, snap `squid/stable`, held), 3 loop-file OSDs of 4 GiB, RGW on port 80, the buckets `holdfast` and `holdfast-offsite` | Ubuntu 24.04 | 2 | 4096 | 40 | 10.79.20.10 |
 | `hfsrv` | Holdfast server: PostgreSQL 16 (AppStream module), database and user `holdfast`; `holdfast-server`, `holdfast`, `holdfast-freshness` in /usr/bin; Authelia 4.39.28, the OIDC provider for login | AlmaLinux 9.8 | 2 | 2048 | 20 | 10.79.20.20 |
 | `ub24` | agent | Ubuntu 24.04 | 1 | 1024 | 12 | 10.79.20.31 |
 | `el9` | agent (the RHEL stand-in) | AlmaLinux 9.8 | 1 | 1024 | 12 | 10.79.20.32 |
@@ -29,7 +29,7 @@ installed but not configured. Every VM has the others' names in `/etc/hosts`
 | `lab/lab status m1 [--json]` | absent, off, ready or broken, with what each VM answered and why it is not ready |
 | `lab/lab ssh m1 <vm> [command]` | SSH as root with the lab's key |
 | `lab/lab deploy m1` | builds this checkout's packages and installs them on hfsrv and the agents, restarting any Holdfast service that runs |
-| `lab/lab test m1 [<vm>...]` | M2's "done when", the fidelity test through Holdfast (below): builds and deploys, provisions the server and Authelia, checks login on the UI through Authelia, then backs up and restores the metadata fixture on each agent VM (or those named) and compares the 13 properties |
+| `lab/lab test m1 [<vm>...]` | M2's "done when", the fidelity test through Holdfast (below): builds and deploys, provisions the server and Authelia, checks login on the UI through Authelia, then backs up and restores the metadata fixture on each agent VM (or those named) and compares the 13 properties; then M6's rebuild and dump tests and M8's off-site test (below) |
 | `lab/lab isolation m1 account` | the RGW-accounts test (below) |
 | `lab/lab isolation m1 <user-policy\|bucket-policy> [--maint-policy]` | the same question without accounts |
 | `lab/lab stop m1` | shuts the VMs down; `up` starts them again |
@@ -47,9 +47,11 @@ is needed: libvirt owns every disk and seed in the pool `default`.
 
 - **State:** `${XDG_STATE_HOME:-~/.local/state}/holdfast/labs/m1/`: `lab.env` (source it for the lab's names, URLs and
   file paths), `inventory.yml`, the SSH key, `ceph-version`, and `credentials/` (0700, each file 0600):
-  `holdfast-maint.env` and `holdfast-provisioner.env` (`AWS_ACCESS_KEY_ID=`, `AWS_SECRET_ACCESS_KEY=`, the format
-  `storage.ReadKeyFile` reads), `postgresql-holdfast.pw` and `.dsn`, the agents' RGW keys (`host-<vm>.env`, made by
-  `lab/lab test`), and the experiments' keys (`test-host.env`, `acct-*.env`, `test-host.restic.pw`). Authelia's, made
+  the server's RGW keys `holdfast-maint.env`, `holdfast-gateway.env` and `holdfast-offsite.env`, and the experiments'
+  `holdfast-provisioner.env` (`AWS_ACCESS_KEY_ID=`, `AWS_SECRET_ACCESS_KEY=`, the format `storage.ReadKeyFile` reads),
+  `postgresql-holdfast.pw` and `.dsn`, and the experiments' keys (`test-host.env`, `acct-*.env`, `test-host.restic.pw`).
+  No agent has an RGW key (decision 041): each one's identity is its own certificate, in
+  `/var/lib/holdfast-agent/agent.pem` on its VM, which no copy leaves. Authelia's, made
   once by `lab/ansible/files/authelia-credentials.sh` with the release's own `authelia`: each user's password
   (`authelia-<user>.pw`) and its argon2id digest (`.digest`), Holdfast's client secret (`authelia-client.secret`) and its
   pbkdf2 digest, the ID-token signing key (`authelia-jwks.pem`), and `authelia-{jwt,session,storage,hmac}.secret`. The
@@ -63,10 +65,12 @@ is needed: libvirt owns every disk and seed in the pool `default`.
   `https://hfsrv.m1.holdfast.test` (`ui.listen: ":443"`, the same certificate: the lab has no CA browsers trust), and
   the CLI `holdfast` as root on hfsrv (`lab/lab ssh m1 hfsrv holdfast host list`). `/etc/holdfast/` holds `server.yaml`
   (0600, from `lab/ansible/templates/server.yaml.j2`), `tls/` (the certificate with the CA's after it, its key, the
-  CA's, which `auth.oidc.ca_file` names), `maintenance.env` (holdfast-maint's key), `oidc-client-secret`,
-  `credentials.key` (made once there by `holdfast-server keygen`; no copy is kept elsewhere, so a rebuilt hfsrv starts
-  with a new database too) and `db.dsn`. There is no `provisioner_command`: each host's RGW key is the lab's, given
-  with `holdfast host add --s3-key-file`. `auth.bootstrap_admins` is empty: the default bindings make ada admin.
+  CA's, which `auth.oidc.ca_file` names), `maintenance.env` (holdfast-maint's key), `gateway.env` (holdfast-gateway's,
+  the key the gateway uses for every host's reads and writes), `offsite.env` (holdfast-offsite's, for the off-site
+  bucket), `oidc-client-secret`, `credentials.key` (made once there by `holdfast-server keygen`; no copy is kept
+  elsewhere, so a rebuilt hfsrv starts with a new database too) and `db.dsn`. `server.yaml` has an `offsite:` section,
+  so the server copies each host's snapshots to `holdfast-offsite` every 30 seconds; without it the lab would run the
+  same, with no off-site copies. `auth.bootstrap_admins` is empty: the default bindings make ada admin.
 - **Authelia:** `https://hfsrv.m1.holdfast.test:9091`, the issuer in `server.yaml` (plan-m4 Q9), set up as the e2e
   tests' (`test/e2e/authelia/setup.sh`). Its release tarball `authelia-v4.39.28-linux-amd64.tar.gz` is pinned by URL
   and sha256 in `lab/labs/m1.yml`, downloaded once into `~/.cache/holdfast-lab` and unpacked beside it, and its
@@ -159,19 +163,18 @@ HOLDFAST_PROBE_EXPECT=B003 go test ./internal/server/storage/ -run TestS3ProberL
   layout `docs/storage.md` describes:
   - an owner of its own, `holdfast-bucket-owner`;
   - versioning, and a lifecycle rule that expires noncurrent versions after 30 days;
-  - a bucket policy with the narrowed maintenance grant and its deny on `s3:DeleteObjectVersion`, plus
-    `docs/storage.md`'s four host statements for each host user on its own prefix: `test-host` for
-    `repos/test.example.com/`, and the agents' users `host-<vm>` for `repos/<vm>.m1.holdfast.test/`. The agents'
-    users are listed in `/root/hf-lab/hosts` on s3a, with their keys beside it; `lab/lab test` writes both from
-    the lab's state, and the script makes each user, with its key, when it is missing.
+  - a bucket policy with the narrowed maintenance grant and its deny on `s3:DeleteObjectVersion`, and
+    `docs/storage.md`'s gateway statements for `holdfast-gateway` (decision 041: read and write under `repos/`,
+    delete only under `repos/*/locks/`, no version deletes). The experiments' `test-host` keeps the former host
+    statements on `repos/test.example.com/` when its key is in `/root/hf-lab/`; no agent has a user.
 
   Run it with `lab/lab ssh m1 s3a 'bash -s' < lab/rgw-documented-layout.sh`. It deletes the lab
   bucket's data first. With `'bash -s -- --keep-data'` it keeps a bucket already in this layout and its
   data, and only makes the users and puts the lifecycle rule and the policy again; `lab/lab test` runs it
   so. After it, `TestS3ProberLive` with `HOLDFAST_PROBE_EXPECT=` passes every check,
   B001–B011, on Ceph 19.2.3 with plain users. The bucket-policy grant lets the maintenance user read the
-  host's objects, although a third identity owns the bucket. Each agent's key passes the same checks
-  when `holdfast host add` tests it.
+  host's objects, although a third identity owns the bucket. Since M8 the host-key checks (B001, B002,
+  B005–B007) test the gateway key, as the server's own storage test does at `holdfast host add` and `holdfast check`.
 - The isolation experiments (`lab/lab isolation`) still assume their own layout: `holdfast-maint` owns the
   bucket. Running one replaces this layout, so run `rgw-documented-layout.sh` again afterwards, without
   `--keep-data` (`lab/lab test` refuses a bucket that another identity owns and that holds data; an empty one, as
@@ -182,7 +185,7 @@ HOLDFAST_PROBE_EXPECT=B003 go test ./internal/server/storage/ -run TestS3ProberL
 ## The fidelity test through Holdfast: M2's "done when"
 
 `lab/lab test m1` (`lab/test-fidelity.sh`) checks that a backup and a restore made through Holdfast keep all 13
-metadata properties on the three agent VMs, against site A's Ceph RGW (docs/plan-m2.md, Q9). It also checks login on
+metadata properties on the three agent VMs, against the lab's Ceph RGW through the server's gateway (docs/plan-m2.md, Q9). It also checks login on
 the UI through Authelia (plan-m4 Q9). It needs a ready lab (`lab/lab up m1`) and no internet on the VMs. It holds the
 lab's lock, and takes about two minutes. It:
 
@@ -203,18 +206,19 @@ lab's lock, and takes about two minutes. It:
 
    Each check is a line in the summary. The password, the cookies and the authorization code are never in an
    argument, the log or the terminal, and the cookie jar is removed afterwards;
-3. makes each agent's RGW user and its key once (`credentials/host-<vm>.env`), and puts them in the bucket policy
-   (`rgw-documented-layout.sh --keep-data`);
+3. puts the bucket policy for the server's keys (`rgw-documented-layout.sh --keep-data`) and lays out the off-site
+   bucket (`rgw-offsite-layout.sh`), keeping both buckets' data. No agent has an RGW user;
 4. on each agent VM, or each one named (`lab/lab test m1 el9`):
    - makes the fixture anew: `hf-fidelity build /srv/hf-fixture` (`lab/fidelity`, the e2e suite's
      `internal/fidelity`);
-   - on hfsrv, `holdfast host add <fqdn> --s3-key-file - --job fidelity --path /srv/hf-fixture --daily 03:00 --keep-daily 14d --keep-monthly 12mo`, with
-     the key on stdin; on the VM, `holdfast-agent enroll --server https://hfsrv.m1.holdfast.test:8443 --fqdn <fqdn>
-     --code <code> --ca-sha256 <pin> --restic /usr/libexec/holdfast/restic`, with the code on stdin, then
-     `restore.root: /var/restore` in `agent.yaml` and `holdfast-agent.service` enabled and started; the agent backs up
-     at once;
-   - on a later run, when the host exists and its agent is enrolled: `holdfast job run <fqdn> fidelity` instead.
-     An agent that lost its enrollment, or a repository that is gone, gets a new code (`holdfast host enroll-code`);
+   - on hfsrv, `holdfast host add <fqdn> --job fidelity --path /srv/hf-fixture --daily 03:00 --keep-daily 14d --keep-monthly 12mo`;
+     on the VM, `holdfast-agent enroll --server https://hfsrv.m1.holdfast.test:8443 --fqdn <fqdn>
+     --code <code> --ca-sha256 <pin> --restic /usr/libexec/holdfast/restic`, with the code on stdin, which makes the
+     agent's key and certificate (`agent.pem`), then `restore.root: /var/restore` in `agent.yaml` and
+     `holdfast-agent.service` enabled and started; the agent backs up at once, through the server's gateway;
+   - on a later run, when the host exists and its agent is enrolled with a certificate: `holdfast job run <fqdn> fidelity`
+     instead. An agent that lost its enrollment, one enrolled before M8 (a token, not a certificate), or a repository
+     that is gone, gets a new code (`holdfast host enroll-code`);
    - waits for the backup's event (`holdfast host events --json`), takes the job's newest snapshot
      (`holdfast snapshot list --refresh --json`, which must be that backup's and made by Holdfast), restores it
      through the agent into a new directory (`holdfast restore <fqdn> <id> --wait --json`, `detail.directory`), and
@@ -224,8 +228,8 @@ lab's lock, and takes about two minutes. It:
 5. prints each VM's OS, kernel and SELinux mode, the 13 properties and the login checks, and exits 1 if a property
    is lost or a login check fails.
 
-The earlier runs' restores in `/var/restore` are removed first; the last one stays for a look. S3 keys and enrollment
-codes only ever travel on SSH's stdin: none is in an argument on this host, in the log or on the terminal.
+The earlier runs' restores in `/var/restore` are removed first; the last one stays for a look. Enrollment codes only
+ever travel on SSH's stdin: none is in an argument on this host, in the log or on the terminal.
 
 **Result, 2026-11-21** (Holdfast at `e8eadcd`, whose code is `c6cb429`'s, with this lab; restic 0.19.1, Ceph 19.2.3
 Squid; SELinux enforcing on el9 and ol9, no denial logged):
@@ -313,35 +317,52 @@ denied`. A dump's file has no SELinux label in its snapshot, so restic tried to 
 SELinux refuses. A dump's restore, and a restore from another host, now leave that label alone
 (`--exclude-xattr security.selinux`); other restores still restore labels exactly, as the fidelity test checks.
 
-### M7's lab test: the vault
+### M8's lab test: off-site copies
 
-Then `lab/lab test m1` runs `lab/test-vault.sh` (plan-m7 §3). The lab has one RGW, so **site B is a second bucket on
-it**, `holdfast-offsite`, not another realm or cluster as docs/storage.md recommends; and **holdfast-vault runs on hfsrv**,
-beside holdfast-server, with a database of its own there, `holdfast_vault`. It:
-- makes the vault's keys once in the lab's state: `holdfast-vault-read` (site A, read only, `repos/`, in site A's bucket
-  policy through `/root/hf-lab/readers`), `holdfast-vault-maint` (site B's maintenance key) and `hfb-<vm>` (each host's
-  restore key in site B), and lays site B's bucket out with `lab/rgw-vault-layout.sh`;
-- registers the vault on site A (`holdfast vault add site-b`, the key on stdin; again on each run, so the token is
-  new), writes `/etc/holdfast-vault/vault.yaml` (poll 30s) and starts `holdfast-vault.service`;
-- waits for each agent's newest fidelity snapshot to be copied, made by Holdfast, and for site A's host view to show it;
-- gives one VM's restore key to the vault (`HF_VAULT_VM`, default the first agent), restores the copy from site B
-  through that agent (`holdfast restore --from-vault site-b --wait`), and compares it with the fixture
-  (`hf-fidelity compare`, 13 properties).
+Then `lab/lab test m1` runs `lab/test-offsite.sh` (plan-m8 §2 part 5). Off-site copies are optional; the lab turns
+them on with `offsite:` in hfsrv's `server.yaml`. holdfast-server makes the copies itself (decision 041): there is no
+other program, no database of its own (its tables are in the schema `offsite` of `holdfast`) and nothing to register.
+The lab has one RGW, so **the off-site bucket is a second bucket on it**, `holdfast-offsite`, with its own user
+`holdfast-offsite`, not another realm or cluster as docs/storage.md recommends. The test:
+- checks that the server copies off-site (`holdfast settings`);
+- waits for each agent's newest fidelity snapshot to be copied, made by Holdfast (`holdfast --offsite snapshot list`),
+  and for the host's page to show the copies (`holdfast host show`);
+- checks, on one VM (`HF_OFFSITE_VM`, default the first agent), that the agent's certificate cannot read its off-site
+  copy through the gateway outside a restore (403);
+- restores the copy through that agent (`holdfast restore --from-offsite --wait`), which reads it through the gateway
+  while the restore lasts, and compares it with the fixture (`hf-fidelity compare`, 13 properties).
 
-**Result, 2026-11-22** (M7, Holdfast 0.5.0~dev52, restic 0.19.1, rclone 1.76.0, Ceph 19.2.3; the first run):
+Before M8, M7's test ran holdfast-vault beside the server, with read and restore keys of its own; it passed on
+2026-11-22 (Holdfast 0.5.0~dev52), and M8 removed it. On a lab made before M8, the first `lab/lab test` clears what
+was left, once: holdfast-vault's package, settings, state and database `holdfast_vault` on hfsrv (`site.yml`); the
+agents' users `host-<vm>` (`rgw-documented-layout.sh`); the vault's users and the off-site bucket with M7's copies,
+whose passwords were in the vault's database (`rgw-offsite-layout.sh`, which then makes the bucket again, empty); and
+those users' keys in the lab's state. Each agent enrolls again, with a certificate; its repository stays.
+
+**Result, 2026-11-22** (M8, Holdfast 0.5.0~dev58 at `5beb9e9`, restic 0.19.1, Ceph 19.2.3; SELinux enforcing on el9 and
+ol9, no denial logged). The whole of `lab/lab test m1` passed on a lab made before M8: the fidelity test 39 of 39 and
+login 5 of 5, every backup and restore through the gateway; M6's rebuild and dump tests 4 of 4; and
 
 ```
-PASS   storage                        site B is bucket holdfast-offsite; the vault's read user may only read site A's repos/
-PASS   vault set-up                   registered on site A; holdfast-vault runs on hfsrv, copying every 30s
-PASS   ub24 copy                      9d73fc17 copied to site B as 2516200b; site A sees 17 copies
-PASS   el9 copy                       741a4159 copied to site B as 20527dc6; site A sees 14 copies
-PASS   ol9 copy                       ddd9d0b8 copied to site B as 2a603427; site A sees 14 copies
-PASS   ub24 restore from B            restored from site B into /var/restore/20261122-130616-root-2516200b: 13 of 13 properties kept
+PASS   off-site                       holdfast-server copies to holdfast-offsite, every 30s
+PASS   ub24 copy                      c0a1e531 copied off-site as 068484b6; the host's page shows 1 copies
+PASS   el9 copy                       d88637e7 copied off-site as 8e7e2b5e; the host's page shows 7 copies
+PASS   ol9 copy                       3f0cad3a copied off-site as 4095e5d3; the host's page shows 7 copies
+PASS   ub24 off-site, no restore      the host's certificate cannot read its off-site copy outside a restore (403)
+PASS   ub24 restore from off-site     restored from off-site through the gateway into /var/restore/20261122-165857-root-068484b6: 13 of 13 properties kept
 ```
 
-Each host's whole history was copied (the fidelity and dump jobs' snapshots of earlier runs), site B's storage passed its
-checks with the vault's maintenance key and ub24's restore key, the vault logged no warning, and no job was behind.
-el9 and ol9 show `restore_key`: only ub24 was given one.
+No agent VM holds an S3 key: each has its `agent.pem` and the server's CA, and no file in `/etc/holdfast` or
+`/var/lib/holdfast-agent` names one. The RGW has no host user. hfsrv runs holdfast-server alone, with the schemas
+`public` and `offsite` in the database `holdfast`.
+
+**What the run found in the product.** `restic init` makes a missing bucket itself, owned by the key it runs with, and
+on Ceph RGW a plain user may make buckets. The first run removed the off-site bucket (M7's copies) while the server
+ran; the off-site copier, which then initialised its repositories without testing the storage first, made the bucket
+again, owned by `holdfast-offsite` (B010). Primary already tested the storage before every init. Fixed in `5beb9e9`: the
+copier does too, and makes nothing when the test fails. MinIO's policies refuse a bucket to a key without
+`s3:CreateBucket`, so the e2e suite could not see it; `internal/restic`'s `TestInitFromTestsTheStorageFirst` covers it.
+`rgw-offsite-layout.sh` makes such a bucket again in the layout.
 
 **What the run found in the product.** Both bugs are fixed; see `docs/plan-m2.md`.
 - The agent and the server now default `restic_bin` to `/usr/libexec/holdfast/restic`.
