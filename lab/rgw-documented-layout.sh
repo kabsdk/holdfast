@@ -12,7 +12,8 @@
 #   - owned by `holdfast-bucket-owner`, an identity of the admin's own, not by the maintenance key (B010);
 #   - versioning on (B008), and a lifecycle rule that expires noncurrent versions in the whole bucket (B011);
 #   - a bucket policy: the maintenance user `holdfast-maint` may read, write, list and delete under repos/,
-#     including what the gateway user wrote (B003, B004), write and delete under escrow/ (B012), and is denied version
+#     including what the gateway user wrote (B003, B004), write and delete under escrow/ (B012), read, write and
+#     delete under meta/, where the nightly exports go (B016), and is denied version
 #     deletes (B009); the gateway user `holdfast-gateway` (decision 041) gets docs/storage.md's gateway statements: read
 #     and write under repos/, delete only under repos/*/locks/, and is denied version deletes (B001, B002, B005-B007).
 # No host has a user: hosts back up through the server's gateway. `test-host` keeps docs/storage.md's former host
@@ -126,6 +127,8 @@ st = [
      "Action": ["s3:GetObject", "s3:GetObjectVersion", "s3:PutObject", "s3:DeleteObject"], "Resource": [f"arn:aws:s3:::{b}/repos/*"]},
     {"Sid": "MaintEscrow", "Effect": "Allow", "Principal": m,
      "Action": ["s3:PutObject", "s3:DeleteObject"], "Resource": [f"arn:aws:s3:::{b}/escrow/*"]},
+    {"Sid": "MaintMeta", "Effect": "Allow", "Principal": m,
+     "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"], "Resource": [f"arn:aws:s3:::{b}/meta/*"]},
     {"Sid": "MaintNoVersionDeletes", "Effect": "Deny", "Principal": m,
      "Action": ["s3:DeleteObjectVersion"], "Resource": [f"arn:aws:s3:::{b}/*"]},
     {"Sid": "GatewayBucket", "Effect": "Allow", "Principal": g, "Action": ["s3:ListBucket", "s3:GetBucketLocation"],

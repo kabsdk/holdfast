@@ -73,6 +73,7 @@ st = [
     {"Sid": "MaintObjects", "Effect": "Allow", "Principal": m,
      "Action": ["s3:GetObject", "s3:GetObjectVersion", "s3:PutObject", "s3:DeleteObject"], "Resource": [f"arn:aws:s3:::{b}/repos/*"]},
     {"Sid": "MaintEscrow", "Effect": "Allow", "Principal": m, "Action": ["s3:PutObject", "s3:DeleteObject"], "Resource": [f"arn:aws:s3:::{b}/escrow/*"]},
+    {"Sid": "MaintMeta", "Effect": "Allow", "Principal": m, "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"], "Resource": [f"arn:aws:s3:::{b}/meta/*"]},
     {"Sid": "MaintNoVersionDeletes", "Effect": "Deny", "Principal": m, "Action": ["s3:DeleteObjectVersion"], "Resource": [f"arn:aws:s3:::{b}/*"]},
 ]
 json.dump({"Version": "2012-10-17", "Statement": st}, sys.stdout, indent=1)

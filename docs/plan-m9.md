@@ -4,6 +4,12 @@ Status: accepted, 2026-11-22; revised after M8 for decision 041 (one server prog
 pinned certificates, off-site copies made by the server and optional). **You accepted every proposal in §5** ("Go",
 after I offered "accept the proposals"), Q5's open detail included; Q9 no longer applies.
 
+**Built, 2026-11-22.** The e2e suite passes, 27 of 27, with `TestRebuildFromExport`. The lab walked the runbook on
+hfsrv: database, packages, `/etc/holdfast` and state lost, the server restored from the export, the three agents back
+by themselves with every snapshot, 9 of 9 checks; and the gateway carried 66 MiB/s from three agents at once
+(lab/README.md, install.md). One change from the plan: `server.yaml` is not in the export, as it may hold the
+database's password; the admin keeps it offline with its key files.
+
 **Scope (decision 042):** one server, no high availability. M9 is the server's whole recovery story: a new server,
 given the same bucket, picks up where the old one was. It is kept to that; nothing here adds a standby, a cluster or a
 second gateway.

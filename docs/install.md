@@ -47,6 +47,16 @@ gives way to the host's own work.
 the agents pin. The server exports its database every night to `meta/` in the bucket, encrypted to the age key; a
 new server is restored from the newest with `holdfast-server restore-export`.
 
+## Sizing
+
+There is one server (decision 042), and every backup and restore passes through its gateway, so its network is what
+a fleet shares. In the lab (`lab/lab sizing m1`), a server with 2 vCPUs and 2 GiB carried **66 MiB/s**: three agents
+backed up 256 MiB each of new random data at once, 768 MiB in 11.6 s, with the server's CPU about a quarter busy. The
+lab is one machine's KVM, Ceph and virtual network, so this is a floor, not a limit: on real hardware the server's
+network link and the storage are what bound it. A fleet whose nightly changes take longer to cross that link than its
+backup window needs a second, independent Holdfast with its own bucket; Holdfast does not spread one fleet over
+several servers.
+
 ## Upgrading
 
 **From a release before M8, every agent enrolls again** (decision 041): it had a bearer token and an S3 key, and

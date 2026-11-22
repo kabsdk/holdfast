@@ -29,7 +29,8 @@ installed but not configured. Every VM has the others' names in `/etc/hosts`
 | `lab/lab status m1 [--json]` | absent, off, ready or broken, with what each VM answered and why it is not ready |
 | `lab/lab ssh m1 <vm> [command]` | SSH as root with the lab's key |
 | `lab/lab deploy m1` | builds this checkout's packages and installs them on hfsrv and the agents, restarting any Holdfast service that runs |
-| `lab/lab test m1 [<vm>...]` | M2's "done when", the fidelity test through Holdfast (below): builds and deploys, provisions the server and Authelia, checks login on the UI through Authelia, then backs up and restores the metadata fixture on each agent VM (or those named) and compares the 13 properties; then M6's rebuild and dump tests and M8's off-site test (below) |
+| `lab/lab test m1 [<vm>...]` | M2's "done when", the fidelity test through Holdfast (below): builds and deploys, provisions the server and Authelia, checks login on the UI through Authelia, then backs up and restores the metadata fixture on each agent VM (or those named) and compares the 13 properties; then M6's rebuild and dump tests, M8's off-site test and M9's server rebuild (below) |
+| `lab/lab sizing m1 [<vm>...]` | what one server's gateway carries: every agent backs up new random data at once, timed (below) |
 | `lab/lab isolation m1 account` | the RGW-accounts test (below) |
 | `lab/lab isolation m1 <user-policy\|bucket-policy> [--maint-policy]` | the same question without accounts |
 | `lab/lab stop m1` | shuts the VMs down; `up` starts them again |
@@ -67,8 +68,9 @@ is needed: libvirt owns every disk and seed in the pool `default`.
   (0600, from `lab/ansible/templates/server.yaml.j2`), `tls/` (the certificate with the CA's after it, its key, the
   CA's, which `auth.oidc.ca_file` names), `maintenance.env` (holdfast-maint's key), `gateway.env` (holdfast-gateway's,
   the key the gateway uses for every host's reads and writes), `offsite.env` (holdfast-offsite's, for the off-site
-  bucket), `oidc-client-secret`, `credentials.key` (made once there by `holdfast-server keygen`; no copy is kept
-  elsewhere, so a rebuilt hfsrv starts with a new database too) and `db.dsn`. `server.yaml` has an `offsite:` section,
+  bucket), `oidc-client-secret`, `credentials.key` (made once there by `holdfast-server keygen`) and `db.dsn`. The
+  M9 test keeps the admin's offline copy of all of `/etc/holdfast` in the lab's state, `rebuild/etc-holdfast.tar`
+  (0600), as the rebuild runbook says to; a hfsrv rebuilt by `lab/lab up` without it starts with a new database. `server.yaml` has an `offsite:` section,
   so the server copies each host's snapshots to `holdfast-offsite` every 30 seconds; without it the lab would run the
   same, with no off-site copies. `auth.bootstrap_admins` is empty: the default bindings make ada admin.
 - **Authelia:** `https://hfsrv.m1.holdfast.test:9091`, the issuer in `server.yaml` (plan-m4 Q9), set up as the e2e
@@ -385,6 +387,59 @@ As found:
   `restic init` is also not in the audit log: the log has `enrollment.code_issued`, `agent.enrolled` and
   `snapshot.disappeared`, but nothing for the initialisation. The lab's three hosts still show both alerts
   (`holdfast host acknowledge <fqdn>` clears them).
+
+### M9's lab tests: the server rebuilt, and what one server carries
+
+Then `lab/lab test m1` runs `lab/test-rebuild.sh`, which walks `docs/runbooks/rebuild-holdfast.md` on hfsrv itself
+(plan-m9 Q8). There is one server and no standby (decision 042), so the server is lost and replaced:
+- `holdfast export now`, and each agent's snapshots noted;
+- the admin's offline copy of `/etc/holdfast` kept in the lab's state (`rebuild/etc-holdfast.tar`);
+- the server lost: holdfast-server stopped, the database `holdfast` dropped and made again empty, the packages
+  removed, and `/etc/holdfast` and `/var/lib/holdfast-server` deleted;
+- the runbook: the same packages installed again, `/etc/holdfast` put back, `holdfast-server restore-export
+  -identity <the escrow's age key> -latest` (the key copied to hfsrv for it on SSH's stdin, and deleted after), and
+  holdfast-server started;
+- each agent back online by itself, with no new code, and its snapshots listed as before; a backup through the
+  gateway on one VM (`HF_REBUILD_VM`, default the first agent); `holdfast export list` says the server was restored.
+
+`lab/lab sizing m1` (`lab/test-sizing.sh`) measures what one server's gateway carries, for install.md: on every agent
+at once, a backup of new random data (`HF_SIZING_MIB`, default 256 MiB each, which restic can neither deduplicate nor
+compress), timed by the server's events, with hfsrv's CPU and what its network received. The job is removed after
+(its snapshots stay) and the fixture deleted. The lab is one host's KVM, so the figure is the lab's. A new job's first
+backup runs at once, so the job is made and backed up first on a tiny fixture; only the run after the random data is
+written is measured.
+
+**Result, 2026-11-22** (M9, Holdfast 0.5.0~dev62, restic 0.19.1, Ceph 19.2.3; SELinux enforcing on el9 and ol9, no
+denial logged). The whole of `lab/lab test m1` passed: fidelity 39 of 39 and login 5 of 5, M6 4 of 4, M8 6 of 6, and
+
+```
+PASS   export                   meta/2026-11-22.age, 69 KiB, off-site too
+PASS   server lost              database dropped and made again empty; packages, /etc/holdfast and /var/lib/holdfast-server removed
+PASS   reinstalled              holdfast-restic, -cli, -server and -freshness 0.5.0~dev62.20261122182842-1 installed again; /etc/holdfast put back
+PASS   restored                 from meta/2026-11-22.age: head revision 24, 3 hosts
+PASS   ub24 back                online by itself, with no new code; 33 of 33 snapshots listed
+PASS   el9 back                 online by itself, with no new code; 14 of 14 snapshots listed
+PASS   ol9 back                 online by itself, with no new code; 14 of 14 snapshots listed
+PASS   ub24 backup              backed up through the gateway on the rebuilt server
+PASS   export list              says the server was restored from 2026-11-22.age
+```
+
+The agents had waited out the outage and backed up what they missed as soon as the new server answered. The first
+run's backup check counted the newest events only, which those catch-up backups had pushed out; the test now waits for
+its own command's event.
+
+`lab/lab sizing m1`, the same day (hfsrv with 2 vCPU and 2 GiB):
+
+```
+ub24      256 MiB added in  11.6 s
+el9       256 MiB added in  11.6 s
+ol9       256 MiB added in  11.6 s
+
+3 agents at once: 768 MiB added in 11.6 s through the gateway, 66.0 MiB/s; the server: CPU 21% busy, received 771 MiB
+```
+
+The CPU figure is over a window a few seconds longer than the backups, so it reads low; install.md says "about a
+quarter".
 
 ## Troubleshooting
 

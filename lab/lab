@@ -21,7 +21,12 @@
 #                            each OS's PostgreSQL; the results are in <state>/test-recovery.txt. Then M8's
 #                            (lab/test-offsite.sh): the server's off-site copies in a second bucket on the RGW, each
 #                            agent's snapshot copied there, and one restored from it through the gateway; in
-#                            <state>/test-offsite.txt
+#                            <state>/test-offsite.txt. Then M9's (lab/test-rebuild.sh): the rebuild runbook walked on the
+#                            server, its database and packages lost and the server restored from the nightly export, the
+#                            agents back by themselves; in <state>/test-rebuild.txt
+#   sizing <lab> [<vm>...]   what one server's gateway carries (lab/test-sizing.sh): every agent backs up new random data
+#                            at once (HF_SIZING_MIB, default 256 MiB each), timed, with the server's CPU and network; in
+#                            <state>/test-sizing.txt. It needs the agents enrolled, as lab/lab test leaves them
 #   status <lab> [--json]    the lab's state: absent, off, ready or broken, with its VMs, what each answered, the RGW
 #                            endpoint, the credentials' files and why it is not ready
 #   ssh <lab> <vm> [command] SSH to a VM as root with the lab's key
@@ -37,7 +42,7 @@
 # The lab's state (its key, credentials, lab.env, inventory, lock and runs) is in
 # ${XDG_STATE_HOME:-~/.local/state}/holdfast/labs/<lab>/, outside the checkout, so every checkout sees the same lab;
 # the images are cached in ~/.cache/holdfast-lab. Every libvirt object the lab makes is named hf-<lab>-*.
-# up, deploy, test, isolation, stop and destroy hold the lab's lock, and exit 75 at once, naming the holder, when
+# up, deploy, test, sizing, isolation, stop and destroy hold the lab's lock, and exit 75 at once, naming the holder, when
 # another command holds it; --wait [<seconds>] right after the lab's name waits instead. They print a line per step and
 # write everything to <state>/runs/<UTC time>-<command>/log (destroy's beside the state, which it removes).
 # Exit codes: 0 done (status: ready; test: every property kept on every VM); 1 a step failed (the log says which), or
@@ -58,7 +63,7 @@ v() { virsh -c qemu:///system "$@"; }
 doms() { v list --all --name | grep "^$net-" || true; }
 ssh_opts() { echo -i "$state/id_ed25519" -o IdentitiesOnly=yes -o "UserKnownHostsFile=$state/known_hosts" -o StrictHostKeyChecking=accept-new -o LogLevel=ERROR; }
 
-case $cmd in up | deploy | test | isolation | stop | destroy)
+case $cmd in up | deploy | test | sizing | isolation | stop | destroy)
 	if [[ ${HF_LAB_LOCK_HELD:-} != "$lock" ]]; then
 		[[ $cmd == up || -d $state ]] || { echo "lab: the lab $lab is not there (lab/lab up $lab)" >&2; exit 3; }
 		wait=(-n) && hint=" (lab/lab $cmd $lab --wait [<seconds>] waits for it)"
@@ -82,9 +87,9 @@ case $cmd in up | deploy | test | isolation | stop | destroy)
 		isolation)
 			[[ ($# == 1 && $1 == account) || (($# == 1 || ($# == 2 && $2 == --maint-policy)) && ($1 == user-policy || $1 == bucket-policy)) ]] ||
 				{ echo "lab: isolation $lab takes account, or user-policy or bucket-policy and --maint-policy, not '$*'" >&2; exit 2; } ;;
-		test)
+		test | sizing)
 			for a in "$@"; do
-				[[ $a =~ ^[a-z0-9]+$ ]] || { echo "lab: test $lab takes --wait [<seconds>] and agent VMs' names, not '$*'" >&2; exit 2; }
+				[[ $a =~ ^[a-z0-9]+$ ]] || { echo "lab: $cmd $lab takes --wait [<seconds>] and agent VMs' names, not '$*'" >&2; exit 2; }
 			done ;;
 		*) (($# == 0)) || { echo "lab: $cmd $lab takes --wait [<seconds>], not '$*'" >&2; exit 2; } ;;
 		esac
@@ -274,7 +279,16 @@ test)
 	bash lab/test-recovery.sh "$lab" "$@" || rc=1
 	step "M8: the off-site copies the server makes, and a restore from them through the gateway: lab/test-offsite.sh $lab $*"
 	bash lab/test-offsite.sh "$lab" "$@" || rc=1
+	step "M9: the server lost and rebuilt from the nightly export, as the runbook says: lab/test-rebuild.sh $lab $*"
+	bash lab/test-rebuild.sh "$lab" "$@" || rc=1
 	exit $rc ;;
+sizing)
+	out=$(probe)
+	st=$(sed -n 's/^state //p' <<<"$out")
+	[[ $st == ready ]] || { echo "lab: the lab $lab is $st, not ready: lab/lab up $lab first (lab/lab status $lab says why)" >&3; exit 3; }
+	step "what one server's gateway carries: lab/test-sizing.sh $lab $* (HF_SIZING_MIB=${HF_SIZING_MIB:-256} MiB a VM)"
+	shown=1 resume="lab/lab sizing $lab $* runs it again"
+	bash lab/test-sizing.sh "$lab" "$@" ;;
 isolation)
 	out=$(probe)
 	st=$(sed -n 's/^state //p' <<<"$out")
