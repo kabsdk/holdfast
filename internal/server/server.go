@@ -144,7 +144,7 @@ func (s *Server) renderHost(doc config.Document, fqdn string) proto.HostConfig {
 		if sch.Zone == "" {
 			sch.Zone = s.set.DefaultZone
 		}
-		hc.Jobs = append(hc.Jobs, proto.JobConfig{ID: id, Engine: j.Engine, Paths: j.Paths, Excludes: j.Excludes, Schedule: sch})
+		hc.Jobs = append(hc.Jobs, proto.JobConfig{ID: id, Engine: j.Engine, Paths: j.Paths, Excludes: j.Excludes, Schedule: sch, LimitUploadKiB: j.LimitUploadKiB})
 	}
 	if s.set.Maintenance.Check == CheckDaily {
 		hc.Check = &proto.CheckConfig{CycleDays: s.set.Maintenance.CheckCycleDays}

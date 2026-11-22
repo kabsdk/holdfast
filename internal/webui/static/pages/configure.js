@@ -77,6 +77,10 @@ function Editor({ fqdn, jobID, saved, base, isNew, defaults }) {
     <div class="panel"><h3>When it runs</h3><${ScheduleEditor} s=${job.schedule} set=${(schedule) => setJob({ ...job, schedule })} />
       ${check && check.gets.next_runs && html`<p class="muted">Next runs: ${check.gets.next_runs.map(fmtTime).join(', ')}${job.schedule.spread?.enabled ? ` (each + random 0–${job.schedule.spread.minutes} min)` : ''}</p>`}</div>
     <div class="panel"><h3>How long to keep</h3><${RetentionEditor} r=${job.retention} set=${(retention) => setJob({ ...job, retention })} /></div>
+    <div class="panel"><h3>Run controls</h3>
+      <p class="row"><label>Cap the upload at <input type="number" min="0" style="width:7rem" value=${job.limit_upload_kib || 0}
+        onInput=${(e) => setJob({ ...job, limit_upload_kib: +e.target.value || undefined })} /> KiB/s</label> <span class="muted">0 for no limit (restic --limit-upload)</span></p>
+      <p class="muted">A failed backup is retried after 5, 15 and 45 minutes, while that is before its next run. The agent runs restic at low CPU and disk priority.</p></div>
     <div class="panel"><h3>Checks</h3>
       <${ErrorBox} error=${checkErr} />
       ${!check ? html`<${Loading} what="the checks" />` : html`

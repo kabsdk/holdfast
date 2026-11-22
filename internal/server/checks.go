@@ -146,6 +146,9 @@ func jobSetCommand(fqdn, jobID string, j config.Job, accept []string) string {
 		}
 	}
 	args = append(args, "--keep-last", fmt.Sprint(r.KeepLast))
+	if j.LimitUploadKiB > 0 {
+		args = append(args, "--limit-upload", fmt.Sprint(j.LimitUploadKiB))
+	}
 	if len(accept) > 0 {
 		args = append(args, "--accept", strings.Join(accept, ","))
 	}

@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -161,6 +162,8 @@ type BackupOptions struct {
 	Tags     []string
 	Host     string
 	Time     *time.Time // restic --time; the e2e tests use it to inject a clock
+	// LimitUploadKiB is restic's --limit-upload in KiB/s; 0: none.
+	LimitUploadKiB int
 }
 
 // BackupResult is restic's JSON summary.
@@ -190,6 +193,9 @@ func (r Runner) Backup(ctx context.Context, o BackupOptions) (BackupResult, erro
 	}
 	if o.Time != nil {
 		args = append(args, "--time", o.Time.Format("2006-01-02 15:04:05"))
+	}
+	if o.LimitUploadKiB > 0 {
+		args = append(args, "--limit-upload", strconv.Itoa(o.LimitUploadKiB))
 	}
 	args = append(args, "--")
 	args = append(args, o.Paths...)

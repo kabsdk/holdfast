@@ -116,6 +116,9 @@ func (d Document) Validate() Problems {
 			if err := j.Schedule.Validate(); err != nil {
 				add(jp+".schedule", "%v", err)
 			}
+			if j.LimitUploadKiB < 0 {
+				add(jp+".limit_upload_kib", "the upload limit is in KiB/s, 0 for none; it cannot be negative")
+			}
 			for _, m := range j.Retention.validate() {
 				add(jp+".retention", "%s", m)
 			}

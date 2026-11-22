@@ -43,7 +43,15 @@ type jobState struct {
 	NextDelayS  int       `json:"next_delay_s"` // spread for NextSlot, drawn once and kept over restarts
 	LastAttempt time.Time `json:"last_attempt"`
 	LastStatus  string    `json:"last_status"`
+	// A failed scheduled backup is retried before the job's next slot (plan-m5 Q4): Retries made so far,
+	// and when the next one is due; zero: none is.
+	Retries   int       `json:"retries,omitempty"`
+	RetryAt   time.Time `json:"retry_at,omitzero"`
+	retryable bool      // the last run failed in a way a retry can fix: not stopped by its timeout
 }
+
+// RetryAfter are the waits before each retry of a failed scheduled backup (plan-m5 Q4).
+var RetryAfter = []time.Duration{5 * time.Minute, 15 * time.Minute, 45 * time.Minute}
 
 type runMarker struct {
 	Kind      string    `json:"kind"`
@@ -608,41 +616,87 @@ func (a *Agent) plan(j proto.JobConfig, now time.Time) *jobState {
 	return st
 }
 
-// due returns the most overdue job, if any. A slot missed while the agent was down is due at once
-// and runs once, however many slots were missed (plan-m1 Q7).
+// due returns the most overdue job, if any. A slot missed while the agent was down is due at once and runs
+// once, however many slots were missed (plan-m1 Q7).
 func (a *Agent) due(now time.Time) (proto.JobConfig, *jobState, bool) {
+	j, st, _, ok := a.dueRun(now)
+	return j, st, ok
+}
+
+// dueRun is due, and says whether the run is a retry of a failed slot (plan-m5 Q4).
+func (a *Agent) dueRun(now time.Time) (proto.JobConfig, *jobState, bool, bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.hc == nil {
-		return proto.JobConfig{}, nil, false
+		return proto.JobConfig{}, nil, false, false
 	}
 	type cand struct {
-		j  proto.JobConfig
-		st *jobState
-		at time.Time
+		j     proto.JobConfig
+		st    *jobState
+		at    time.Time
+		retry bool
 	}
 	var cands []cand
 	for _, j := range a.hc.Jobs {
 		st := a.plan(j, now)
 		if st.LastSlot.IsZero() {
 			// Never completed a slot: the first backup, or a first backup that was interrupted.
-			cands = append(cands, cand{j, st, time.Time{}})
+			cands = append(cands, cand{j, st, time.Time{}, false})
 			continue
 		}
-		if st.NextSlot.IsZero() {
-			continue
+		if !st.NextSlot.IsZero() {
+			if at := st.NextSlot.Add(time.Duration(st.NextDelayS) * time.Second); !now.Before(at) {
+				cands = append(cands, cand{j, st, at, false})
+				continue
+			}
 		}
-		at := st.NextSlot.Add(time.Duration(st.NextDelayS) * time.Second)
-		if !now.Before(at) {
-			cands = append(cands, cand{j, st, at})
+		if !st.RetryAt.IsZero() && !now.Before(st.RetryAt) {
+			cands = append(cands, cand{j, st, st.RetryAt, true})
 		}
 	}
 	a.saveSchedule()
 	if len(cands) == 0 {
-		return proto.JobConfig{}, nil, false
+		return proto.JobConfig{}, nil, false, false
 	}
 	sort.Slice(cands, func(i, k int) bool { return cands[i].at.Before(cands[k].at) })
-	return cands[0].j, cands[0].st, true
+	return cands[0].j, cands[0].st, cands[0].retry, true
+}
+
+// planRetry schedules the next retry of a job whose run just failed, if a retry can help and still starts
+// before the job's next slot; otherwise it clears the retries. Caller holds a.mu.
+func (a *Agent) planRetry(j proto.JobConfig, st *jobState, end time.Time) {
+	if st.LastStatus != proto.StatusFailed || !st.retryable || st.Retries >= len(RetryAfter) {
+		st.Retries, st.RetryAt = 0, time.Time{}
+		return
+	}
+	at := end.Add(RetryAfter[st.Retries])
+	loc, err := j.Schedule.Location(time.Local)
+	if err != nil {
+		loc = time.Local
+	}
+	if next, ok := j.Schedule.Next(st.LastSlot, loc); ok && !at.Before(next) {
+		st.Retries, st.RetryAt = 0, time.Time{} // the next slot comes first, and runs the job anyway
+		return
+	}
+	st.RetryAt = at
+}
+
+// runRetry retries a failed scheduled backup. The schedule is not advanced: the retry belongs to the slot
+// that failed.
+func (a *Agent) runRetry(ctx context.Context, j proto.JobConfig, st *jobState) {
+	a.mu.Lock()
+	st.Retries++
+	n := st.Retries
+	st.RetryAt = time.Time{}
+	a.saveSchedule()
+	a.mu.Unlock()
+	if !a.runBackup(ctx, j, "", nil, 0, n) {
+		return
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.planRetry(j, st, a.now())
+	a.saveSchedule()
 }
 
 func (a *Agent) workLoop(ctx context.Context) {
@@ -661,11 +715,15 @@ func (a *Agent) workLoop(ctx context.Context) {
 				a.execCommand(ctx, c)
 				continue
 			}
-			j, st, ok := a.due(a.now())
+			j, st, retry, ok := a.dueRun(a.now())
 			if !ok {
 				break
 			}
-			a.runScheduled(ctx, j, st)
+			if retry {
+				a.runRetry(ctx, j, st)
+			} else {
+				a.runScheduled(ctx, j, st)
+			}
 			a.checkIfDue(ctx, st)
 		}
 	}
@@ -725,7 +783,7 @@ func (a *Agent) execCommand(ctx context.Context, c proto.Command) {
 			a.spool(proto.Event{Kind: proto.KindBackup, JobID: c.JobID, CommandID: c.ID, Status: proto.StatusFailed, Started: now, Finished: now, Error: "unknown job"})
 			return
 		}
-		a.runBackup(ctx, *job, c.ID, nil, 0)
+		a.runBackup(ctx, *job, c.ID, nil, 0, 0)
 	case proto.CommandCheckNow:
 		a.runCheck(ctx, c.ID)
 	case proto.CommandRestore:
@@ -748,7 +806,7 @@ func (a *Agent) runScheduled(ctx context.Context, j proto.JobConfig, st *jobStat
 	delay := st.NextDelayS
 	a.mu.Unlock()
 	start := a.now()
-	if !a.runBackup(ctx, j, "", slot, delay) {
+	if !a.runBackup(ctx, j, "", slot, delay, 0) {
 		return // shutdown mid-run: the marker stays and the next start reports "interrupted"
 	}
 	end := a.now()
@@ -782,6 +840,8 @@ func (a *Agent) runScheduled(ctx context.Context, j proto.JobConfig, st *jobStat
 		st.LastSlot = end // first run: the schedule starts from now
 	}
 	st.NextSlot, st.NextDelayS = time.Time{}, 0
+	st.Retries = 0 // a new slot starts its own retries
+	a.planRetry(j, st, end)
 	a.saveSchedule()
 }
 
@@ -816,8 +876,9 @@ func (a *Agent) mark(m runMarker) {
 	}
 }
 
-// runBackup runs one backup and spools its event. It returns false if the agent is shutting down.
-func (a *Agent) runBackup(ctx context.Context, j proto.JobConfig, commandID string, slot *time.Time, delay int) bool {
+// runBackup runs one backup and spools its event. retry is which retry this is, 0 for none. It returns false
+// if the agent is shutting down.
+func (a *Agent) runBackup(ctx context.Context, j proto.JobConfig, commandID string, slot *time.Time, delay, retry int) bool {
 	a.verifyCredentials()
 	started := a.now().UTC()
 	a.mu.Lock()
@@ -836,7 +897,8 @@ func (a *Agent) runBackup(ctx context.Context, j proto.JobConfig, commandID stri
 	excludes := append(append([]string(nil), j.Excludes...), a.cfg.StateDir)
 	timeout := a.runTimeout(j.Schedule)
 	rctx, cancel := context.WithTimeout(ctx, timeout)
-	res, err := r.Backup(rctx, restic.BackupOptions{Paths: j.Paths, Excludes: excludes, Host: a.cfg.FQDN, Tags: []string{"job=" + j.ID}})
+	res, err := r.Backup(rctx, restic.BackupOptions{Paths: j.Paths, Excludes: excludes, Host: a.cfg.FQDN, Tags: []string{"job=" + j.ID},
+		LimitUploadKiB: j.LimitUploadKiB})
 	timedOut := errors.Is(rctx.Err(), context.DeadlineExceeded)
 	cancel()
 	if ctx.Err() != nil {
@@ -844,6 +906,9 @@ func (a *Agent) runBackup(ctx context.Context, j proto.JobConfig, commandID stri
 	}
 	ev := proto.Event{Kind: proto.KindBackup, JobID: j.ID, CommandID: commandID, ScheduledFor: slot, SpreadDelayS: delay,
 		Started: started, Finished: a.now().UTC(), Revision: rev}
+	if retry > 0 {
+		ev.Detail = map[string]string{"retry": fmt.Sprintf("%d of %d", retry, len(RetryAfter))}
+	}
 	switch {
 	case timedOut:
 		ev.Status, ev.ResticExit = proto.StatusFailed, restic.ExitCode(err)
@@ -863,6 +928,7 @@ func (a *Agent) runBackup(ctx context.Context, j proto.JobConfig, commandID stri
 	a.mu.Lock()
 	if st != nil {
 		st.LastStatus = ev.Status
+		st.retryable = !timedOut // a run stopped at its timeout already took the whole gap
 	}
 	a.running = nil
 	a.saveSchedule()

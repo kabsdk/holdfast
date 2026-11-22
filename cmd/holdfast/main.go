@@ -482,6 +482,7 @@ type jobFlags struct {
 	within, hourly, dly, wkly, monthly, yearly string
 	keepLast                                   int
 	accept                                     []string
+	limitUpload                                int
 }
 
 // finding is one check that fired (spec §4.5).
@@ -521,6 +522,7 @@ func (f *jobFlags) register(c *cobra.Command) {
 	c.Flags().StringVar(&f.yearly, "keep-yearly", "", "keep one per year for this long, such as 3y")
 	c.Flags().IntVar(&f.keepLast, "keep-last", 3, "always keep the newest N")
 	c.Flags().StringSliceVar(&f.accept, "accept", nil, "accept these warning codes, such as R102,R104 (errors cannot be accepted)")
+	c.Flags().IntVar(&f.limitUpload, "limit-upload", 0, "cap the backup's upload, in KiB/s (restic --limit-upload); 0 for none")
 }
 
 func window(s string) (map[string]any, error) {
@@ -572,7 +574,7 @@ func (f *jobFlags) job() (map[string]any, error) {
 			ret[name] = w
 		}
 	}
-	return map[string]any{"engine": "restic", "paths": f.paths, "excludes": f.excludes, "schedule": sch, "retention": ret}, nil
+	return map[string]any{"engine": "restic", "paths": f.paths, "excludes": f.excludes, "schedule": sch, "retention": ret, "limit_upload_kib": f.limitUpload}, nil
 }
 
 func jobCmd() *cobra.Command {

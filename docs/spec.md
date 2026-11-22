@@ -264,6 +264,14 @@ These values are derived from the schedule and shown with it:
 - the worst-case data loss, which is the longest gap plus the spread;
 - the stale alert threshold, which is 2 × the longest gap.
 
+**Run controls** (plan-m5 item 2):
+- A scheduled backup that fails is retried after 5, 15 and 45 minutes, as long as the retry starts before
+  the job's next run. Each retry is a run in the history, marked "retry 1 of 3" and so on. A run stopped at
+  its timeout is not retried: it already took the whole gap.
+- A job may cap its upload in KiB/s, which is restic's `--limit-upload`.
+- The agent's service runs at low CPU and I/O priority (`Nice=10`, `IOSchedulingClass=idle`), so a backup
+  gives way to the host's own work.
+
 ### 4.2 Retention
 
 Retention is expressed only as time windows, which map to restic as follows.

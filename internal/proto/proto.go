@@ -103,6 +103,8 @@ type JobConfig struct {
 	Paths    []string          `json:"paths"`
 	Excludes []string          `json:"excludes,omitempty"`
 	Schedule schedule.Schedule `json:"schedule"`
+	// LimitUploadKiB is restic's --limit-upload, in KiB/s; 0: no limit (plan-m5 item 2).
+	LimitUploadKiB int `json:"limit_upload_kib,omitempty"`
 }
 
 // HostConfig is the desired state of one host.

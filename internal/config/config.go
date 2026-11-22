@@ -35,6 +35,8 @@ type Job struct {
 	Excludes  []string          `json:"excludes,omitempty"`
 	Schedule  schedule.Schedule `json:"schedule"`
 	Retention Retention         `json:"retention"` // stored from M1; acted on from M3
+	// LimitUploadKiB caps the backup's upload, in KiB/s: restic's --limit-upload. 0: no limit (M5).
+	LimitUploadKiB int `json:"limit_upload_kib,omitempty"`
 }
 
 // Library holds paths items, protection items and profiles (M5). Until then the entries are kept
