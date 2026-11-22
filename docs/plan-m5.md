@@ -122,7 +122,7 @@ features. That split is Q1.
 
 | # | Item | State |
 | --- | --- | --- |
-| 1 | Packages and upgrades | not started |
+| 1 | Packages and upgrades | done: `make packages` (nfpm in a container, pinned by digest), five packages with `SHA256SUMS`, unsigned (Q2); protocol negotiation (spec §2.4); [install.md](install.md); the lab installs the packages |
 | 2 | Run controls | done: retries at 5, 15 and 45 minutes within the gap, `Nice=10` and `IOSchedulingClass=idle` in the unit, `--limit-upload` (spec §4.1) |
 | 3 | Size | done: a daily listing with versions; the host page, `host show` and `holdfast_repository_bytes{versions}` |
 | 4 | Escrow | done: `escrow.age_recipient`; `escrow/<fqdn>.age` at host add, rotate and backfill; B012; the `escrow` problem; `holdfast_escrow_current` and `holdfast_escrow_configured` |
@@ -139,8 +139,17 @@ Choices made inside the accepted proposals, for you to check:
 - **A decommissioned host added again starts over** with a new repository password, and needs a new S3 key.
   A host whose decommission is waiting cannot be added back until it is cancelled.
 - **B012 is tested only when a recipient is set**, so a site without escrow does not fail its storage test.
-- The lab is not yet set up for escrow (its maintenance policy and `server.yaml`); that comes with item 1,
-  when the lab installs the packages.
+- **restic is a package of its own, `holdfast-restic`**, so one host can have both the agent and the server:
+  two packages may not own the same file.
+- **A too-old agent's reports are still taken.** Only its polls are refused, so the server still sees its
+  backups while it waits for the upgrade.
+- **Builds between releases are versioned `0.5.0~dev<commits>`**, plus the time when the tree has changes not
+  committed, so each build sorts after the last and before the release (`scripts/version.sh`).
+- The lab escrows too: an offline key in its credentials (`lab/escrowkey`), and `escrow/*` in the maintenance
+  policy.
+
+Not decided, and needed before a public release: **the licence** (plan-m1: "None is chosen yet") and **the
+packages' maintainer field**, which is "Holdfast maintainers" with no address for now.
 
 ## 5. Questions
 

@@ -1,0 +1,12 @@
+#!/bin/sh
+# Before @PACKAGE@ is removed (not upgraded): stop and disable @UNIT@. Its config in /etc/holdfast and its
+# state stay; removing a package never deletes backups or their credentials.
+set -e
+case "${1:-}" in
+  remove|0)                                           # deb: remove; rpm: no version left
+    if [ -d /run/systemd/system ]; then
+      systemctl disable --now @UNIT@ || true
+    fi
+    ;;
+esac
+exit 0

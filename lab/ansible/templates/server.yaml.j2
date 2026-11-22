@@ -28,6 +28,11 @@ maintenance:
   check_cycle_days: 30
   retention: daily
 
+# Decision 036: each host's repository password, encrypted to the lab's offline key (credentials/escrow-age.key on the
+# lab host), in escrow/<fqdn>.age. holdfast-maint may write escrow/ (lab/rgw-documented-layout.sh, B012).
+escrow:
+  age_recipient: {{ hostvars['localhost'].lab_escrow_recipient }}
+
 # The UI and /api/v1 for people, with login (decision 034). The lab has no CA browsers trust, so the UI has the agent
 # listener's certificate from the lab's CA.
 ui:

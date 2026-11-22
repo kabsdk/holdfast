@@ -1,0 +1,28 @@
+# holdfast-freshness: the storage witness and its unit. Not enabled at install: edit the unit's endpoint and
+# bucket with `systemctl edit holdfast-freshness`, put its key in /etc/holdfast/witness.env, then enable it.
+name: holdfast-freshness
+arch: amd64
+platform: linux
+version: ${HOLDFAST_VERSION}
+version_schema: none
+release: "1"
+section: admin
+priority: optional
+maintainer: ${HOLDFAST_MAINTAINER}
+homepage: https://github.com/kabsdk/holdfast
+description: |-
+  Holdfast storage witness
+   Lists the bucket for Prometheus, apart from the Holdfast server, so backups are judged by what storage holds.
+contents:
+  - src: bin/holdfast-freshness
+    dst: /usr/bin/holdfast-freshness
+    file_info: {mode: 0755}
+  - src: deploy/systemd/holdfast-freshness.service
+    dst: /usr/lib/systemd/system/holdfast-freshness.service
+    file_info: {mode: 0644}
+  - dst: /etc/holdfast
+    type: dir
+    file_info: {mode: 0700}
+scripts:
+  postinstall: packaging/scripts/postinstall.sh
+  preremove: packaging/scripts/preremove.sh

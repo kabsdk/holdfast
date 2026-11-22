@@ -52,7 +52,11 @@ func (b S3Bucket) Size(ctx context.Context, fqdn string) (Size, error) {
 	var s Size
 	for o := range c.ListObjects(ctx, b.Location.Bucket, minio.ListObjectsOptions{Prefix: Prefix(fqdn) + "/", Recursive: true, WithVersions: true}) {
 		if o.Err != nil {
-			return Size{}, fmt.Errorf("listing %s: %s", Prefix(fqdn), s3err(o.Err))
+			msg := s3err(o.Err)
+			if msg == "AccessDenied" {
+				msg += "; the maintenance key needs s3:ListBucketVersions on the bucket (docs/storage.md)"
+			}
+			return Size{}, fmt.Errorf("listing the versions under %s/: %s", Prefix(fqdn), msg)
 		}
 		switch {
 		case o.IsDeleteMarker:

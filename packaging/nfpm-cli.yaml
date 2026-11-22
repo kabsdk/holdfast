@@ -1,0 +1,19 @@
+# holdfast-cli: the command line, a client of the API (decision 028). On the server it talks to the root
+# socket; elsewhere it logs in with `holdfast login`.
+name: holdfast-cli
+arch: amd64
+platform: linux
+version: ${HOLDFAST_VERSION}
+version_schema: none
+release: "1"
+section: admin
+priority: optional
+maintainer: ${HOLDFAST_MAINTAINER}
+homepage: https://github.com/kabsdk/holdfast
+description: |-
+  Holdfast command line
+   Every action of the Holdfast UI, from the command line, through the Holdfast API.
+contents:
+  - src: bin/holdfast
+    dst: /usr/bin/holdfast
+    file_info: {mode: 0755}

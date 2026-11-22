@@ -102,6 +102,9 @@ func (s *Server) Enroll(ctx context.Context, req proto.EnrollRequest) (string, e
 	if h.State == "retired" {
 		return refuse(errors.New("host is retired"))
 	}
+	if err := s.checkProtocol(req.Facts); err != nil {
+		return refuse(err)
+	}
 	// The code first: storage is touched only for someone who holds a valid code (decision 030).
 	if err := s.st.Q().CheckEnrollmentCode(ctx, fqdn, codeHash, now); err != nil {
 		return refuse(err)
@@ -151,6 +154,11 @@ func (s *Server) handlePoll(w http.ResponseWriter, r *http.Request) {
 		if r.Context().Err() != nil {
 			return
 		}
+		var old *AgentTooOldError
+		if errors.As(err, &old) {
+			writeTooOld(w, old)
+			return
+		}
 		s.log.Error("poll failed", "host", hostOf(r), "err", err)
 		writeErr(w, http.StatusInternalServerError, "poll failed")
 		return
@@ -170,10 +178,14 @@ func (s *Server) Poll(ctx context.Context, fqdn string, req proto.PollRequest, w
 	if err := q.RecordHeartbeat(ctx, fqdn, store.Heartbeat{AgentVersion: req.Facts.AgentVersion, ResticVersion: req.Facts.ResticVersion,
 		OSID: req.Facts.OSID, OSVersion: req.Facts.OSVersion, HostnameFQDN: req.Facts.HostnameFQDN, Timezone: req.Facts.Timezone,
 		ClockOffsetMS: offset, AppliedRevision: req.Applied.Revision, AppliedSHA256: req.Applied.SHA256, CredentialsVersion: req.CredentialsVersion,
-		RestoreBounds: req.Facts.RestoreBounds}, now); err != nil {
+		RestoreBounds: req.Facts.RestoreBounds, Protocol: req.Facts.Protocol}, now); err != nil {
 		return proto.PollResponse{}, err
 	}
 	if err := q.AckCommands(ctx, fqdn, req.AckedCommands, now); err != nil {
+		return proto.PollResponse{}, err
+	}
+	// Seen, and its acknowledgements kept, but an agent too old gets nothing more (protocol.go).
+	if err := s.checkProtocol(req.Facts); err != nil {
 		return proto.PollResponse{}, err
 	}
 	acked := map[string]bool{}
@@ -193,6 +205,8 @@ func (s *Server) Poll(ctx context.Context, fqdn string, req proto.PollRequest, w
 		remaining := time.Until(deadline)
 		if changed || remaining <= 0 {
 			resp.ServerTime = s.now()
+			r := s.protocolRange()
+			resp.Protocol = &r
 			return resp, nil
 		}
 		s.hub.wait(ctx, fqdn, remaining)

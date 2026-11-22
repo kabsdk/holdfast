@@ -81,6 +81,8 @@ type Agent struct {
 	factsOnce sync.Once
 	base      proto.Facts // facts that do not change while the agent runs
 
+	warnedNewer bool // logged once: the server is older than this agent (only the poll loop sets it)
+
 	wake     chan struct{}
 	flushNow chan struct{}
 }
@@ -277,12 +279,24 @@ func (a *Agent) call(ctx context.Context, path, query string, body []byte, out a
 		var e proto.ErrorResponse
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		if json.Unmarshal(b, &e) == nil && e.Error != "" {
-			return fmt.Errorf("%s: %s", resp.Status, e.Error)
+			err = fmt.Errorf("%s: %s", resp.Status, e.Error)
+		} else {
+			err = fmt.Errorf("%s: %s", resp.Status, strings.TrimSpace(string(b)))
 		}
-		return fmt.Errorf("%s: %s", resp.Status, strings.TrimSpace(string(b)))
+		if resp.StatusCode == http.StatusUpgradeRequired {
+			return &tooOldError{err}
+		}
+		return err
 	}
 	return json.NewDecoder(resp.Body).Decode(out)
 }
+
+// tooOldError is the server's answer to an agent older than it accepts (plan-m5 item 1). The agent goes on
+// backing up from its cached config, and asks again now and then.
+type tooOldError struct{ error }
+
+// tooOldWait is how long the agent waits before asking a server that found it too old again.
+var tooOldWait = 5 * time.Minute
 
 /* ---------------- facts ---------------- */
 
@@ -302,7 +316,7 @@ func (a *Agent) facts(ctx context.Context) proto.Facts {
 }
 
 func (a *Agent) readFacts(ctx context.Context) proto.Facts {
-	f := proto.Facts{AgentVersion: Version}
+	f := proto.Facts{Protocol: proto.Protocol, AgentVersion: Version}
 	if v, err := (restic.Runner{Bin: a.cfg.ResticBin}).Version(ctx); err == nil {
 		f.ResticVersion = v
 	}
@@ -359,7 +373,14 @@ func (a *Agent) pollLoop(ctx context.Context) {
 	backoff := time.Second
 	for ctx.Err() == nil {
 		if err := a.pollOnce(ctx, a.cfg.PollTimeout); err != nil {
-			if ctx.Err() == nil {
+			var old *tooOldError
+			switch {
+			case ctx.Err() != nil:
+			case errors.As(err, &old):
+				a.log.Error("the server needs a newer agent: upgrade holdfast-agent. Scheduled backups continue from the cached config", "err", err)
+				sleep(ctx, tooOldWait)
+				continue
+			default:
 				a.log.Warn("poll failed; scheduled backups continue from the cached config", "err", err)
 			}
 			sleep(ctx, backoff)
@@ -388,6 +409,10 @@ func (a *Agent) pollOnce(ctx context.Context, wait time.Duration) error {
 	a.mu.Lock()
 	a.toAck = a.toAck[len(req.AckedCommands):] // the server has these now
 	a.mu.Unlock()
+	if p := resp.Protocol; p != nil && p.Max < proto.Protocol && !a.warnedNewer {
+		a.warnedNewer = true
+		a.log.Warn("this agent is newer than the server: upgrade the server first", "agent_protocol", proto.Protocol, "server_max", p.Max)
+	}
 	if resp.Credentials != nil {
 		if err := a.applyCredentials(*resp.Credentials); err != nil {
 			return err

@@ -253,6 +253,24 @@ tests:
             exp_annotations:
               summary: "old01: its decommission is overdue; the repository could not be deleted (holdfast host show old01)"
 
+  # An agent too old for the server raises a ticket after an hour, not during an upgrade.
+  - interval: 1m
+    input_series:
+      - series: 'holdfast_agent_too_old{host="web01"}'
+        values: '1x120'
+      - series: 'holdfast_agent_too_old{host="db01"}'
+        values: '0x120'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: HoldfastAgentTooOld
+        exp_alerts: []
+      - eval_time: 90m
+        alertname: HoldfastAgentTooOld
+        exp_alerts:
+          - exp_labels: {severity: ticket, host: web01}
+            exp_annotations:
+              summary: "web01: its agent is too old for the server; upgrade holdfast-agent"
+
   # Drift for 40 minutes alerts; 20 minutes does not.
   - interval: 1m
     input_series:

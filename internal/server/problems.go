@@ -82,6 +82,10 @@ func problems(v HostView, now time.Time, retentionFailed, escrowOn bool) []Probl
 	if v.ResticWarning != "" {
 		add("restic", "warning", "", "%s", v.ResticWarning)
 	}
+	if v.AgentTooOld {
+		add("agent_too_old", "warning", "", "the agent (%s) is older than this server accepts: upgrade holdfast-agent. It backs up on its cached config and gets no changes meanwhile",
+			v.Agent.AgentVersion)
+	}
 	if v.NotMadeByHoldfast > 0 {
 		add("not_made_by_holdfast", "warning", "", "%d snapshots in the repository were not made by Holdfast", v.NotMadeByHoldfast)
 	}

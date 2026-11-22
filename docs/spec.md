@@ -127,6 +127,23 @@ supports.
 - Credentials are never shown in the UI.
 - There is no raw restic console.
 
+### 2.4 Packages and upgrades
+
+- Holdfast ships `.deb` and `.rpm` packages for amd64 (plan-m5 item 1): `holdfast-agent`, `holdfast-server`,
+  `holdfast-cli`, `holdfast-freshness`, and `holdfast-restic`, which holds the pinned restic at
+  `/usr/libexec/holdfast/restic` and which the agent and the server need at their own version. The binaries
+  are static, so one package runs on every supported distribution. The packages are unsigned for now, with
+  `SHA256SUMS` (plan-m5 Q2). [install.md](install.md) is the guide.
+- Installing enables no service: each needs its config first. Upgrading restarts a service that runs.
+  Removing stops and disables it, and never deletes `/etc/holdfast`, state or backups.
+- **The agent and the server agree on a protocol version.** The agent sends its own with every poll (an agent
+  before M5 sends none and speaks 1), and the server answers with the range it accepts. The server accepts
+  every agent from its minimum on, so it is upgraded first, and agents after it, one by one.
+- An agent older than the server accepts is refused with 426 and the range. It logs that it must be
+  upgraded, keeps backing up on its cached config, and the server still takes its reports. It gets no new
+  config and no commands meanwhile. The host shows the `agent_too_old` problem, and
+  `holdfast_agent_too_old` is 1.
+
 ---
 
 ## 3. Configuration model
@@ -475,8 +492,8 @@ host, each with a code:
 - errors: `stale`, `failed`, `storage`, `disappeared`, `foreign_keys`, `rotation` (an old password still
   opens the repository), and `decommission` when a due decommission could not delete;
 - warnings: `incomplete`, `offline`, `drift`, `restic`, `not_made_by_holdfast`, `catalogue`, `retention`,
-  `removing`, `enroll` (waiting to enroll again), `escrow` (no recipient, or the write failed), `size`, and
-  `decommission` while one waits.
+  `removing`, `enroll` (waiting to enroll again), `escrow` (no recipient, or the write failed), `size`,
+  `agent_too_old` (§2.4), and `decommission` while one waits.
 
 Paging stays with Prometheus and the alert rules that ship with Holdfast. The storage witness is judged
 there too, apart from the server (decisions 008 and 009).

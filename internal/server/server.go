@@ -52,6 +52,8 @@ type Server struct {
 	maintBusy busyHosts  // one forget-or-prune at a time per host
 	oidc      oidcClient // the server's side of the OIDC provider (decision 034)
 	op        operating  // escrow, size and decommission (operating.go)
+	// minProtocol is the oldest agent protocol accepted (protocol.go): proto.MinProtocol, or a test's.
+	minProtocol int
 }
 
 // background is the context for work that outlives a request, such as a catalogue refresh.
@@ -72,6 +74,9 @@ type Deps struct {
 	Maintenance storage.Key
 	Logger      *slog.Logger
 	Now         func() time.Time
+	// MinProtocol raises the oldest agent protocol accepted, for the end-to-end tests only; 0 is
+	// proto.MinProtocol.
+	MinProtocol int
 }
 
 // New builds a server.
@@ -96,8 +101,11 @@ func New(set Settings, d Deps) (*Server, error) {
 	if d.Bucket == nil {
 		d.Bucket = storage.S3Bucket{Location: loc, Maint: d.Maintenance}
 	}
+	if d.MinProtocol < proto.MinProtocol {
+		d.MinProtocol = proto.MinProtocol
+	}
 	return &Server{set: set, st: d.Store, seal: d.Sealer, prov: d.Provisioner, prober: d.Prober, bucket: d.Bucket, maintKey: d.Maintenance,
-		loc: loc, zone: zone, log: d.Logger, hub: newHub(), now: d.Now,
+		loc: loc, zone: zone, log: d.Logger, hub: newHub(), now: d.Now, minProtocol: d.MinProtocol,
 		refresher: catalogueRefresher{running: map[string]bool{}, again: map[string]bool{}}}, nil
 }
 
@@ -796,6 +804,8 @@ type HostView struct {
 	InSync          bool         `json:"in_sync"`
 	// ResticWarning is set when the agent runs another restic than the one Holdfast is tested with.
 	ResticWarning string `json:"restic_warning,omitempty"`
+	// AgentTooOld says the agent speaks an older protocol than this server accepts (protocol.go).
+	AgentTooOld bool `json:"agent_too_old"`
 	// The snapshot catalogue's counts, and its banners (decision 032): snapshots in the repository that
 	// Holdfast did not make, and snapshots that disappeared without Holdfast deleting them.
 	Snapshots         int       `json:"snapshots"`
@@ -871,6 +881,7 @@ func (s *Server) Hosts(ctx context.Context) ([]HostView, error) {
 			if a.ResticVersion != "" && a.ResticVersion != restic.PinnedVersion {
 				v.ResticWarning = fmt.Sprintf("this host runs restic %s; Holdfast is tested with %s, which the agent's package ships", a.ResticVersion, restic.PinnedVersion)
 			}
+			v.AgentTooOld = s.agentTooOld(v.Agent)
 		}
 		if rev, _, err := q.HostDesired(ctx, h.FQDN); err == nil {
 			v.DesiredRevision = rev

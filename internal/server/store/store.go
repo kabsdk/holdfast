@@ -504,6 +504,8 @@ type Agent struct {
 	AppliedAt          *time.Time           `json:"applied_at,omitempty"`
 	CredentialsVersion int                  `json:"credentials_version"`
 	RestoreBounds      *proto.RestoreBounds `json:"restore_bounds,omitempty"` // the host's own limits (plan-m2 Q5)
+	// Protocol is the agent protocol it last reported; 0 from an agent before M5, which speaks 1.
+	Protocol int `json:"protocol"`
 }
 
 // EnrollAgent records (or replaces, on re-enrollment) the agent's credential and marks the host enrolled.
@@ -534,6 +536,7 @@ type Heartbeat struct {
 	AppliedSHA256                                                        string
 	CredentialsVersion                                                   int
 	RestoreBounds                                                        *proto.RestoreBounds
+	Protocol                                                             int
 }
 
 // RecordHeartbeat updates the agent row. applied_at moves only when the applied sha256 changes.
@@ -549,21 +552,22 @@ func (q *Q) RecordHeartbeat(ctx context.Context, fqdn string, h Heartbeat, now t
 	_, err := q.db.Exec(ctx, `UPDATE agents SET last_seen_at = $2, agent_version = $3, restic_version = $4, os_id = $5, os_version = $6,
 		hostname_fqdn = $7, timezone = $8, clock_offset_ms = $9,
 		applied_at = CASE WHEN applied_sha256 IS DISTINCT FROM $11 THEN $2 ELSE applied_at END,
-		applied_revision = $10, applied_sha256 = $11, credentials_version = $12, restore_bounds = COALESCE($13, restore_bounds)
+		applied_revision = $10, applied_sha256 = $11, credentials_version = $12, restore_bounds = COALESCE($13, restore_bounds),
+		protocol = $14
 		WHERE fqdn = $1`,
 		fqdn, now, h.AgentVersion, h.ResticVersion, h.OSID, h.OSVersion, h.HostnameFQDN, h.Timezone, h.ClockOffsetMS,
-		h.AppliedRevision, h.AppliedSHA256, h.CredentialsVersion, bounds)
+		h.AppliedRevision, h.AppliedSHA256, h.CredentialsVersion, bounds, h.Protocol)
 	return err
 }
 
 const agentCols = `fqdn, enrolled_at, last_seen_at, agent_version, restic_version, os_id, os_version, hostname_fqdn, timezone,
-	clock_offset_ms, applied_revision, applied_sha256, applied_at, credentials_version, restore_bounds`
+	clock_offset_ms, applied_revision, applied_sha256, applied_at, credentials_version, restore_bounds, protocol`
 
 func scanAgent(row pgx.Row) (Agent, error) {
 	var a Agent
 	var bounds []byte
 	err := row.Scan(&a.FQDN, &a.EnrolledAt, &a.LastSeenAt, &a.AgentVersion, &a.ResticVersion, &a.OSID, &a.OSVersion, &a.HostnameFQDN,
-		&a.Timezone, &a.ClockOffsetMS, &a.AppliedRevision, &a.AppliedSHA256, &a.AppliedAt, &a.CredentialsVersion, &bounds)
+		&a.Timezone, &a.ClockOffsetMS, &a.AppliedRevision, &a.AppliedSHA256, &a.AppliedAt, &a.CredentialsVersion, &bounds, &a.Protocol)
 	if err == nil && len(bounds) > 0 {
 		a.RestoreBounds = &proto.RestoreBounds{}
 		err = json.Unmarshal(bounds, a.RestoreBounds)

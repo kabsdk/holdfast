@@ -24,6 +24,7 @@
       go: [go, env, GOVERSION, GOTOOLCHAIN]
       community_libvirt: [ansible-galaxy, collection, list, community.libvirt, --format, json]
       dockerd: [dockerd, --version]
+      docker: [docker, info, --format, "{{ '{{' }}.ServerVersion{{ '}}' }}"]
       pid1: [ps, -p, "1", -o, "comm="]
       repo_fs: [stat, -f, -c, "%T", "{{ lab_repo }}"]
       disk: [sh, -c, "df -Pk /var/lib/libvirt/images 2>/dev/null || df -Pk /var/lib/libvirt 2>/dev/null || df -Pk /var"]
@@ -106,6 +107,10 @@
             how: >-
               this host has Go {{ have_go }}: Go 1.21 or later fetches go.mod's when GOTOOLCHAIN is auto (go env -w
               GOTOOLCHAIN=auto); older, install Go from https://go.dev/dl/
+          docker:
+            what: Docker as you, for make packages (nfpm runs in a container)
+            ok: "{{ p.docker.rc == 0 }}"
+            how: install Docker, start it, add yourself to the group docker (sudo usermod -aG docker $USER), and log in again
           community.libvirt:
             what: the collection community.libvirt 2.4.0 or later, for the VMs
             ok: "{{ libvirt is version('2.4.0', '>=') }}"

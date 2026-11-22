@@ -16,8 +16,32 @@ import (
 // Base is the path prefix of the agent protocol. It is not part of the user-facing /api/v1.
 const Base = "/agent/v1"
 
+// Protocol is the version of the agent protocol this build speaks (plan-m5 item 1). It goes up only when
+// a change needs both sides to know of it; a field the other side may ignore does not change it. Agents
+// before M5 sent none, and speak 1.
+const Protocol = 1
+
+// MinProtocol is the oldest agent protocol this server accepts. A server can then be upgraded before its
+// agents, and the agents one by one. An older agent's polls are refused with 426 and the range; it keeps
+// backing up on its cached config, and its reports are still taken.
+const MinProtocol = 1
+
+// ProtocolRange is what the server accepts, sent with every answer to a poll.
+type ProtocolRange struct {
+	Min int `json:"min"`
+	Max int `json:"max"`
+}
+
+// TooOld is the body of a 426 answer to an agent older than the server accepts.
+type TooOld struct {
+	Error    string        `json:"error"`
+	Protocol ProtocolRange `json:"protocol"`
+}
+
 // Facts describe the host. The agent sends them with enrollment and with every poll.
 type Facts struct {
+	// Protocol is the agent's protocol version; 0 from an agent before M5, which speaks 1.
+	Protocol      int       `json:"protocol,omitempty"`
 	AgentVersion  string    `json:"agent_version"`
 	ResticVersion string    `json:"restic_version"`
 	OSID          string    `json:"os_id"`         // os-release ID: ubuntu, rhel, ol
@@ -166,10 +190,19 @@ type Command struct {
 
 // PollResponse answers a poll. Config and Credentials are present only when they changed.
 type PollResponse struct {
-	Config      *HostConfig  `json:"config,omitempty"`
-	Credentials *Credentials `json:"credentials,omitempty"`
-	Commands    []Command    `json:"commands,omitempty"`
-	ServerTime  time.Time    `json:"server_time"`
+	Config      *HostConfig    `json:"config,omitempty"`
+	Credentials *Credentials   `json:"credentials,omitempty"`
+	Commands    []Command      `json:"commands,omitempty"`
+	ServerTime  time.Time      `json:"server_time"`
+	Protocol    *ProtocolRange `json:"protocol,omitempty"` // what the server accepts; nil from a server before M5
+}
+
+// AgentProtocol is the protocol an agent speaks, from its facts.
+func (f Facts) AgentProtocol() int {
+	if f.Protocol == 0 {
+		return 1
+	}
+	return f.Protocol
 }
 
 // Run statuses. Every run ends in exactly one of these, and it is always reported.

@@ -5,12 +5,12 @@
 # Usage: lab/lab <command> <lab> [arguments]
 #   doctor <lab>             check this host for what the lab needs, and say how to get what lacks
 #   up <lab>                 make the lab ready: its VMs made or started (lab/ansible/vms.yml), this checkout built
-#                            (CGO_ENABLED=0 make build, and lab/fidelity as bin/hf-fidelity), every VM provisioned
-#                            (lab/ansible/site.yml: MicroCeph and RGW on s3a, PostgreSQL on hfsrv, Holdfast's binaries
-#                            and restic on hfsrv and the agents, holdfast-server configured with the lab's CA and
+#                            (make packages: the .deb and .rpm packages, and lab/fidelity as bin/hf-fidelity), every VM
+#                            provisioned (lab/ansible/site.yml: MicroCeph and RGW on s3a, PostgreSQL on hfsrv, Holdfast's
+#                            packages on hfsrv and the agents, holdfast-server configured with the lab's CA and
 #                            running), then checked. Run it again after a failure: it resumes; on a ready lab it changes
 #                            nothing
-#   deploy <lab>             build this checkout (as up does) and install its binaries on hfsrv and the agents
+#   deploy <lab>             build this checkout (as up does) and install its packages on hfsrv and the agents
 #                            (hf-fidelity in /usr/local/bin on the agents), restarting the Holdfast services that run there
 #   test <lab> [<vm>...]     M2's "done when", the fidelity test (lab/test-fidelity.sh): build and deploy this checkout,
 #                            provision the server and Authelia (site.yml --tags binaries,hfserver), check login on the
@@ -124,8 +124,8 @@ play() {
 	((rc == 0)) || exit 1
 }
 build() {
-	step "this checkout's binaries (CGO_ENABLED=0 make build: static, for every VM's libc), and the lab's bin/hf-fidelity"
-	CGO_ENABLED=0 make -s build || exit 1
+	step "this checkout's packages (make packages: static binaries, nfpm in a container), and the lab's bin/hf-fidelity"
+	make -s packages >/dev/null || exit 1
 	CGO_ENABLED=0 go build -o bin/hf-fidelity ./lab/fidelity || exit 1
 }
 
@@ -249,7 +249,7 @@ deploy)
 	st=$(sed -n 's/^state //p' <<<"$out")
 	[[ $st == ready || $st == broken ]] || { echo "lab: the lab $lab is $st: lab/lab up $lab first" >&3; exit 3; }
 	build
-	step "installing the binaries on the server and the agents, restarting the Holdfast services that run (site.yml --tags binaries)"
+	step "installing the packages on the server and the agents, restarting the Holdfast services that run (site.yml --tags binaries)"
 	play site.yml "$state/inventory.yml" --tags binaries -e lab_deploy=true
 	resume="lab/lab deploy $lab again"
 	check ;;
@@ -259,7 +259,7 @@ test)
 	[[ $st == ready ]] || { echo "lab: the lab $lab is $st, not ready: lab/lab up $lab first (lab/lab status $lab says why)" >&3; exit 3; }
 	resume="lab/lab test $lab $* runs it again"
 	build
-	step "installing the binaries, Authelia, and the Holdfast server's TLS, settings and service (site.yml --tags binaries,hfserver)"
+	step "installing the packages, Authelia, and the Holdfast server's TLS, settings and service (site.yml --tags binaries,hfserver)"
 	play site.yml "$state/inventory.yml" --tags binaries,hfserver -e lab_deploy=true
 	step "the login check and the fidelity test through Holdfast: lab/test-fidelity.sh $lab $*"
 	shown=1

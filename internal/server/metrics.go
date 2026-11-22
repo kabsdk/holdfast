@@ -60,6 +60,8 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	gauge("holdfast_agent_config_in_sync", "1 if the agent runs the host's current config (no drift).")
 	gauge("holdfast_agent_clock_offset_seconds", "Agent clock minus server clock, at the last poll.")
 	gauge("holdfast_agent_restic_pinned", "1 if the agent runs the restic Holdfast is tested with (decision 032).")
+	gauge("holdfast_agent_protocol", "The agent protocol the agent last reported; 0 from an agent before M5, which speaks 1.")
+	gauge("holdfast_agent_too_old", "1 if the agent speaks an older protocol than this server accepts: it gets no config changes until it is upgraded.")
 	for _, h := range hosts {
 		if h.Agent == nil {
 			continue
@@ -81,6 +83,12 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 			}
 			fmt.Fprintf(&b, "holdfast_agent_restic_pinned{host=%q} %d\n", h.FQDN, pinned)
 		}
+		old := 0
+		if h.AgentTooOld {
+			old = 1
+		}
+		fmt.Fprintf(&b, "holdfast_agent_protocol{host=%q} %d\n", h.FQDN, a.Protocol)
+		fmt.Fprintf(&b, "holdfast_agent_too_old{host=%q} %d\n", h.FQDN, old)
 	}
 
 	gauge("holdfast_job_last_success_timestamp_seconds", "Finish time of the last successful or warning backup.")

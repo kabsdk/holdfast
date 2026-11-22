@@ -50,6 +50,18 @@
         mode: "0600"
       no_log: true
 
+    # Decision 036: the server writes each host's repository password, encrypted to this key's recipient, to the bucket.
+    # The private key stays here, as an admin keeps it offline.
+    - name: Make the offline escrow key once (credentials/escrow-age.key, lab/escrowkey)
+      ansible.builtin.command:
+        argv: [go, run, ./lab/escrowkey, "{{ lab_creds }}/escrow-age.key"]
+        chdir: "{{ lab_repo }}"
+        creates: "{{ lab_creds }}/escrow-age.key"
+
+    - name: Read its recipient
+      ansible.builtin.set_fact:
+        lab_escrow_recipient: "{{ lookup('ansible.builtin.file', lab_creds ~ '/escrow-age.key') | regex_search('^# public key: (age1[a-z0-9]+)$', '\\1', multiline=True) | first }}"
+
     - name: Fetch restic {{ restic.version }} when it is missing (scripts/fetch-restic.sh checks it against the release's SHA256SUMS)
       ansible.builtin.command:
         argv: ["{{ lab_repo }}/scripts/fetch-restic.sh", "{{ restic.version }}"]
@@ -120,18 +132,23 @@
       register: lab_authelia_creds
       changed_when: lab_authelia_creds.stdout is search('(?m)^made ')
 
-    - name: Read this checkout's binaries (make build, and the lab's fidelity tool)
+    - name: Read this checkout's packages (make packages) and the lab's fidelity tool
       ansible.builtin.stat:
-        path: "{{ lab_repo }}/bin/{{ item }}"
+        path: "{{ lab_repo }}/{{ item }}"
         get_checksum: false
       register: lab_bins
-      loop: [holdfast-server, holdfast, holdfast-freshness, holdfast-agent, hf-fidelity]
+      loop: [dist/VERSION, dist/SHA256SUMS, bin/hf-fidelity]
 
     - name: Refuse to go on without them
       ansible.builtin.assert:
         that: lab_bins.results | rejectattr('stat.exists') | list == []
-        fail_msg: "{{ lab_repo }}/bin/ lacks {{ lab_bins.results | rejectattr('stat.exists') | map(attribute='item') | join(', ') }}: CGO_ENABLED=0 make build && CGO_ENABLED=0 go build -o bin/hf-fidelity ./lab/fidelity (lab/lab up and deploy do both)"
+        fail_msg: "{{ lab_repo }} lacks {{ lab_bins.results | rejectattr('stat.exists') | map(attribute='item') | join(', ') }}: make packages && CGO_ENABLED=0 go build -o bin/hf-fidelity ./lab/fidelity (lab/lab up and deploy do both)"
         quiet: true
+
+    - name: Read the packages' version and files
+      ansible.builtin.set_fact:
+        lab_pkg_version: "{{ lookup('ansible.builtin.file', lab_repo ~ '/dist/VERSION') | trim }}"
+        lab_pkg_files: "{{ lookup('ansible.builtin.file', lab_repo ~ '/dist/SHA256SUMS').splitlines() | map('split') | map('last') | list }}"
 
 - name: Every VM
   hosts: all
@@ -541,7 +558,10 @@
         mode: "0600"
       no_log: true
 
-- name: Holdfast's binaries, restic and the systemd units
+# The packages (plan-m5 item 1), as an admin installs them: the VM's family's .deb or .rpm files of this build, with no
+# network (dpkg -i, rpm -U). They hold restic in /usr/libexec/holdfast, the binaries and the units, which they do not
+# enable. A build between releases may sort before the one installed, so going back is allowed (rpm --oldpackage).
+- name: Holdfast's packages, and the lab's fidelity tool
   hosts: server:agent
   gather_facts: false
   tags: [binaries]
@@ -551,27 +571,44 @@
   vars:
     lab_deploy: false
     is_server: "{{ inventory_hostname in groups['server'] }}"
-    hf_binaries: "{{ ['holdfast-server', 'holdfast', 'holdfast-freshness'] if is_server else ['holdfast-agent'] }}"
+    is_debian: "{{ images[vms[inventory_hostname].image].family == 'debian' }}"
+    hf_packages: "{{ ['holdfast-restic', 'holdfast-cli', 'holdfast-server', 'holdfast-freshness'] if is_server else ['holdfast-restic', 'holdfast-agent'] }}"
     hf_units: "{{ ['holdfast-server.service', 'holdfast-freshness.service'] if is_server else ['holdfast-agent.service'] }}"
+    hf_version: "{{ hostvars['localhost'].lab_pkg_version }}"
+    hf_suffix: "{{ ('_' ~ hf_version ~ '_amd64.deb') if is_debian else ('-' ~ hf_version ~ '.x86_64.rpm') }}"
+    hf_files: "{{ hf_packages | product([hf_suffix]) | map('join') | list }}"
+    hf_dir: /var/tmp/holdfast-packages
   tasks:
-    - name: Make /usr/libexec/holdfast
+    - name: Refuse a build that lacks one of them
+      ansible.builtin.assert:
+        that: hf_files | difference(hostvars['localhost'].lab_pkg_files) == []
+        fail_msg: "dist/SHA256SUMS lacks {{ hf_files | difference(hostvars['localhost'].lab_pkg_files) | join(', ') }}: make packages"
+        quiet: true
+
+    - name: Make {{ hf_dir }}
       ansible.builtin.file:
-        path: /usr/libexec/holdfast
+        path: "{{ hf_dir }}"
         state: directory
-        mode: "0755"
+        mode: "0700"
 
-    - name: restic {{ restic.version }} in /usr/libexec/holdfast/restic
+    - name: Copy this build's {{ 'deb' if is_debian else 'rpm' }} packages there
       ansible.builtin.copy:
-        src: "{{ lab_restic_cache }}"
-        dest: /usr/libexec/holdfast/restic
-        mode: "0755"
+        src: "{{ lab_repo }}/dist/{{ item }}"
+        dest: "{{ hf_dir }}/{{ item }}"
+        mode: "0600"
+      loop: "{{ hf_files }}"
 
-    - name: This checkout's binaries in /usr/bin
-      ansible.builtin.copy:
-        src: "{{ lab_repo }}/bin/{{ item }}"
-        dest: "/usr/bin/{{ item }}"
-        mode: "0755"
-      loop: "{{ hf_binaries }}"
+    - name: Read the installed versions
+      ansible.builtin.command:
+        argv: "{{ (['dpkg-query', '-W', '-f', '${Version}\\n'] if is_debian else ['rpm', '-q', '--qf', '%{VERSION}-%{RELEASE}\\n']) + hf_packages }}"
+      register: hf_installed
+      changed_when: false
+      failed_when: false
+
+    - name: Install them, unless every one is this build's {{ hf_version }}
+      ansible.builtin.command:
+        argv: "{{ (['dpkg', '-i'] if is_debian else ['rpm', '-U', '--oldpackage', '--replacepkgs']) + (hf_files | map('regex_replace', '^', hf_dir ~ '/') | list) }}"
+      when: hf_installed.stdout_lines | length != hf_packages | length or hf_installed.stdout_lines | unique != [hf_version]
       register: lab_bin
 
     - name: The lab's fidelity tool (lab/fidelity, not shipped) in /usr/local/bin, on the agents
@@ -580,19 +617,6 @@
         dest: /usr/local/bin/hf-fidelity
         mode: "0755"
       when: not is_server
-
-    - name: The systemd units from deploy/systemd, not enabled
-      ansible.builtin.copy:
-        src: "{{ lab_repo }}/deploy/systemd/{{ item }}"
-        dest: "/usr/lib/systemd/system/{{ item }}"
-        mode: "0644"
-      loop: "{{ hf_units }}"
-      register: lab_unit
-
-    - name: Make systemd read them
-      ansible.builtin.systemd:
-        daemon_reload: true
-      when: lab_unit.changed
 
     - name: Read which of them run
       ansible.builtin.command:

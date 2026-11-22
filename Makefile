@@ -20,6 +20,16 @@ RESTIC_VERSION ?= 0.19.1
 
 PROM_IMAGE  ?= prom/prometheus:v2.53.0
 
+# Packages (plan-m5 item 1): nfpm in a container, pinned by digest. HOLDFAST_VERSION is a release's version,
+# such as 0.5.0; a build between releases sorts before the next one (scripts/version.sh). Worked out once.
+NFPM_IMAGE ?= goreleaser/nfpm@sha256:f1e9f1adcf452a85ab7765aa7252cdb2f94816ead5363bbd52a4e563087c942b
+ifeq ($(origin HOLDFAST_VERSION),undefined)
+HOLDFAST_VERSION := $(shell sh scripts/version.sh)
+endif
+# Static binaries, so one package runs on every distribution; the agent reports its version.
+export CGO_ENABLED ?= 0
+LDFLAGS := -X github.com/kabsdk/holdfast/internal/agent.Version=$(HOLDFAST_VERSION)
+
 # The login and UI tests (M4): a real OIDC provider, and a headless browser driven over the DevTools
 # protocol. Both pinned by digest; both on the host network, on loopback only.
 AUTHELIA_IMAGE ?= authelia/authelia@sha256:bd97cff4fcbf715b5ff1f9ae286afbe6033afce385302520b0368122d43a6f54
@@ -27,7 +37,7 @@ BROWSER_IMAGE  ?= chromedp/headless-shell@sha256:381353d3530ab9d579d2fe8b9c0f451
 BROWSER_NAME   ?= holdfast-test-browser
 BROWSER_PORT   ?= 59222
 
-.PHONY: build test unit vet fmt pg-up pg-down minio-up minio-down tools e2e rules-test authelia-up authelia-down browser-up browser-down
+.PHONY: build test unit vet fmt pg-up pg-down minio-up minio-down tools e2e rules-test authelia-up authelia-down browser-up browser-down packages
 
 # promtool: the alert rules parse, and their unit tests pass.
 rules-test:
@@ -35,7 +45,12 @@ rules-test:
 	docker run --rm -v $(CURDIR)/deploy/prometheus:/rules:ro -w /rules --entrypoint promtool $(PROM_IMAGE) test rules holdfast-alerts.test.yml
 
 build:
-	go build -o bin/ ./cmd/...
+	go build -ldflags "$(LDFLAGS)" -o bin/ ./cmd/...
+
+# The .deb and .rpm packages, with SHA256SUMS, in dist/ (packaging/build.sh). Unsigned (plan-m5 Q2).
+packages: build
+	@HOLDFAST_VERSION='$(HOLDFAST_VERSION)' RESTIC_VERSION=$(RESTIC_VERSION) NFPM_IMAGE=$(NFPM_IMAGE) \
+		RESTIC_BINARY=$$(scripts/fetch-restic.sh $(RESTIC_VERSION)) bash packaging/build.sh
 
 fmt:
 	gofmt -w ./cmd ./internal

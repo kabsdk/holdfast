@@ -1,0 +1,16 @@
+#!/bin/sh
+# After install or upgrade of @PACKAGE@: systemd reads the unit again, and an upgrade restarts @UNIT@ if it
+# runs. A fresh install enables nothing: the service needs its config first.
+set -e
+upgrade=false
+case "${1:-}" in
+  configure) [ -n "${2:-}" ] && upgrade=true ;;      # deb: configure <the version before>
+  [0-9]*) [ "$1" -ge 2 ] && upgrade=true ;;          # rpm: how many versions are installed now
+esac
+if [ -d /run/systemd/system ]; then
+  systemctl daemon-reload || true
+  if [ "$upgrade" = true ]; then
+    systemctl try-restart @UNIT@ || true
+  fi
+fi
+exit 0

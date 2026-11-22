@@ -200,6 +200,7 @@ type hostView struct {
 	FirstBackupAt     *time.Time     `json:"first_backup_at"`
 	Storage           *storageReport `json:"storage"`
 	ResticWarning     string         `json:"restic_warning"`
+	AgentTooOld       bool           `json:"agent_too_old"`
 	Snapshots         int            `json:"snapshots"`
 	NotMadeByHoldfast int            `json:"not_made_by_holdfast"`
 	Disappeared       int            `json:"disappeared"`
@@ -298,6 +299,10 @@ func hostCmd() *cobra.Command {
 		}
 		if h.ResticWarning != "" {
 			fmt.Println("warning:", h.ResticWarning)
+		}
+		if h.AgentTooOld {
+			fmt.Println("warning: the agent is older than this server accepts: upgrade holdfast-agent on the host (docs/install.md).\n" +
+				"  It backs up on its cached config, and gets no config changes or commands meanwhile.")
 		}
 		if h.Disappeared > 0 {
 			fmt.Printf("ALERT: %d snapshots disappeared from the repository without Holdfast deleting them.\n"+

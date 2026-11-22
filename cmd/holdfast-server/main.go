@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -35,11 +36,15 @@ func main() {
 		return
 	}
 	cfgPath := flag.String("config", "/etc/holdfast/server.yaml", "settings file")
-	test := flag.Bool("test", false, "for the end-to-end tests only: allow HOLDFAST_TEST_NOW_OFFSET")
+	test := flag.Bool("test", false, "for the end-to-end tests only: allow HOLDFAST_TEST_NOW_OFFSET and HOLDFAST_TEST_MIN_PROTOCOL")
 	flag.Parse()
 	now, err := clock(*test, log)
+	var minProto int
 	if err == nil {
-		err = run(*cfgPath, now, log)
+		minProto, err = testMinProtocol(*test, log)
+	}
+	if err == nil {
+		err = run(*cfgPath, now, minProto, log)
 	}
 	if err != nil {
 		log.Error("holdfast-server stopped", "err", err)
@@ -66,7 +71,25 @@ func clock(test bool, log *slog.Logger) (func() time.Time, error) {
 	return func() time.Time { return time.Now().Add(off) }, nil
 }
 
-func run(cfgPath string, now func() time.Time, log *slog.Logger) error {
+// testMinProtocol raises the oldest agent protocol the server accepts, so the end-to-end tests can see an
+// agent that is too old (plan-m5 item 1). Like the test clock, it needs -test.
+func testMinProtocol(test bool, log *slog.Logger) (int, error) {
+	v := os.Getenv("HOLDFAST_TEST_MIN_PROTOCOL")
+	if v == "" {
+		return 0, nil
+	}
+	if !test {
+		return 0, errors.New("HOLDFAST_TEST_MIN_PROTOCOL is set, but holdfast-server was not started with -test; it is for the end-to-end tests only")
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 1 {
+		return 0, fmt.Errorf("HOLDFAST_TEST_MIN_PROTOCOL is %q, not a protocol version", v)
+	}
+	log.Warn("TEST: the server accepts only agents of this protocol or later", "min_protocol", n)
+	return n, nil
+}
+
+func run(cfgPath string, now func() time.Time, minProto int, log *slog.Logger) error {
 	set, err := server.LoadSettings(cfgPath)
 	if err != nil {
 		return err
@@ -95,7 +118,7 @@ func run(cfgPath string, now func() time.Time, log *slog.Logger) error {
 	if len(set.Storage.ProvisionerCommand) > 0 {
 		prov = storage.ExecProvisioner{Command: set.Storage.ProvisionerCommand, Bucket: set.Storage.Bucket}
 	}
-	srv, err := server.New(set, server.Deps{Store: st, Sealer: sealer, Provisioner: prov, Maintenance: maint, Logger: log, Now: now})
+	srv, err := server.New(set, server.Deps{Store: st, Sealer: sealer, Provisioner: prov, Maintenance: maint, Logger: log, Now: now, MinProtocol: minProto})
 	if err != nil {
 		return err
 	}

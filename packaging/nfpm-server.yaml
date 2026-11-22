@@ -1,0 +1,49 @@
+# holdfast-server: the server and its unit. Not enabled at install: write /etc/holdfast/server.yaml first
+# (the example is /usr/share/holdfast/server.yaml.example). An upgrade restarts it if it runs; it migrates the
+# database itself.
+name: holdfast-server
+arch: amd64
+platform: linux
+version: ${HOLDFAST_VERSION}
+version_schema: none
+release: "1"
+section: admin
+priority: optional
+maintainer: ${HOLDFAST_MAINTAINER}
+homepage: https://github.com/kabsdk/holdfast
+description: |-
+  Holdfast server
+   The control plane over restic: config revisions, the API and the UI, and maintenance.
+depends:
+  - holdfast-restic (= ${HOLDFAST_VERSION}-1)
+  - holdfast-cli (= ${HOLDFAST_VERSION}-1)
+overrides:
+  rpm:
+    depends:
+      - holdfast-restic = ${HOLDFAST_VERSION}-1
+      - holdfast-cli = ${HOLDFAST_VERSION}-1
+contents:
+  - src: bin/holdfast-server
+    dst: /usr/bin/holdfast-server
+    file_info: {mode: 0755}
+  - src: deploy/systemd/holdfast-server.service
+    dst: /usr/lib/systemd/system/holdfast-server.service
+    file_info: {mode: 0644}
+  - src: deploy/examples/server.yaml
+    dst: /usr/share/holdfast/server.yaml.example
+    file_info: {mode: 0644}
+  - src: deploy/prometheus/holdfast-alerts.yml
+    dst: /usr/share/holdfast/prometheus/holdfast-alerts.yml
+    file_info: {mode: 0644}
+  - src: deploy/alerting/holdfast-alert-mail.sh
+    dst: /usr/share/holdfast/alerting/holdfast-alert-mail.sh
+    file_info: {mode: 0644}
+  - src: deploy/alerting/holdfast-deadman.sh
+    dst: /usr/share/holdfast/alerting/holdfast-deadman.sh
+    file_info: {mode: 0644}
+  - dst: /etc/holdfast
+    type: dir
+    file_info: {mode: 0700}
+scripts:
+  postinstall: packaging/scripts/postinstall.sh
+  preremove: packaging/scripts/preremove.sh

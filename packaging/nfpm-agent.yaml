@@ -1,0 +1,37 @@
+# holdfast-agent: the agent and its unit. Not enabled at install: `holdfast-agent enroll` writes its config,
+# then `systemctl enable --now holdfast-agent`. An upgrade restarts it if it runs.
+name: holdfast-agent
+arch: amd64
+platform: linux
+version: ${HOLDFAST_VERSION}
+version_schema: none
+release: "1"
+section: admin
+priority: optional
+maintainer: ${HOLDFAST_MAINTAINER}
+homepage: https://github.com/kabsdk/holdfast
+description: |-
+  Holdfast backup agent
+   Runs restic on this host on the schedule the Holdfast server sets, and reports to it.
+depends:
+  - holdfast-restic (= ${HOLDFAST_VERSION}-1)
+overrides:
+  rpm:
+    depends:
+      - holdfast-restic = ${HOLDFAST_VERSION}-1
+contents:
+  - src: bin/holdfast-agent
+    dst: /usr/bin/holdfast-agent
+    file_info: {mode: 0755}
+  - src: deploy/systemd/holdfast-agent.service
+    dst: /usr/lib/systemd/system/holdfast-agent.service
+    file_info: {mode: 0644}
+  - src: deploy/examples/agent.yaml
+    dst: /usr/share/holdfast/agent.yaml.example
+    file_info: {mode: 0644}
+  - dst: /etc/holdfast
+    type: dir
+    file_info: {mode: 0700}
+scripts:
+  postinstall: packaging/scripts/postinstall.sh
+  preremove: packaging/scripts/preremove.sh

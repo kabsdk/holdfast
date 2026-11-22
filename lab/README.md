@@ -25,10 +25,10 @@ installed but not configured. Every VM has the others' names in `/etc/hosts`
 | Command | What it does |
 | --- | --- |
 | `lab/lab doctor m1` | checks what this host lacks for `up`, and says how to get it; changes nothing |
-| `lab/lab up m1` | makes the VMs, or starts them, builds this checkout (`CGO_ENABLED=0 make build`, static binaries for every libc, and `bin/hf-fidelity`), provisions every VM (`site.yml`, the Holdfast server included), then checks the lab; run it again after a failure to resume; on a ready lab it changes nothing |
+| `lab/lab up m1` | makes the VMs, or starts them, builds this checkout (`make packages`: the `.deb` and `.rpm` packages of static binaries, and `bin/hf-fidelity`), provisions every VM (`site.yml`: the packages installed with `dpkg -i` or `rpm -U`, the Holdfast server included), then checks the lab; run it again after a failure to resume; on a ready lab it changes nothing |
 | `lab/lab status m1 [--json]` | absent, off, ready or broken, with what each VM answered and why it is not ready |
 | `lab/lab ssh m1 <vm> [command]` | SSH as root with the lab's key |
-| `lab/lab deploy m1` | builds this checkout and installs its binaries on hfsrv and the agents, restarting any Holdfast service that runs |
+| `lab/lab deploy m1` | builds this checkout's packages and installs them on hfsrv and the agents, restarting any Holdfast service that runs |
 | `lab/lab test m1 [<vm>...]` | M2's "done when", the fidelity test through Holdfast (below): builds and deploys, provisions the server and Authelia, checks login on the UI through Authelia, then backs up and restores the metadata fixture on each agent VM (or those named) and compares the 13 properties |
 | `lab/lab isolation m1 account` | the RGW-accounts test (below) |
 | `lab/lab isolation m1 <user-policy\|bucket-policy> [--maint-policy]` | the same question without accounts |
@@ -274,6 +274,17 @@ POST /auth/logout ends the session: /api/v1/me 401 again              PASS
 
 result: PASS, 39 of 39 properties kept on 3 VMs, 5 of 5 login checks passed
 ```
+
+**Result with the packages, 2026-11-22** (M5, plan-m5 item 1): the same 39 of 39 properties and 5 of 5 login
+checks, with Holdfast installed from this checkout's packages (`0.5.0~dev43…`): `holdfast-restic` and
+`holdfast-agent` on ub24 with `dpkg -i`, and on el9 and ol9 with `rpm -U`; `holdfast-restic`, `holdfast-cli`,
+`holdfast-server` and `holdfast-freshness` on hfsrv. The agents run at `Nice=10` and idle I/O priority. Every
+host's escrow file holds its current password (`credentials/escrow-age.key` reads it), and the storage test,
+B012 included, passes against Ceph RGW.
+
+The run found one gap: **measuring a repository's size needs `s3:ListBucketVersions`** on Ceph RGW (and AWS), which
+the maintenance policy lacked; MinIO lists versions with `s3:ListBucket` alone, so the e2e suite did not see it.
+`docs/storage.md` and `rgw-documented-layout.sh` now grant it, and the size error names it.
 
 **What the run found in the product.** Both bugs are fixed; see `docs/plan-m2.md`.
 - The agent and the server now default `restic_bin` to `/usr/libexec/holdfast/restic`.

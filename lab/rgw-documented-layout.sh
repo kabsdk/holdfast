@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # lab/rgw-documented-layout.sh [--keep-data]: the lab bucket `holdfast` on s3a in the layout docs/storage.md
-# describes, so Holdfast's contract test (B001-B011) can pass against real Ceph RGW. Run it on s3a as root:
+# describes, so Holdfast's contract test (B001-B012) can pass against real Ceph RGW. Run it on s3a as root:
 #
 #   lab/lab ssh m1 s3a 'bash -s' < lab/rgw-documented-layout.sh                  rebuilds the bucket: DELETES its data
 #   lab/lab ssh m1 s3a 'bash -s -- --keep-data' < lab/rgw-documented-layout.sh   keeps it: the users and the policy only
@@ -10,9 +10,10 @@
 # when it is missing or when another identity owns it but it holds no object (as lab/lab up makes it), and refuses one
 # that another identity owns and that holds data. lab/lab test m1 runs it with --keep-data. Either way:
 #   - owned by `holdfast-bucket-owner`, an identity of the admin's own, not by the maintenance key (B010);
-#   - versioning on (B008), and a lifecycle rule that expires noncurrent versions under repos/ (B011);
+#   - versioning on (B008), and a lifecycle rule that expires noncurrent versions in the whole bucket (B011);
 #   - a bucket policy: the maintenance user `holdfast-maint` may read, write, list and delete under repos/,
-#     including what host users wrote (B003, B004), and is denied version deletes (B009); each host user gets
+#     including what host users wrote (B003, B004), write and delete under escrow/ (B012), and is denied version
+#     deletes (B009); each host user gets
 #     docs/storage.md's host statements for its own prefix, repos/<fqdn>/, and may delete only under its locks/
 #     (B001-B007).
 # The host users: `test-host` for repos/test.example.com/ (the isolation experiments' and TestS3ProberLive's), and one
@@ -101,8 +102,9 @@ if ((rebuild >= 0)); then
 fi
 as holdfast-bucket-owner aws --endpoint-url "$RGW" s3api put-bucket-versioning --bucket "$B" --versioning-configuration Status=Enabled
 
+# The whole bucket (docs/storage.md): repos/, and the escrow files' old versions under escrow/.
 cat >lifecycle.json <<'EOF'
-{"Rules": [{"ID": "expire-noncurrent", "Status": "Enabled", "Filter": {"Prefix": "repos/"},
+{"Rules": [{"ID": "expire-noncurrent", "Status": "Enabled", "Filter": {"Prefix": ""},
   "NoncurrentVersionExpiration": {"NoncurrentDays": 30}}]}
 EOF
 as holdfast-bucket-owner aws --endpoint-url "$RGW" s3api put-bucket-lifecycle-configuration --bucket "$B" --lifecycle-configuration file://lifecycle.json
@@ -114,10 +116,13 @@ b, hosts = sys.argv[1], [h.split() for h in sys.argv[2:]]
 m = {"AWS": ["arn:aws:iam:::user/holdfast-maint"]}
 st = [
     {"Sid": "MaintBucket", "Effect": "Allow", "Principal": m,
-     "Action": ["s3:ListBucket", "s3:GetBucketLocation", "s3:GetBucketVersioning", "s3:GetLifecycleConfiguration"],
+     "Action": ["s3:ListBucket", "s3:ListBucketVersions", "s3:GetBucketLocation", "s3:GetBucketVersioning",
+                "s3:GetLifecycleConfiguration"],
      "Resource": [f"arn:aws:s3:::{b}"]},
     {"Sid": "MaintObjects", "Effect": "Allow", "Principal": m,
      "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"], "Resource": [f"arn:aws:s3:::{b}/repos/*"]},
+    {"Sid": "MaintEscrow", "Effect": "Allow", "Principal": m,
+     "Action": ["s3:PutObject", "s3:DeleteObject"], "Resource": [f"arn:aws:s3:::{b}/escrow/*"]},
     {"Sid": "MaintNoVersionDeletes", "Effect": "Deny", "Principal": m,
      "Action": ["s3:DeleteObjectVersion"], "Resource": [f"arn:aws:s3:::{b}/*"]},
 ]

@@ -1,0 +1,20 @@
+# holdfast-restic: the restic Holdfast is tested with, at /usr/libexec/holdfast/restic (decision 032). The
+# agent and the server both depend on it, so one host can have both. `make packages` fills in the variables.
+name: holdfast-restic
+arch: amd64
+platform: linux
+version: ${HOLDFAST_VERSION}
+version_schema: none
+release: "1"
+section: admin
+priority: optional
+maintainer: ${HOLDFAST_MAINTAINER}
+homepage: https://github.com/kabsdk/holdfast
+description: |-
+  restic ${RESTIC_VERSION}, as Holdfast is tested with it
+   The upstream release binary of restic, checked against its SHA256SUMS, installed where Holdfast's agent
+   and server look for it. Not on PATH.
+contents:
+  - src: ${RESTIC_BINARY}
+    dst: /usr/libexec/holdfast/restic
+    file_info: {mode: 0755}

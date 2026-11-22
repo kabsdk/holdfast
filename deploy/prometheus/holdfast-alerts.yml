@@ -153,6 +153,15 @@ groups:
         annotations:
           summary: "{{ $labels.host }} runs another restic than the one Holdfast is tested with (holdfast host show {{ $labels.host }})"
 
+      - alert: HoldfastAgentTooOld
+        # The agent speaks an older protocol than the server accepts (docs/install.md): it backs up on its cached
+        # config, but gets no config changes, restores or Back up now until it is upgraded.
+        expr: holdfast_agent_too_old == 1
+        for: 1h
+        labels: {severity: ticket}
+        annotations:
+          summary: "{{ $labels.host }}: its agent is too old for the server; upgrade holdfast-agent"
+
       - alert: HoldfastStorageContractBroken
         # A host key may do more than docs/storage.md allows, or the server can no longer maintain the
         # host's repository (decision 029). The daily check finds it, so it can be up to a day old.
