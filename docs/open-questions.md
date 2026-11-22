@@ -67,8 +67,8 @@ A list of prunes, both manual (Prune now) and scheduled, under Config history.
 > copied off-site by the vault; agents keep their tokens; `holdfast host import` from escrow files; no hash chain.
 > Built in M9, after decision 041's two-program architecture (M8), which replaces the vault and the tokens.
 
-**Decided around it (decision 030):**
-- There is no warm standby.
+**Decided around it (decisions 030, 042):**
+- There is no warm standby, and no high availability of any kind: one server, replaced when lost (decision 042).
 - A nightly PostgreSQL dump and a config export go to site B, and the sealing key is in escrow.
 - A tested rebuild runbook covers the rest.
 

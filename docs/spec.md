@@ -17,6 +17,10 @@ Clusterlane is a control plane over keepalived and HAProxy.
 
 There are no paid tiers and no feature gating.
 
+**Who it is for** (decision 042): a small operations team, one to a handful of people, looking after roughly ten to a
+few hundred Linux servers, with S3-compatible storage they already run or rent. They want one place to set restic
+backups up, see them, restore from them and be alerted, instead of cron jobs and scripts on each host.
+
 ### 1.1 Scope
 
 - **restic only.** Holdfast configures, schedules, monitors and restores restic backups.
@@ -34,6 +38,9 @@ There are no paid tiers and no feature gating.
   Cloud plugin backups.
 - **Database files on hosts.** A file copy of a running database is not a backup. For example,
   `/var/lib/pgsql` is excluded.
+- **High availability of Holdfast itself** (decision 042): no clustering, standby, active/passive pair or second
+  gateway. One server; a lost one is replaced (§2.2).
+- **Windows and macOS machines, service providers backing up many customers, and fleets of thousands** (decision 042).
 
 ### 1.3 Engines and capabilities
 
@@ -100,13 +107,15 @@ There are two programs: holdfast-agent and holdfast-server (decision 041).
 - Alert rules ship with the product. The starting set is
   [poc/deploy/prometheus/holdfast-alerts.yml](../poc/deploy/prometheus/holdfast-alerts.yml).
 
-### 2.2 High availability
+### 2.2 One server, replaced when lost
 
-- There is no standby (decision 030). Backups go through the server's gateway (decision 041), so while the server
-  is down no backup is made: agents keep their schedule, restic waits and retries, and a failed backup is retried
-  as soon as the server answers. A second gateway, on another machine, is designed for and not built.
-- Instead, there is a nightly PostgreSQL dump and config export off-site (M9), the sealing key is in escrow,
-  and a tested runbook rebuilds the server.
+- There is one server and no high availability: no standby, no cluster, no second gateway (decisions 030, 042).
+- Backups go through the server's gateway (decision 041), so while the server is down no backup is made: agents keep
+  their schedule, restic waits and retries, and a failed backup is retried as soon as the server answers. Nothing is
+  lost, as the backups are in the bucket. The storage witness lists the bucket directly and alerts when snapshots go
+  stale.
+- A lost server is replaced, not failed over: a new one, given the same bucket, the credentials key from escrow and the
+  nightly export, picks up where the old one was (M9, decision 040), following a tested runbook.
 
 ### 2.3 Credentials and storage protection
 

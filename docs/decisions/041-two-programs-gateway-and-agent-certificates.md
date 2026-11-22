@@ -50,8 +50,8 @@ decision 006 that lets a backup run while the server is down; the bearer token o
 ## What it costs
 
 - **Backups need the server.** While it is down, agents retry, and back up as soon as it answers; the stale alert covers
-  a long outage. A second gateway on another machine (the same program, `role: gateway`) is possible later, since it
-  needs only the pinned certificates, which are public, and the gateway key.
+  a long outage. (A second gateway on another machine was listed here as possible later. Decision 042 puts it out of
+  scope: one server, replaced when lost.)
 - **Backup traffic passes through the server.**
 - **One server holds the passwords and the maintenance keys of both buckets.** A hacked server can delete in both, as
   far as S3's old versions allow: the storage window is the protection, in both sites, as it already was in site A.
@@ -79,5 +79,5 @@ decision 006 that lets a backup run while the server is down; the bearer token o
 ## Accepted on review, not built now
 
 - Second-admin approval for destructive actions.
-- A second gateway.
+- ~~A second gateway.~~ Out of scope since decision 042.
 - A witness on the off-site bucket that also watches snapshot counts.

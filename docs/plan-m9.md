@@ -4,8 +4,12 @@ Status: proposed, 2026-11-22; revised after M8 for decision 041 (one server prog
 pinned certificates, off-site copies made by the server and optional). Waiting for your answers to §5 before any
 product code.
 
+**Scope (decision 042):** one server, no high availability. M9 is the server's whole recovery story: a new server,
+given the same bucket, picks up where the old one was. It is kept to that; nothing here adds a standby, a cluster or a
+second gateway.
+
 M9 is decision 040, which decided OQ3: when holdfast-server's PostgreSQL is lost, Holdfast is rebuilt from a nightly
-export in the bucket, the escrow, and a runbook. There is no standby (decision 030). The snapshot catalogue is a cache,
+export in the bucket, the escrow, and a runbook. There is no standby (decisions 030, 042). The snapshot catalogue is a cache,
 read again from the repositories (M2).
 
 ## 1. What M9 holds
@@ -17,6 +21,7 @@ read again from the repositories (M2).
 | 3 | **Restoring an export** into a new database on a rebuilt server; agents enrolled before the export reconnect by themselves, as the export holds their certificates' pins | 040, 041 |
 | 4 | **`holdfast host import`**: a host back from its escrow file, when there is no export | 040 |
 | 5 | **The rebuild runbook**, `docs/runbooks/rebuild-holdfast.md`, walked in the lab | 030, 040 |
+| 6 | **Sizing**: what one server's gateway carried in the lab, measured, in install.md, so an admin can see when one server is not enough | 042 |
 
 Already decided, and only built here:
 - the export is encrypted to `escrow.age_recipient` (decision 036); restoring it also needs the server's credentials
@@ -65,7 +70,8 @@ each one, and what is lost (Q6).
 ## 4. Order
 
 The export first, then restoring it, then `host import`, then the off-site copy of the export, then the runbook and the
-lab.
+lab, then the sizing measurement: a backup of a large fixture through the gateway from each agent VM at once, and the
+rate the server carried, with its CPU and network use.
 
 ## 5. Questions
 

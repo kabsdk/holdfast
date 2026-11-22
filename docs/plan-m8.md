@@ -107,7 +107,8 @@ Say so if you want any of these otherwise.
 
 - **Holdfast's own gateway**, not the pinned `rclone serve restic` the review preferred as a first step. The protocol is
   small, and the gateway key cannot delete, which bounds what a bug in it can do.
-- **One gateway, in the server.** A second one on another machine is designed for, not built.
+- **One gateway, in the server.** (A second one on another machine was "designed for, not built"; decision 042 puts it
+  out of scope.)
 - **Certificates pinned like SSH keys**, with no CA and no expiry to manage. The certificate's own dates are ignored: the
   pin is what counts.
 - **Object Lock is reported, not required, and locks are not extended.**

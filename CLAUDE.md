@@ -6,6 +6,11 @@ Holdfast is a free, open-source control plane over restic for Linux hosts.
 wrong with restic** (decision 030). Do not add protections that restic itself does not offer. Where restic
 can decide something, such as what retention keeps, let it decide; do not re-implement it.
 
+**Who it is for, and how it runs** (decision 042): a small ops team with roughly ten to a few hundred Linux servers
+and S3 storage of its own, who want one place to set up, see and restore restic backups. **One server, no high
+availability**: no clustering, standby, second gateway or Kubernetes deployment. While the server is down, backups
+wait; a lost server is replaced by a new one on the same bucket (M9). Do not propose high-availability work.
+
 | What | Where |
 | --- | --- |
 | Behaviour | [docs/spec.md](docs/spec.md) |
@@ -71,7 +76,7 @@ These also follow from the spec:
 | M6 | Recovering with Holdfast (plan-m6): dumps with commands defined on the host, restore to another host, rolling a repository back from S3 versions, the bare-metal runbook. | The dump, restore-to-another-host and rollback e2e tests pass; the lab's dump test passes on the Ubuntu, RHEL and Oracle Linux VMs; and the bare-metal runbook's first path is walked in the lab. |
 | M7 | Off-site copies (plan-m7): holdfast-vault with `restic copy` (decisions 027, 039), its own retention, "Delete here too" (decision 031), holdfast-server's read-only view and its hold, restores from the other site. No standby failover (decision 030). | |
 | M8 | Two programs (plan-m8, decision 041): agents identified by a pinned certificate, a gateway in holdfast-server in place of per-host S3 keys, off-site copies made by the server, holdfast-vault removed. | The e2e suite passes with no S3 key on any host and no vault, and the lab's fidelity, recovery and off-site tests pass on the Ubuntu, RHEL and Oracle Linux VMs. |
-| M9 | Rebuilding Holdfast (plan-m9, decision 040): the nightly export, `holdfast host import`, the rebuild runbook. | |
+| M9 | Rebuilding Holdfast (plan-m9, decisions 040, 042): the nightly export, `holdfast host import`, the rebuild runbook, the sizing measurement. A new server on the same bucket picks up; no standby. | |
 
 ## Repository
 
