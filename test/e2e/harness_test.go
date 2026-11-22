@@ -384,7 +384,7 @@ func (e *env) maintPolicy() string {
 	b := e.bucket
 	return `{"Version":"2012-10-17","Statement":[
  {"Effect":"Allow","Action":["s3:ListBucket","s3:ListBucketVersions","s3:GetBucketLocation","s3:GetBucketVersioning","s3:GetLifecycleConfiguration"],"Resource":["arn:aws:s3:::` + b + `"]},
- {"Effect":"Allow","Action":["s3:GetObject","s3:PutObject","s3:DeleteObject"],"Resource":["arn:aws:s3:::` + b + `/repos/*"]},
+ {"Effect":"Allow","Action":["s3:GetObject","s3:GetObjectVersion","s3:PutObject","s3:DeleteObject"],"Resource":["arn:aws:s3:::` + b + `/repos/*"]},
  {"Effect":"Allow","Action":["s3:PutObject","s3:DeleteObject"],"Resource":["arn:aws:s3:::` + b + `/escrow/*"]},
  {"Effect":"Deny","Action":["s3:DeleteObjectVersion"],"Resource":["arn:aws:s3:::` + b + `/*"]}]}`
 }

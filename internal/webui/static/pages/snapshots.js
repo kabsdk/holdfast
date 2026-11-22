@@ -137,14 +137,21 @@ function Restore({ fqdn, snap, host, only }) {
   const [dir, setDir] = useState('/srv/recovered');
   const [overwrite, setOverwrite] = useState('');
   const [reason, setReason] = useState('');
+  // Onto another host (plan-m6 §2.2): an admin's, with a read-only key for this host's prefix.
+  const [toHost, setToHost] = useState('');
+  const [keyID, setKeyID] = useState('');
+  const [keySecret, setKeySecret] = useState('');
   const act = useAction();
   const [result, setResult] = useState(null);
   const bounds = host.agent?.restore_bounds;
+  const isDump = (snap.tags || []).some((t) => t.startsWith('dump='));
+  const elsewhere = toHost.trim() !== '' && toHost.trim() !== fqdn;
   const body = (dryRun) => ({
     target, directory: target === 'directory' ? dir : undefined,
     include: only.length ? only : undefined,
     exclude: !only.length && leaveOut.trim() ? leaveOut.split('\n').map((x) => x.trim()).filter(Boolean) : undefined,
     overwrite: target !== 'new' && overwrite ? overwrite : undefined, dry_run: dryRun, message: reason || undefined,
+    ...(elsewhere ? { to_host: toHost.trim(), s3_key: { access_key_id: keyID, secret_access_key: keySecret } } : {}),
   });
   useEffect(() => {
     if (!act.done || !act.done.command) return;
@@ -161,13 +168,21 @@ function Restore({ fqdn, snap, host, only }) {
     ${only.length ? html`<p>Only <code>${only.join(', ')}</code>. <a href="#" onClick=${(e) => { e.preventDefault(); go(location.hash.slice(1).replace(/\?.*/, '')); location.reload(); }}>Restore everything instead</a></p>`
       : html`<p class="muted">Everything in the snapshot (paths: <code>${(snap.paths || []).join(' ')}</code>). To leave something out, give its path, one per line:</p>
         <textarea placeholder="/etc/ssl/private" value=${leaveOut} onInput=${(e) => setLeaveOut(e.target.value)} />`}
-    <h3>2 · Target on ${fqdn}</h3>
-    <label class="field"><input type="radio" checked=${target === 'new'} onChange=${() => setTarget('new')} /> A new restore directory under ${bounds?.root || '/var/restore'}, made by the agent, root-only (mode 0700). Files keep their owner, mode and ACLs.</label>
-    ${inPlace && html`<label class="field"><input type="radio" checked=${target === 'in_place'} onChange=${() => setTarget('in_place')} disabled=${bounds && !bounds.allow_in_place} />
+    <h3>2 · Target on ${elsewhere ? toHost : fqdn}</h3>
+    ${isDump && html`<p class="muted">This snapshot is a dump: one file, restored into a new directory. Loading it into the database is done on the host.</p>`}
+    <label class="field"><input type="radio" checked=${target === 'new'} onChange=${() => setTarget('new')} /> A new restore directory under ${elsewhere ? 'that host’s restore root' : bounds?.root || '/var/restore'}, made by the agent, root-only (mode 0700). Files keep their owner, mode and ACLs.</label>
+    ${inPlace && !isDump && !elsewhere && html`<label class="field"><input type="radio" checked=${target === 'in_place'} onChange=${() => setTarget('in_place')} disabled=${bounds && !bounds.allow_in_place} />
       The original location: writes into the live paths. The agent first backs up exactly what it will replace. ${bounds && !bounds.allow_in_place ? html`<span class="muted">(this host does not allow it: restore.allow_in_place in agent.yaml)</span>` : ''}</label>`}
-    ${inPlace && html`<label class="field"><input type="radio" checked=${target === 'directory'} onChange=${() => setTarget('directory')} disabled=${bounds && !bounds.allow_other_directories} />
+    ${inPlace && !isDump && html`<label class="field"><input type="radio" checked=${target === 'directory'} onChange=${() => setTarget('directory')} disabled=${!elsewhere && bounds && !bounds.allow_other_directories} />
       Another directory: <input value=${dir} onInput=${(e) => setDir(e.target.value)} disabled=${target !== 'directory'} />
-      ${bounds && !bounds.allow_other_directories ? html`<span class="muted"> (this host does not allow it)</span>` : ''}</label>`}
+      ${!elsewhere && bounds && !bounds.allow_other_directories ? html`<span class="muted"> (this host does not allow it)</span>` : ''}</label>`}
+    ${inPlace && html`<details><summary>Onto another host</summary>
+      <p class="muted">Restore this snapshot on another host, which must allow it (restore.allow_other_hosts in its agent.yaml). Give a key that may only read
+        <code>repos/${fqdn}/</code>, made at your S3 server; it is tested first. That host's root learns ${fqdn}'s repository password: delete the key afterwards.</p>
+      <label class="field"><span>Host</span><input value=${toHost} onInput=${(e) => { setToHost(e.target.value); if (target === 'in_place') setTarget('new'); }} placeholder="the other host's FQDN" /></label>
+      ${elsewhere && html`<label class="field"><span>Read-only key: access key ID</span><input value=${keyID} onInput=${(e) => setKeyID(e.target.value)} autocomplete="off" /></label>
+        <label class="field"><span>Secret access key</span><input type="password" value=${keySecret} onInput=${(e) => setKeySecret(e.target.value)} autocomplete="new-password" /></label>`}
+    </details>`}
     ${target !== 'new' && html`<label class="field"><span>If a file already exists (restic --overwrite)</span>
       <select value=${overwrite} onChange=${(e) => setOverwrite(e.target.value)}>
         <option value="">restic's default</option><option value="always">always replace</option><option value="if-changed">replace only if the content differs</option>

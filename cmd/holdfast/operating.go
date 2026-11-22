@@ -1,6 +1,8 @@
 package main
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"strings"
@@ -89,7 +91,182 @@ func hostOperatingCmds() []*cobra.Command {
 	decommission.Flags().StringVar(&confirm, "confirm", "", "the host's FQDN, typed to confirm")
 	decommission.Flags().StringVarP(&msg, "message", "m", "", "why, for the audit log")
 	decommission.Flags().BoolVar(&cancel, "cancel", false, "cancel a decommission that is still waiting")
-	return []*cobra.Command{rotate, decommission}
+	return []*cobra.Command{rotate, decommission, rollbackCmd(), rollbacksCmd()}
+}
+
+// rollbackCmd shows what rolling a repository back to a time would change, and with --confirm does it
+// (decision 038).
+func rollbackCmd() *cobra.Command {
+	var to, confirm, msg string
+	var agentDown, wait bool
+	c := &cobra.Command{Use: "rollback <fqdn> --to <time>", Short: "Admin: roll the host's repository back to a time, from S3's old versions; without --confirm it only shows what would change",
+		Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, a []string) error {
+			t, err := parseTime(to)
+			if err != nil {
+				return err
+			}
+			if confirm == "" {
+				var p struct {
+					To                time.Time      `json:"to"`
+					Refused           string         `json:"refused"`
+					Oldest            time.Time      `json:"oldest"`
+					BringBack         map[string]int `json:"bring_back"`
+					SetAside          map[string]int `json:"set_aside"`
+					Unchanged         int            `json:"unchanged"`
+					SnapshotsBack     []string       `json:"snapshots_back"`
+					SnapshotsSetAside []string       `json:"snapshots_set_aside"`
+					ForgottenBefore   []string       `json:"forgotten_before"`
+					Deletions         []time.Time    `json:"snapshot_deletions"`
+				}
+				raw, err := call("GET", "/api/v1/hosts/"+url.PathEscape(a[0])+"/rollback?to="+url.QueryEscape(t.Format(time.RFC3339)), nil, &p)
+				if err != nil {
+					return err
+				}
+				if asJSON {
+					printJSON(raw)
+					return nil
+				}
+				fmt.Printf("rolling %s back to %s (the earliest possible: %s)\n", a[0], p.To.Local().Format("2006-01-02 15:04:05"), p.Oldest.Local().Format("2006-01-02 15:04"))
+				if p.Refused != "" {
+					fmt.Println("refused:", p.Refused)
+					return nil
+				}
+				kinds := func(m map[string]int) string {
+					var parts []string
+					for _, k := range []string{"config", "keys", "snapshots", "index", "data", "other"} {
+						if m[k] > 0 {
+							parts = append(parts, fmt.Sprintf("%d %s", m[k], k))
+						}
+					}
+					if len(parts) == 0 {
+						return "none"
+					}
+					return strings.Join(parts, ", ")
+				}
+				fmt.Printf("brought back: %s\nset aside:    %s\nunchanged:    %d objects\n", kinds(p.BringBack), kinds(p.SetAside), p.Unchanged)
+				fmt.Printf("snapshots that come back (%d): %s\n", len(p.SnapshotsBack), strings.Join(short(p.SnapshotsBack), " "))
+				fmt.Printf("snapshots set aside (%d): %s\n", len(p.SnapshotsSetAside), strings.Join(short(p.SnapshotsSetAside), " "))
+				if len(p.ForgottenBefore) > 0 {
+					fmt.Printf("of those that come back, Holdfast had forgotten %d; the daily run forgets them again unless a retention keeps them\n", len(p.ForgottenBefore))
+				}
+				for _, d := range p.Deletions {
+					fmt.Printf("  a snapshot file was deleted at %s\n", d.Local().Format("2006-01-02 15:04:05"))
+				}
+				fmt.Printf("\nNothing is deleted: what is set aside stays in S3 as old versions, and this can be rolled back too.\n"+
+					"to go ahead: holdfast host rollback %s --to %s --confirm %s\n", a[0], t.UTC().Format(time.RFC3339), a[0])
+				return nil
+			}
+			var r rollbackRow
+			raw, err := call("POST", "/api/v1/hosts/"+url.PathEscape(a[0])+"/rollback", map[string]any{"to": t, "confirm": confirm, "agent_down": agentDown, "message": msg}, &r)
+			if err != nil {
+				return err
+			}
+			if wait {
+				for r.Status == "running" {
+					time.Sleep(2 * time.Second)
+					var list []rollbackRow
+					if raw, err = call("GET", "/api/v1/hosts/"+url.PathEscape(a[0])+"/rollbacks", nil, &list); err != nil {
+						return err
+					}
+					for _, x := range list {
+						if x.ID == r.ID {
+							r = x
+						}
+					}
+				}
+			}
+			if asJSON {
+				if wait { // the rollback itself, as it ended
+					raw, _ = json.Marshal(r)
+				}
+				printJSON(raw)
+			} else {
+				printRollback(r)
+			}
+			if r.Status == "failed" {
+				return errors.New("the rollback failed")
+			}
+			return nil
+		}}
+	c.Flags().StringVar(&to, "to", "", "the time to roll back to, such as 2026-11-20T03:00:00Z or \"2026-11-20 03:00\" (local)")
+	c.Flags().StringVar(&confirm, "confirm", "", "the host's FQDN, typed to go ahead")
+	c.Flags().BoolVar(&agentDown, "agent-down", false, "the host is down, so its agent cannot be paused (only for an agent that is offline)")
+	c.Flags().BoolVar(&wait, "wait", false, "with --confirm: wait until it is done")
+	c.Flags().StringVarP(&msg, "message", "m", "", "why, for the audit log")
+	_ = c.MarkFlagRequired("to")
+	return c
+}
+
+type rollbackRow struct {
+	ID                int64      `json:"id"`
+	To                time.Time  `json:"to"`
+	Actor             string     `json:"actor"`
+	RequestedAt       time.Time  `json:"requested_at"`
+	FinishedAt        *time.Time `json:"finished_at"`
+	Status            string     `json:"status"`
+	BroughtBack       int        `json:"brought_back"`
+	SetAside          int        `json:"set_aside"`
+	SnapshotsBack     []string   `json:"snapshots_back"`
+	SnapshotsSetAside []string   `json:"snapshots_set_aside"`
+	CheckPassed       *bool      `json:"check_passed"`
+	Error             string     `json:"error"`
+}
+
+func printRollback(r rollbackRow) {
+	check := "not run"
+	if r.CheckPassed != nil {
+		check = map[bool]string{true: "passed", false: "FAILED"}[*r.CheckPassed]
+	}
+	fmt.Printf("rollback %d to %s, by %s: %s; %d objects brought back, %d set aside; %d snapshots back, %d set aside; restic check %s\n",
+		r.ID, r.To.Local().Format("2006-01-02 15:04:05"), r.Actor, r.Status, r.BroughtBack, r.SetAside, len(r.SnapshotsBack), len(r.SnapshotsSetAside), check)
+	if r.Error != "" {
+		fmt.Println("  ", r.Error)
+	}
+}
+
+func rollbacksCmd() *cobra.Command {
+	return &cobra.Command{Use: "rollbacks <fqdn>", Short: "A host's repository rollbacks", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, a []string) error {
+		var list []rollbackRow
+		raw, err := call("GET", "/api/v1/hosts/"+url.PathEscape(a[0])+"/rollbacks", nil, &list)
+		if err != nil {
+			return err
+		}
+		if asJSON {
+			printJSON(raw)
+			return nil
+		}
+		if len(list) == 0 {
+			fmt.Println("no rollbacks")
+		}
+		for _, r := range list {
+			printRollback(r)
+		}
+		return nil
+	}}
+}
+
+// parseTime reads RFC 3339, or "2006-01-02 15:04[:05]" in local time.
+func parseTime(s string) (time.Time, error) {
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		return t, nil
+	}
+	for _, layout := range []string{"2006-01-02 15:04:05", "2006-01-02 15:04"} {
+		if t, err := time.ParseInLocation(layout, s, time.Local); err == nil {
+			return t, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("--to %q: give a time such as 2026-11-20T03:00:00Z or \"2026-11-20 03:00\"", s)
+}
+
+func short(ids []string) []string {
+	out := make([]string, len(ids))
+	for i, id := range ids {
+		out[i] = id
+		if len(id) > 8 {
+			out[i] = id[:8]
+		}
+	}
+	return out
 }
 
 // sizeOf prints bytes in binary units, as restic does.

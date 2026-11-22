@@ -18,8 +18,11 @@ const Base = "/agent/v1"
 
 // Protocol is the version of the agent protocol this build speaks (plan-m5 item 1). It goes up only when
 // a change needs both sides to know of it; a field the other side may ignore does not change it. Agents
-// before M5 sent none, and speak 1.
-const Protocol = 1
+// before M5 sent none, and speak 1. 2 (M6): dump jobs, restores from another host, pause and resume.
+const Protocol = 2
+
+// ProtocolRecovery is the first protocol with M6's dump jobs, restores from another host, and pausing.
+const ProtocolRecovery = 2
 
 // MinProtocol is the oldest agent protocol this server accepts. A server can then be upgraded before its
 // agents, and the agents one by one. An older agent's polls are refused with 426 and the range; it keeps
@@ -52,6 +55,8 @@ type Facts struct {
 	// RestoreBounds are the host's own limits on restores, from agent.yaml. The server shows them and
 	// refuses early, but the agent decides (decision 030, plan-m2 Q5).
 	RestoreBounds *RestoreBounds `json:"restore_bounds,omitempty"`
+	// Dumps are the names of the dumps agent.yaml defines (decision 037); never their commands.
+	Dumps []string `json:"dumps,omitempty"`
 }
 
 // RestoreBounds limit what a restore may do on this host. Only root on the host can change them.
@@ -59,6 +64,20 @@ type RestoreBounds struct {
 	Root                  string `json:"root" yaml:"root"`                                       // new directories go under it
 	AllowInPlace          bool   `json:"allow_in_place" yaml:"allow_in_place"`                   // overwrite the original files
 	AllowOtherDirectories bool   `json:"allow_other_directories" yaml:"allow_other_directories"` // any other target directory
+	// AllowOtherHosts lets an admin restore another host's snapshot here (plan-m6 §2.2), with a read-only key
+	// for that host's repository. Off by default.
+	AllowOtherHosts bool `json:"allow_other_hosts" yaml:"allow_other_hosts"`
+}
+
+// RestoreSource is another host's repository, for a restore from it (plan-m6 §2.2): its password, and a
+// read-only key the admin made. It travels only in the restore command, which the server keeps sealed and
+// deletes once the agent has it; the agent keeps it in root-only files for that one restore.
+type RestoreSource struct {
+	FQDN              string `json:"fqdn"`
+	Repository        string `json:"repository"`
+	RepoPassword      string `json:"repo_password"`
+	S3AccessKeyID     string `json:"s3_access_key_id"`
+	S3SecretAccessKey string `json:"s3_secret_access_key"`
 }
 
 // Restore targets.
@@ -81,6 +100,16 @@ type RestoreSpec struct {
 	// Overwrite is restic's --overwrite for files that exist already: always, if-changed, if-newer or never.
 	// Empty: restic's default. An agent that does not know the field ignores it, and restic's default holds.
 	Overwrite string `json:"overwrite,omitempty"`
+	// Source, when set, is another host's repository to restore from (protocol 2).
+	Source *RestoreSource `json:"source,omitempty"`
+	// Dump says the snapshot is a dump's (decision 037): it is restored into a new directory only.
+	Dump bool `json:"dump,omitempty"`
+}
+
+// Paused is what a paused agent reports with every poll (plan-m6 Q3): the pause command, and until when.
+type Paused struct {
+	Command string    `json:"command"`
+	Until   time.Time `json:"until"`
 }
 
 // EnrollRequest is sent once, with a single-use code.
@@ -116,6 +145,7 @@ type PollRequest struct {
 	CredentialsVersion int      `json:"credentials_version"`
 	AckedCommands      []string `json:"acked_commands,omitempty"`
 	Running            *Running `json:"running,omitempty"`
+	Paused             *Paused  `json:"paused,omitempty"`
 	Facts              Facts    `json:"facts"`
 }
 
@@ -129,6 +159,8 @@ type JobConfig struct {
 	Schedule schedule.Schedule `json:"schedule"`
 	// LimitUploadKiB is restic's --limit-upload, in KiB/s; 0: no limit (plan-m5 item 2).
 	LimitUploadKiB int `json:"limit_upload_kib,omitempty"`
+	// Dump names a dump in the host's agent.yaml (decision 037; protocol 2). Paths are then empty.
+	Dump string `json:"dump,omitempty"`
 }
 
 // HostConfig is the desired state of one host.
@@ -177,6 +209,10 @@ const (
 	CommandBackupNow = "backup_now"
 	CommandCheckNow  = "check_now" // `holdfast check`: run the repository check now
 	CommandRestore   = "restore"   // run a restore (plan-m2 §3)
+	// CommandPause stops the agent starting runs until Until, or until CommandResume (plan-m6 Q3; protocol 2).
+	// A run under way finishes first; the agent reports Paused once it is idle.
+	CommandPause  = "pause"
+	CommandResume = "resume"
 )
 
 // Command is work queued for the agent. Commands are re-sent until acknowledged; the agent
@@ -186,6 +222,7 @@ type Command struct {
 	Kind    string       `json:"kind"`
 	JobID   string       `json:"job_id,omitempty"`
 	Restore *RestoreSpec `json:"restore,omitempty"`
+	Until   *time.Time   `json:"until,omitempty"` // for CommandPause
 }
 
 // PollResponse answers a poll. Config and Credentials are present only when they changed.

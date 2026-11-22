@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/kabsdk/holdfast/internal/checks"
 	"github.com/kabsdk/holdfast/internal/config"
+	"github.com/kabsdk/holdfast/internal/proto"
 	"github.com/kabsdk/holdfast/internal/restic"
 	"github.com/kabsdk/holdfast/internal/server/store"
 )
@@ -177,6 +179,8 @@ func (s *Server) jobFindings(ctx context.Context, fqdn, jobID string, old *confi
 		s.log.Warn("reading a job's run times for S002", "host", fqdn, "job", jobID, "err", err)
 	}
 	fs := checks.Job(job, checks.History{RunTimes: runs})
+	fs = append(fs, s.dumpFindings(ctx, fqdn, job)...)
+	checks.Sort(fs)
 	if old != nil && !slices.Equal(old.Retention.ForgetArgs(), job.Retention.ForgetArgs()) {
 		if f := s.retentionCut(ctx, fqdn, jobID, old.Retention, job.Retention); f != nil {
 			fs = append(fs, *f)
@@ -184,6 +188,36 @@ func (s *Server) jobFindings(ctx context.Context, fqdn, jobID string, old *confi
 		}
 	}
 	return orEmpty(fs)
+}
+
+// dumpFindings checks a dump job against what the host's agent last reported (decision 037):
+//   - D002, an error: the agent does not know dump jobs (protocol 1), and would back it up as a job with no paths;
+//   - D001, an error: its agent.yaml defines no dump of that name;
+//   - I002, info: no agent has enrolled yet, so the name is checked when one does.
+func (s *Server) dumpFindings(ctx context.Context, fqdn string, job config.Job) []checks.Finding {
+	if !job.IsDump() {
+		return nil
+	}
+	a, err := s.st.Q().GetAgent(ctx, fqdn)
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		return []checks.Finding{{Code: "I002", Severity: checks.Info, Path: "dump",
+			Message: fmt.Sprintf("no agent has enrolled yet, so whether it defines the dump %q is not known; the job fails until it does", job.Dump)}}
+	case err != nil:
+		s.log.Warn("reading the agent for a dump check", "host", fqdn, "err", err)
+		return nil
+	case (proto.Facts{Protocol: a.Protocol}).AgentProtocol() < proto.ProtocolRecovery:
+		return []checks.Finding{{Code: "D002", Severity: checks.Error, Path: "dump",
+			Message: fmt.Sprintf("this host's agent (%s) does not know dump jobs: upgrade holdfast-agent first (docs/install.md)", a.AgentVersion)}}
+	case !slices.Contains(a.Dumps, job.Dump):
+		have := "none"
+		if len(a.Dumps) > 0 {
+			have = strings.Join(a.Dumps, ", ")
+		}
+		return []checks.Finding{{Code: "D001", Severity: checks.Error, Path: "dump",
+			Message: fmt.Sprintf("this host's agent.yaml defines no dump named %q (it has: %s)", job.Dump, have)}}
+	}
+	return nil
 }
 
 // retentionCut is R104: restic says, on the real repository, what the old and the new policy keep

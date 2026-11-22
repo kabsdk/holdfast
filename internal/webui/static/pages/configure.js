@@ -47,17 +47,20 @@ function RetentionEditor({ r, set }) {
   <p class="muted">Windows are times, never counts (spec §4.2). restic decides what each window keeps.</p>`;
 }
 
-function Editor({ fqdn, jobID, saved, base, isNew, defaults }) {
+function Editor({ fqdn, jobID, saved, base, isNew, defaults, dumps }) {
   const [id, setID] = useState(isNew ? 'new-job' : jobID);
   const [job, setJob] = useState(() => clone(saved || defaults));
   const [paths, setPaths] = useState((job.paths || []).join('\n'));
   const [excludes, setExcludes] = useState((job.excludes || []).join('\n'));
+  const [dump, setDump] = useState(job.dump || '');
+  const [what, setWhat] = useState(job.dump ? 'dump' : 'paths');
   const [accept, setAccept] = useState([]);
   const [msg, setMsg] = useState('');
   const [check, setCheck] = useState(null);
   const [checkErr, setCheckErr] = useState(null);
   const save = useAction();
-  const current = { ...job, paths: lines(paths), excludes: lines(excludes) };
+  // A job backs up paths, or a dump the host's agent.yaml defines, by name (decision 037).
+  const current = what === 'dump' ? { ...job, paths: [], excludes: [], dump } : { ...job, paths: lines(paths), excludes: lines(excludes), dump: undefined };
   const key = JSON.stringify([id, current, accept]);
   useEffect(() => {
     const t = setTimeout(async () => {
@@ -71,8 +74,14 @@ function Editor({ fqdn, jobID, saved, base, isNew, defaults }) {
   return html`<div class="grid2"><div>
     <div class="panel"><h3>What · job ${isNew ? 'new' : jobID}</h3>
       ${isNew && html`<label class="field"><span>Job ID (lower-case letters, digits, dashes; the snapshot tag job=…)</span><input value=${id} onInput=${(e) => setID(e.target.value)} /></label>`}
-      <label class="field"><span>Paths (one per line, absolute)</span><textarea value=${paths} onInput=${(e) => setPaths(e.target.value)} /></label>
-      <label class="field"><span>Exclude (one per line, restic --exclude patterns)</span><textarea value=${excludes} onInput=${(e) => setExcludes(e.target.value)} /></label>
+      <div class="row"><label><input type="radio" checked=${what === 'paths'} onChange=${() => setWhat('paths')} /> Paths</label>
+        <label><input type="radio" checked=${what === 'dump'} onChange=${() => setWhat('dump')} /> A dump the host defines</label></div>
+      ${what === 'paths' ? html`
+        <label class="field"><span>Paths (one per line, absolute)</span><textarea value=${paths} onInput=${(e) => setPaths(e.target.value)} /></label>
+        <label class="field"><span>Exclude (one per line, restic --exclude patterns)</span><textarea value=${excludes} onInput=${(e) => setExcludes(e.target.value)} /></label>` : html`
+        <label class="field"><span>Dump (from the host's agent.yaml)</span>
+          <select value=${dump} onChange=${(e) => setDump(e.target.value)}><option value="">choose…</option>${(dumps || []).map((d) => html`<option>${d}</option>`)}</select></label>
+        <p class="muted">${(dumps || []).length ? 'The command is the host’s own: root on it defines each dump in agent.yaml, and the job only names one. Its output is one file in the snapshot; a restore writes it into a new directory.' : 'This host’s agent reports no dumps: root on it defines them in agent.yaml (dumps:).'}</p>`}
     </div>
     <div class="panel"><h3>When it runs</h3><${ScheduleEditor} s=${job.schedule} set=${(schedule) => setJob({ ...job, schedule })} />
       ${check && check.gets.next_runs && html`<p class="muted">Next runs: ${check.gets.next_runs.map(fmtTime).join(', ')}${job.schedule.spread?.enabled ? ` (each + random 0–${job.schedule.spread.minutes} min)` : ''}</p>`}</div>
@@ -104,7 +113,7 @@ function Editor({ fqdn, jobID, saved, base, isNew, defaults }) {
       <div class="row">
         <button class=${cut ? 'warn' : 'primary'} disabled=${save.busy || !check || blocked} onClick=${() => save.run(() => api.setJob(fqdn, id, { job: current, accept, message: msg, base_revision: base })).then((r) => r && go(link('hosts', fqdn).slice(1)))}>
           Save${cut ? ' (what the cut drops waits 7 days)' : ''}</button>
-        <button onClick=${() => { const j = clone(saved || defaults); setJob(j); setPaths((j.paths || []).join('\n')); setExcludes((j.excludes || []).join('\n')); setAccept([]); }}>Undo changes</button>
+        <button onClick=${() => { const j = clone(saved || defaults); setJob(j); setPaths((j.paths || []).join('\n')); setExcludes((j.excludes || []).join('\n')); setDump(j.dump || ''); setWhat(j.dump ? 'dump' : 'paths'); setAccept([]); }}>Undo changes</button>
       </div>
       <${ErrorBox} error=${save.error} />
       <p class="muted">Every save is a revision. Agents pick it up on their next poll. A save from an old revision is refused, so two people cannot overwrite each other.</p>
@@ -120,10 +129,12 @@ export function Configure({ fqdn, job, settings }) {
   const h = host.data;
   if (!can(h, 'config.jobs')) return html`<div class="banner warning">Changing jobs on ${fqdn} needs config.jobs (an editor or an admin).</div>`;
   const saved = h.jobs.find((j) => j.id === job);
-  const asJob = (j) => j && { engine: 'restic', paths: j.paths, excludes: j.excludes || [], schedule: j.schedule, retention: j.retention };
+  const asJob = (j) => j && { engine: 'restic', paths: j.paths || [], excludes: j.excludes || [], schedule: j.schedule, retention: j.retention,
+    limit_upload_kib: j.limit_upload_kib, dump: j.dump };
   return html`<h1>Configure · ${fqdn}</h1>
     <p class="muted">Every save is a revision in PostgreSQL. Schedule and retention are checked together: errors block the save, warnings must be accepted one by one.</p>
     <div class="tabs">${h.jobs.map((j) => html`<a class=${j.id === job ? 'on' : ''} href=${link('hosts', fqdn, 'configure', j.id)}>${j.id}</a>`)}
       <a class=${!saved ? 'on' : ''} href=${link('hosts', fqdn, 'configure')}>+ Add job</a></div>
-    <${Editor} key=${job || 'new'} fqdn=${fqdn} jobID=${job} saved=${asJob(saved)} isNew=${!saved} base=${status.data.head_revision} defaults=${settings.default_job} />`;
+    <${Editor} key=${job || 'new'} fqdn=${fqdn} jobID=${job} saved=${asJob(saved)} isNew=${!saved} base=${status.data.head_revision} defaults=${settings.default_job}
+      dumps=${h.agent?.dumps || []} />`;
 }

@@ -31,6 +31,9 @@ const (
 	CodeMaintSettings     = "B010" // the maintenance key can change the bucket's settings
 	CodeLifecycle         = "B011" // no lifecycle rule expires noncurrent versions under repos/
 	CodeEscrowWrite       = "B012" // the maintenance key cannot write and delete under escrow/ (decision 036)
+	// A read-only key, for a restore onto another host (plan-m6 §2.2).
+	CodeReadOnlyRead  = "B014" // it cannot read or list the host's prefix
+	CodeReadOnlyWrite = "B015" // it can write or delete there
 )
 
 // Finding is one storage check that failed.
@@ -72,9 +75,11 @@ func (r Report) Summary() string {
 	return b.String()
 }
 
-// Prober tests the storage contract for one host's key (decision 029).
+// Prober tests the storage contract for one host's key (decision 029), and a read-only key for a restore onto
+// another host (plan-m6 §2.2).
 type Prober interface {
 	Probe(ctx context.Context, fqdn string, host Key) Report
+	ProbeReadOnly(ctx context.Context, fqdn string, key Key) Report
 }
 
 // StaticProber returns the same findings every time. Tests use it where there is no S3 server.
@@ -83,6 +88,46 @@ type StaticProber struct{ Findings []Finding }
 // Probe implements Prober.
 func (p StaticProber) Probe(context.Context, string, Key) Report {
 	return Report{Findings: append([]Finding{}, p.Findings...)}
+}
+
+// ProbeReadOnly implements Prober: every read-only key passes.
+func (p StaticProber) ProbeReadOnly(context.Context, string, Key) Report {
+	return Report{Findings: []Finding{}}
+}
+
+// ProbeReadOnly tests a key for a restore onto another host: it must read and list the host's prefix (B014), and
+// must not write or delete anything there, its locks included (B015). restic then restores with --no-lock.
+func (p S3Prober) ProbeReadOnly(ctx context.Context, fqdn string, key Key) Report {
+	rep := Report{Findings: []Finding{}}
+	add := func(code, format string, a ...any) {
+		rep.Findings = append(rep.Findings, Finding{Code: code, Message: fmt.Sprintf(format, a...)})
+	}
+	ctx, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
+	c, err1 := p.client(key, "")
+	mc, err2 := p.client(p.Maint, p.Location.Region)
+	if err := errors.Join(err1, err2); err != nil {
+		add(CodeReadOnlyRead, "cannot use the S3 endpoint %s: %v", p.Location.Endpoint, err)
+		return rep
+	}
+	b, prefix := p.Location.Bucket, Prefix(fqdn)+"/"
+	if err := list(ctx, c, b, prefix); err != nil {
+		add(CodeReadOnlyRead, "the key cannot list %s: %s", prefix, s3err(err))
+	}
+	if err := get(ctx, c, b, prefix+"config"); err != nil {
+		add(CodeReadOnlyRead, "the key cannot read %sconfig, the repository's own file: %s", prefix, s3err(err))
+	}
+	tag := "holdfast-probe-" + randHex(6)
+	for _, k := range []string{prefix + tag, prefix + "locks/" + tag} {
+		if _, err := put(ctx, c, b, k); err == nil {
+			add(CodeReadOnlyWrite, "the key wrote %s: a key for a restore onto another host must only read", k)
+			_ = mc.RemoveObject(ctx, b, k, minio.RemoveObjectOptions{})
+		}
+	}
+	if err := c.RemoveObject(ctx, b, prefix+tag+"-absent", minio.RemoveObjectOptions{}); err == nil {
+		add(CodeReadOnlyWrite, "the key may delete under %s: a key for a restore onto another host must only read", prefix)
+	}
+	return rep
 }
 
 // S3Prober tests the contract with plain S3 calls, the same calls restic makes, so it works with any S3

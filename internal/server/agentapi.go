@@ -178,7 +178,7 @@ func (s *Server) Poll(ctx context.Context, fqdn string, req proto.PollRequest, w
 	if err := q.RecordHeartbeat(ctx, fqdn, store.Heartbeat{AgentVersion: req.Facts.AgentVersion, ResticVersion: req.Facts.ResticVersion,
 		OSID: req.Facts.OSID, OSVersion: req.Facts.OSVersion, HostnameFQDN: req.Facts.HostnameFQDN, Timezone: req.Facts.Timezone,
 		ClockOffsetMS: offset, AppliedRevision: req.Applied.Revision, AppliedSHA256: req.Applied.SHA256, CredentialsVersion: req.CredentialsVersion,
-		RestoreBounds: req.Facts.RestoreBounds, Protocol: req.Facts.Protocol}, now); err != nil {
+		RestoreBounds: req.Facts.RestoreBounds, Protocol: req.Facts.Protocol, Dumps: req.Facts.Dumps, Paused: req.Paused}, now); err != nil {
 		return proto.PollResponse{}, err
 	}
 	if err := q.AckCommands(ctx, fqdn, req.AckedCommands, now); err != nil {
@@ -255,6 +255,23 @@ func (s *Server) pollAnswer(ctx context.Context, fqdn string, req proto.PollRequ
 				pc.Restore = &proto.RestoreSpec{}
 				if err := json.Unmarshal(c.Payload, pc.Restore); err != nil {
 					return resp, false, fmt.Errorf("restore command %s: %w", c.ID, err)
+				}
+				// A restore from another host: its repository, password and read-only key, sealed for this host.
+				if len(c.Sealed) > 0 {
+					plain, err := s.seal.Open(c.Sealed, fqdn)
+					if err != nil {
+						return resp, false, fmt.Errorf("restore command %s: %w", c.ID, err)
+					}
+					pc.Restore.Source = &proto.RestoreSource{}
+					if err := json.Unmarshal([]byte(plain), pc.Restore.Source); err != nil {
+						return resp, false, fmt.Errorf("restore command %s: %w", c.ID, err)
+					}
+				}
+			}
+			if c.Kind == proto.CommandPause && len(c.Payload) > 0 {
+				var until time.Time
+				if err := json.Unmarshal(c.Payload, &until); err == nil {
+					pc.Until = &until
 				}
 			}
 			resp.Commands = append(resp.Commands, pc)

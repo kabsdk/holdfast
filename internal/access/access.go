@@ -31,6 +31,8 @@ const (
 	HostRemove     = "host.remove"      // remove a host or a job; never deletes data
 	// HostDecommission deletes a removed host's repository, after a 7-day wait (plan-m5 item 7).
 	HostDecommission = "host.decommission"
+	// RepositoryRollback rolls a host's repository back to a point in time from S3's versions (decision 038).
+	RepositoryRollback = "repository.rollback"
 )
 
 // Roles are the three roles and their permissions.
@@ -38,7 +40,7 @@ var Roles = map[string][]string{
 	"viewer": {View},
 	"editor": {View, Browse, BackupRun, RestoreNewDir, ConfigJobs},
 	"admin": {View, Browse, BackupRun, RestoreNewDir, ConfigJobs, RestoreInPlace, RetentionCut, SnapshotDelete,
-		ConfigAccess, ConfigStorage, Maintenance, HostRemove, HostDecommission},
+		ConfigAccess, ConfigStorage, Maintenance, HostRemove, HostDecommission, RepositoryRollback},
 }
 
 // All lists every permission, in the order of spec §6.2.

@@ -511,6 +511,7 @@ type jobFlags struct {
 	keepLast                                   int
 	accept                                     []string
 	limitUpload                                int
+	dump                                       string
 }
 
 // finding is one check that fired (spec §4.5).
@@ -551,6 +552,7 @@ func (f *jobFlags) register(c *cobra.Command) {
 	c.Flags().IntVar(&f.keepLast, "keep-last", 3, "always keep the newest N")
 	c.Flags().StringSliceVar(&f.accept, "accept", nil, "accept these warning codes, such as R102,R104 (errors cannot be accepted)")
 	c.Flags().IntVar(&f.limitUpload, "limit-upload", 0, "cap the backup's upload, in KiB/s (restic --limit-upload); 0 for none")
+	c.Flags().StringVar(&f.dump, "dump", "", "back up a dump the host's agent.yaml defines, by name, instead of paths (decision 037)")
 }
 
 func window(s string) (map[string]any, error) {
@@ -602,7 +604,11 @@ func (f *jobFlags) job() (map[string]any, error) {
 			ret[name] = w
 		}
 	}
-	return map[string]any{"engine": "restic", "paths": f.paths, "excludes": f.excludes, "schedule": sch, "retention": ret, "limit_upload_kib": f.limitUpload}, nil
+	j := map[string]any{"engine": "restic", "paths": f.paths, "excludes": f.excludes, "schedule": sch, "retention": ret, "limit_upload_kib": f.limitUpload}
+	if f.dump != "" {
+		j["dump"] = f.dump
+	}
+	return j, nil
 }
 
 func jobCmd() *cobra.Command {

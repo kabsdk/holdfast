@@ -148,6 +148,31 @@ would back up a dump job as a job with no paths. So M6's agent speaks protocol 2
 Dumps first (the smallest, and the protocol change), then restore to another host, then rollback, then the runbook
 and the lab.
 
+## 4a. Progress
+
+| # | Item | State |
+| --- | --- | --- |
+| 1 | Dumps | done: `agent.yaml`'s `dumps`, `job set --dump`, D001, D002 and I002, the clean environment, restored into a new directory only (spec §4.6) |
+| 2 | Restore to another host | done: `restore --to-host --s3-key-file`, B014 and B015, `restore.allow_other_hosts`, the secrets sealed and cleared (spec §5.4) |
+| 3 | The bare-metal runbook | done: [runbooks/bare-metal.md](runbooks/bare-metal.md); its first path walked in the lab |
+| 4 | Roll a repository back | done: `host rollback`, its preview and refusals, pause and resume, `restic check`, `host rollbacks` (spec §3.5b) |
+
+Tested: unit tests for each; e2e against restic and MinIO (TestDump with a real `pg_dump` and `psql`,
+TestRestoreOntoAnotherHost, TestRollback with snapshots deleted behind Holdfast's back, then the rollback rolled back,
+and TestAgentUpgradeAndTooOld at protocol 2); the lab's rebuild and dump tests on Ubuntu 24.04, AlmaLinux 9.8 and Oracle
+Linux 9.8 (`lab/README.md`).
+
+Choices made inside the accepted proposals, and things found on the way:
+- **A paused agent catches up on missed slots when it resumes**, rather than reporting them as skipped: after a
+  rollback, a backup runs at once.
+- **Enrolling again keeps `agent.yaml`'s `restore` and `dumps`**: before, a re-enrollment rewrote the file and lost the
+  host's own restore bounds.
+- **A dump's restore, and a restore from another host, leave the SELinux label alone** (the lab found that restic
+  failed otherwise, spec §5.4).
+- **The host view now carries a job's upload limit and dump**: before, editing a job in the UI dropped its upload
+  limit.
+- A rollback that a stopped server left running is marked failed at the next start, not resumed.
+
 ## 5. Questions
 
 **Q1. Rollback and the 7-day protection (a contradiction with CLAUDE.md).** CLAUDE.md says nothing destructive

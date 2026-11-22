@@ -32,7 +32,7 @@ A rule that fails is reported with its code (spec §4.5). The host cannot enroll
 | Key | Must be able to | Must not be able to |
 | --- | --- | --- |
 | **Host key**, one per host, for `repos/<fqdn>/` | Read, write and list under `repos/<fqdn>/` (B001, B002). Delete under `repos/<fqdn>/locks/` only. | Delete anything else under its prefix (B005). Delete, for good, a version of an object outside `locks/` (B006). Read, write or list any other host's prefix, or list `repos/` itself (B007). |
-| **Maintenance key**, the server's: `storage.maintenance_credentials_file` | Read, write, list and delete everything under `repos/`, **including objects that host keys wrote** (B003, B004). Write and delete under `escrow/`, when an escrow recipient is set (B012). List object versions, for the repository's size. Read the bucket's versioning setting and lifecycle rule. | Delete an object version for good (B009). Change the bucket's settings, such as versioning, the lifecycle rule or the bucket policy (B010). |
+| **Maintenance key**, the server's: `storage.maintenance_credentials_file` | Read, write, list and delete everything under `repos/`, **including objects that host keys wrote** (B003, B004). Write and delete under `escrow/`, when an escrow recipient is set (B012). List object versions, for the repository's size, and read them, for a rollback. Read the bucket's versioning setting and lifecycle rule. | Delete an object version for good (B009). Change the bucket's settings, such as versioning, the lifecycle rule or the bucket policy (B010). |
 | **Witness key**, for `holdfast-freshness` | List `repos/`. | Anything else. |
 
 ## Example policies
@@ -60,7 +60,7 @@ and `web01.example.com` with your bucket and the host's FQDN.
 {"Version": "2012-10-17", "Statement": [
   {"Effect": "Allow", "Action": ["s3:ListBucket", "s3:ListBucketVersions", "s3:GetBucketLocation",
    "s3:GetBucketVersioning", "s3:GetLifecycleConfiguration"], "Resource": ["arn:aws:s3:::holdfast"]},
-  {"Effect": "Allow", "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
+  {"Effect": "Allow", "Action": ["s3:GetObject", "s3:GetObjectVersion", "s3:PutObject", "s3:DeleteObject"],
    "Resource": ["arn:aws:s3:::holdfast/repos/*"]},
   {"Effect": "Allow", "Action": ["s3:PutObject", "s3:DeleteObject"],
    "Resource": ["arn:aws:s3:::holdfast/escrow/*"]},
@@ -70,7 +70,9 @@ and `web01.example.com` with your bucket and the host's FQDN.
 
 `s3:GetBucketLocation` is there because restic first asks the bucket for its region. `s3:ListBucketVersions`
 lets the server measure each repository with its old versions, once a day; without it the host shows the
-`size` warning (AWS and Ceph RGW need it; MinIO lists versions with `s3:ListBucket`). The maintenance key
+`size` warning (AWS and Ceph RGW need it; MinIO lists versions with `s3:ListBucket`). `s3:GetObjectVersion`
+lets a rollback copy an old version over the current one (spec §3.5b); a rollback's preview tests it, the daily
+storage test does not. The maintenance key
 writes the escrow files, but does not need to read them: it could not decrypt them anyway. Deleting one
 happens only at decommission, and leaves its old versions, as everywhere else.
 
@@ -80,6 +82,21 @@ and only the explicit deny stops that (checked against MinIO). So:
 
 - a host grant broader than `locks/*` fails B006 there as well as B005;
 - a maintenance key without the deny fails B009.
+
+## A read-only key, for a restore onto another host
+
+To restore host A's snapshot onto host B (spec §5.4), make a key that may only read A's prefix. Holdfast tests it
+first: it must read and list `repos/A/` (B014), and must not write or delete anything there (B015). Delete it once
+the restore is done.
+
+```json
+{"Version": "2012-10-17", "Statement": [
+  {"Effect": "Allow", "Action": ["s3:GetBucketLocation"], "Resource": ["arn:aws:s3:::holdfast"]},
+  {"Effect": "Allow", "Action": ["s3:ListBucket"], "Resource": ["arn:aws:s3:::holdfast"],
+   "Condition": {"StringLike": {"s3:prefix": ["repos/web01.example.com", "repos/web01.example.com/*"]}}},
+  {"Effect": "Allow", "Action": ["s3:GetObject"], "Resource": ["arn:aws:s3:::holdfast/repos/web01.example.com/*"]}
+]}
+```
 
 ## If B003 fails: who owns an object
 

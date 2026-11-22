@@ -16,7 +16,9 @@
 #                            provision the server and Authelia (site.yml --tags binaries,hfserver), check login on the
 #                            UI through Authelia from this host (lab/test-login.sh), then on each agent VM (or those
 #                            named) back up the metadata fixture and restore it through Holdfast, enrolling the agent
-#                            first, and compare the 13 properties; the table is in <state>/test-fidelity.txt
+#                            first, and compare the 13 properties; the table is in <state>/test-fidelity.txt. Then M6's
+#                            (lab/test-recovery.sh): the bare-metal runbook's first path on one VM, and the dump test with
+#                            each OS's PostgreSQL; the results are in <state>/test-recovery.txt
 #   status <lab> [--json]    the lab's state: absent, off, ready or broken, with its VMs, what each answered, the RGW
 #                            endpoint, the credentials' files and why it is not ready
 #   ssh <lab> <vm> [command] SSH to a VM as root with the lab's key
@@ -259,11 +261,15 @@ test)
 	[[ $st == ready ]] || { echo "lab: the lab $lab is $st, not ready: lab/lab up $lab first (lab/lab status $lab says why)" >&3; exit 3; }
 	resume="lab/lab test $lab $* runs it again"
 	build
-	step "installing the packages, Authelia, and the Holdfast server's TLS, settings and service (site.yml --tags binaries,hfserver)"
-	play site.yml "$state/inventory.yml" --tags binaries,hfserver -e lab_deploy=true
+	step "installing the packages, Authelia, PostgreSQL on the agents, and the Holdfast server's TLS, settings and service (site.yml --tags binaries,hfserver,agentdb)"
+	play site.yml "$state/inventory.yml" --tags binaries,hfserver,agentdb -e lab_deploy=true
 	step "the login check and the fidelity test through Holdfast: lab/test-fidelity.sh $lab $*"
 	shown=1
-	bash lab/test-fidelity.sh "$lab" "$@" ;;
+	rc=0
+	bash lab/test-fidelity.sh "$lab" "$@" || rc=$?
+	step "M6: the bare-metal runbook's first path and the dump test: lab/test-recovery.sh $lab $*"
+	bash lab/test-recovery.sh "$lab" "$@" || rc=1
+	exit $rc ;;
 isolation)
 	out=$(probe)
 	st=$(sed -n 's/^state //p' <<<"$out")

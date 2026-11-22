@@ -14,6 +14,7 @@ import (
 	"github.com/kabsdk/holdfast/internal/config"
 	"github.com/kabsdk/holdfast/internal/proto"
 	"github.com/kabsdk/holdfast/internal/restic"
+	"github.com/kabsdk/holdfast/internal/server/storage"
 	"github.com/kabsdk/holdfast/internal/server/store"
 )
 
@@ -37,6 +38,10 @@ type RestoreInput struct {
 	Overwrite string `json:"overwrite,omitempty"`
 	// Message is why, for the audit log: the "Reason" in the UI.
 	Message string `json:"message,omitempty"`
+	// ToHost restores the snapshot onto another host (plan-m6 §2.2), with S3Key: a read-only key for this
+	// host's prefix, which the admin made. Input only, like every S3 key.
+	ToHost string      `json:"to_host,omitempty"`
+	S3Key  *S3KeyInput `json:"s3_key,omitempty"`
 }
 
 // RestoreResult is a queued restore.
@@ -80,21 +85,49 @@ func (s *Server) Restore(ctx context.Context, a Actor, fqdn, snapshotID string, 
 	}
 	// A new directory under the host's restore root is restore.new_dir, which the route checks. In place, or
 	// another directory, writes outside it: restore.in_place, an admin's (spec §6.2).
-	if in.Target != proto.TargetNew {
+	if in.ToHost == fqdn {
+		in.ToHost = ""
+	}
+	// The host the restore runs on: this one, or another (plan-m6 §2.2), which is restore.in_place on both.
+	target := fqdn
+	if in.ToHost != "" {
+		target = in.ToHost
 		if err := s.allowed(ctx, a, access.RestoreInPlace, fqdn); err != nil {
 			return RestoreResult{}, err
 		}
+		if err := s.allowed(ctx, a, access.RestoreInPlace, target); err != nil {
+			return RestoreResult{}, err
+		}
+		if in.Target == proto.TargetInPlace {
+			return RestoreResult{}, &ValidationError{config.Problems{{Path: "target", Message: "another host's snapshot is restored into a new or another directory, never in place"}}}
+		}
+		if in.S3Key == nil {
+			return RestoreResult{}, &ValidationError{config.Problems{{Path: "s3_key", Message: "a read-only key for " + storage.Prefix(fqdn) +
+				"/ is needed: make one at the S3 server (docs/storage.md) and give it with --s3-key-file"}}}
+		}
+	} else if in.S3Key != nil {
+		return RestoreResult{}, &ValidationError{config.Problems{{Path: "s3_key", Message: "a key goes only with a restore onto another host"}}}
 	}
-	h, err := s.st.Q().GetHost(ctx, fqdn)
+	if in.Target != proto.TargetNew {
+		if err := s.allowed(ctx, a, access.RestoreInPlace, target); err != nil {
+			return RestoreResult{}, err
+		}
+	}
+	h, err := s.st.Q().GetHost(ctx, target)
 	if err != nil {
-		return RestoreResult{}, fmt.Errorf("host %s: %w", fqdn, err)
+		return RestoreResult{}, fmt.Errorf("host %s: %w", target, err)
 	}
 	if h.State != "enrolled" {
-		return RestoreResult{}, fmt.Errorf("host %s is %s, not enrolled: %w", fqdn, h.State, ErrConflict)
+		return RestoreResult{}, fmt.Errorf("host %s is %s, not enrolled: %w", target, h.State, ErrConflict)
 	}
 	sn, err := s.snapshot(ctx, fqdn, snapshotID)
 	if err != nil {
 		return RestoreResult{}, err
+	}
+	// A dump is one file: into a new directory only, and loading it is the admin's job (decision 037).
+	dump := slices.ContainsFunc(sn.Tags, func(t string) bool { return strings.HasPrefix(t, "dump=") })
+	if dump && in.Target != proto.TargetNew {
+		return RestoreResult{}, &ValidationError{config.Problems{{Path: "target", Message: "a dump is restored into a new directory only; load it into the database on the host"}}}
 	}
 	switch in.Target {
 	case proto.TargetNew, proto.TargetInPlace:
@@ -126,16 +159,29 @@ func (s *Server) Restore(ctx context.Context, a Actor, fqdn, snapshotID string, 
 			return RestoreResult{}, &ValidationError{config.Problems{{Path: "overwrite", Message: "a new directory is empty, so there is nothing to overwrite"}}}
 		}
 	}
-	if ag, err := s.st.Q().GetAgent(ctx, fqdn); err == nil && ag.RestoreBounds != nil {
+	ag, agErr := s.st.Q().GetAgent(ctx, target)
+	if agErr == nil && ag.RestoreBounds != nil {
 		switch b := ag.RestoreBounds; {
 		case in.Target == proto.TargetInPlace && !b.AllowInPlace:
-			return RestoreResult{}, &ValidationError{config.Problems{{Path: "target", Message: fqdn + " does not allow in-place restores; root on the host can allow them in agent.yaml (restore.allow_in_place)"}}}
+			return RestoreResult{}, &ValidationError{config.Problems{{Path: "target", Message: target + " does not allow in-place restores; root on the host can allow them in agent.yaml (restore.allow_in_place)"}}}
 		case in.Target == proto.TargetDirectory && !b.AllowOtherDirectories:
-			return RestoreResult{}, &ValidationError{config.Problems{{Path: "target", Message: fqdn + " allows restores only into " + b.Root + "; root on the host can allow other directories in agent.yaml (restore.allow_other_directories)"}}}
+			return RestoreResult{}, &ValidationError{config.Problems{{Path: "target", Message: target + " allows restores only into " + b.Root + "; root on the host can allow other directories in agent.yaml (restore.allow_other_directories)"}}}
+		case in.ToHost != "" && !b.AllowOtherHosts:
+			return RestoreResult{}, &ValidationError{config.Problems{{Path: "to_host", Message: target + " does not allow restores from other hosts; root on it can allow them in agent.yaml (restore.allow_other_hosts)"}}}
 		}
 	}
 	spec := proto.RestoreSpec{Snapshot: sn.ID, Target: in.Target, Directory: in.Directory, Exclude: in.Exclude, Include: in.Include,
-		DryRun: in.DryRun, JobID: sn.JobID, User: restoreUser(a), Overwrite: in.Overwrite}
+		DryRun: in.DryRun, JobID: sn.JobID, User: restoreUser(a), Overwrite: in.Overwrite, Dump: dump}
+	var sealed []byte
+	if in.ToHost != "" {
+		if agErr != nil || (proto.Facts{Protocol: ag.Protocol}).AgentProtocol() < proto.ProtocolRecovery {
+			return RestoreResult{}, fmt.Errorf("%s's agent does not know restores from other hosts: upgrade holdfast-agent there first: %w", target, ErrConflict)
+		}
+		if sealed, err = s.sealSource(ctx, fqdn, target, in.S3Key); err != nil {
+			return RestoreResult{}, err
+		}
+		spec.JobID = "" // the safety backup's job: none on another host, which is why it is never in place
+	}
 	payload, err := json.Marshal(spec)
 	if err != nil {
 		return RestoreResult{}, err
@@ -143,18 +189,55 @@ func (s *Server) Restore(ctx context.Context, a Actor, fqdn, snapshotID string, 
 	now := s.now()
 	res := RestoreResult{Command: newID(), Snapshot: sn.ID, Target: in.Target, ExpiresAt: now.Add(RestoreExpiry)}
 	err = s.st.InTx(ctx, func(q *store.Q) error {
-		if err := q.EnqueueCommand(ctx, store.Command{ID: res.Command, FQDN: fqdn, Kind: proto.CommandRestore, JobID: sn.JobID, CreatedAt: now,
-			CreatedBy: a.Name, Payload: payload, ExpiresAt: &res.ExpiresAt}); err != nil {
+		if err := q.EnqueueCommand(ctx, store.Command{ID: res.Command, FQDN: target, Kind: proto.CommandRestore, JobID: spec.JobID, CreatedAt: now,
+			CreatedBy: a.Name, Payload: payload, ExpiresAt: &res.ExpiresAt, Sealed: sealed}); err != nil {
 			return err
 		}
-		if err := q.Audit(ctx, store.AuditEntry{Actor: a.Name, Source: a.Source, Action: "restore.requested", FQDN: fqdn, JobID: sn.JobID,
-			Detail: map[string]any{"command": res.Command, "snapshot": sn.ID, "target": in.Target, "directory": in.Directory, "dry_run": in.DryRun,
-				"left_out": len(in.Exclude), "only": len(in.Include), "overwrite": in.Overwrite, "message": in.Message}}); err != nil {
+		detail := map[string]any{"command": res.Command, "snapshot": sn.ID, "target": in.Target, "directory": in.Directory, "dry_run": in.DryRun,
+			"left_out": len(in.Exclude), "only": len(in.Include), "overwrite": in.Overwrite, "message": in.Message}
+		if in.ToHost != "" {
+			detail["from_host"], detail["to_host"] = fqdn, target
+			// The snapshot's own host has it in its history too.
+			if err := q.Audit(ctx, store.AuditEntry{Actor: a.Name, Source: a.Source, Action: "restore.requested_elsewhere", FQDN: fqdn, JobID: sn.JobID,
+				Detail: detail}); err != nil {
+				return err
+			}
+		}
+		if err := q.Audit(ctx, store.AuditEntry{Actor: a.Name, Source: a.Source, Action: "restore.requested", FQDN: target, JobID: spec.JobID,
+			Detail: detail}); err != nil {
 			return err
 		}
-		return q.NotifyHost(ctx, fqdn)
+		return q.NotifyHost(ctx, target)
 	})
 	return res, err
+}
+
+// sealSource tests the read-only key for host from's prefix, and seals what the target's agent needs to restore
+// from it: from's repository, its password and that key. Only the target's agent ever gets it, once.
+func (s *Server) sealSource(ctx context.Context, from, target string, in *S3KeyInput) ([]byte, error) {
+	key, err := in.key()
+	if err != nil {
+		return nil, err
+	}
+	rep := s.prober.ProbeReadOnly(ctx, from, key)
+	rep.CheckedAt = s.now()
+	if !rep.OK() {
+		return nil, &StorageError{rep}
+	}
+	c, err := s.st.Q().GetCredentials(ctx, from)
+	if err != nil {
+		return nil, err
+	}
+	pw, err := s.seal.Open(c.RepoPassword, from)
+	if err != nil {
+		return nil, err
+	}
+	b, err := json.Marshal(proto.RestoreSource{FQDN: from, Repository: c.Repository, RepoPassword: pw, S3AccessKeyID: key.AccessKeyID,
+		S3SecretAccessKey: key.SecretAccessKey})
+	if err != nil {
+		return nil, err
+	}
+	return s.seal.Seal(string(b), target), nil
 }
 
 // RestoresView is the fleet's restore history (spec §5.5): queued ones first, then finished ones.

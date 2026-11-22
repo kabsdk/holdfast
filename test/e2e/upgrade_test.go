@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -8,6 +9,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/kabsdk/holdfast/internal/proto"
 )
 
 // Plan-m5 §3: an upgrade from the previous agent to this one, and an agent too old for the server.
@@ -74,16 +77,16 @@ func TestAgentUpgradeAndTooOld(t *testing.T) {
 	// Upgraded in place, as the package's restart does: the same config, credentials and state.
 	old.kill(syscall.SIGTERM)
 	e.runAgent(a)
-	waitFor(t, "the new agent to report", time.Minute, func() bool { v, p := e.agentFacts(fqdn); return v == "dev" && p == 1 })
+	waitFor(t, "the new agent to report", time.Minute, func() bool { v, p := e.agentFacts(fqdn); return v == "dev" && p == proto.Protocol })
 	before := countStatus(e.events(fqdn), "data", "success")
 	waitFor(t, "a backup by the new agent", 3*time.Minute, func() bool { return countStatus(e.events(fqdn), "data", "success") > before })
 	if n := countStatus(e.events(fqdn), "data", "interrupted"); n != 0 {
 		t.Fatalf("the upgrade interrupted %d runs", n)
 	}
 
-	// The server now needs protocol 2, so this agent is too old: it is told so, and the host says so. It
+	// The server now needs a newer protocol, so this agent is too old: it is told so, and the host says so. It
 	// keeps backing up on its cached config, and the server still takes its reports.
-	e.restartServer([]string{"HOLDFAST_TEST_MIN_PROTOCOL=2"}, "-test")
+	e.restartServer([]string{fmt.Sprintf("HOLDFAST_TEST_MIN_PROTOCOL=%d", proto.Protocol+1)}, "-test")
 	waitFor(t, "the too-old problem", time.Minute, func() bool { return hasProblem(e.host(fqdn), "agent_too_old") })
 	waitFor(t, "the agent to log it", time.Minute, func() bool {
 		b, _ := os.ReadFile(e.logFile(filepath.Base(a.dir)))

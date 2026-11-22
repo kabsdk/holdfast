@@ -8,6 +8,8 @@ function Banners({ host, onAck }) {
       <code>${p.code}</code> ${p.message}
       ${(p.code === 'disappeared' || p.code === 'foreign_keys') && can(host, 'maintenance') &&
         html` <button class="small" onClick=${onAck}>I have looked into it: clear the alert</button>`}
+      ${p.code === 'disappeared' && can(host, 'repository.rollback') &&
+        html` <a class="button small" href=${link('hosts', host.fqdn, 'rollback')}>Bring them back from S3's versions…</a>`}
     </div>`)}`;
 }
 
@@ -114,7 +116,8 @@ function JobCard({ host, job, cuts, onDone }) {
       </div>
     </div>
     <dl class="facts">
-      <dt>Paths</dt><dd class="mono">${job.paths.join('  ')}${job.excludes?.length ? html` <span class="muted">· excludes ${job.excludes.join(' ')}</span>` : ''}</dd>
+      ${job.dump ? html`<dt>Dump</dt><dd><span class="mono">${job.dump}</span> <span class="muted">· defined in the host's agent.yaml</span></dd>`
+        : html`<dt>Paths</dt><dd class="mono">${(job.paths || []).join('  ')}${job.excludes?.length ? html` <span class="muted">· excludes ${job.excludes.join(' ')}</span>` : ''}</dd>`}
       <dt>Schedule</dt><dd>${scheduleText(job.schedule)} · longest gap ${dur(job.longest_gap)} · stale after ${dur(job.stale_after)}</dd>
       <dt>Retention</dt><dd>${retentionText(job.retention)}</dd>
       <dt>Agent reported</dt><dd>${s.last_success_at ? 'last success ' + fmtTime(s.last_success_at) : 'no success yet'}${s.last_status && s.last_status !== 'success' ? ` · last run ${s.last_status}${s.last_error ? ': ' + s.last_error : ''}` : ''}</dd>
@@ -157,6 +160,7 @@ export function Host({ fqdn, reloadHosts }) {
         ${can(h, 'config.storage') && html`<button onClick=${() => setPanel('enroll')}>New enrollment code</button>`}
         ${can(h, 'config.storage') && html`<button onClick=${() => setPanel('key')}>Replace S3 key</button>`}
         ${can(h, 'config.storage') && h.state !== 'retired' && html`<button onClick=${() => setPanel('rotate')}>Rotate password…</button>`}
+        ${can(h, 'repository.rollback') && !(h.decommission && h.decommission.done_at) && html`<a class="button" href=${link('hosts', h.fqdn, 'rollback')}>Roll back…</a>`}
         ${can(h, 'host.remove') && h.state !== 'retired' && !h.removed_at && html`<button onClick=${() => {
           if (confirm(`Remove ${h.fqdn}? Its agent stops backing up; its repository and snapshots stay, and adding it again brings it back.`))
             act.run(() => api.removeHost(h.fqdn, {})).then(refresh);

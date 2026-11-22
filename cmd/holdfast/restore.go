@@ -23,10 +23,10 @@ type restoreEvent struct {
 }
 
 func restoreCmd() *cobra.Command {
-	var to, overwrite, msg string
+	var to, overwrite, msg, toHost, keyFile string
 	var inPlace, dryRun, wait bool
 	var leaveOut, only []string
-	c := &cobra.Command{Use: "restore <fqdn> <snapshot>", Short: "Restore a snapshot on its host, through the agent (a new root-only directory by default)",
+	c := &cobra.Command{Use: "restore <fqdn> <snapshot>", Short: "Restore a snapshot on its host, or onto another one (--to-host), through the agent (a new root-only directory by default)",
 		Args: cobra.ExactArgs(2), RunE: func(_ *cobra.Command, a []string) error {
 			in := map[string]any{"target": "new", "exclude": leaveOut, "include": only, "dry_run": dryRun, "overwrite": overwrite, "message": msg}
 			switch {
@@ -36,6 +36,17 @@ func restoreCmd() *cobra.Command {
 				in["target"] = "in_place"
 			case to != "":
 				in["target"], in["directory"] = "directory", to
+			}
+			runsOn := a[0]
+			if toHost != "" {
+				if keyFile == "" {
+					return errors.New("--to-host needs --s3-key-file: a read-only key for " + a[0] + "'s prefix, made at the S3 server (docs/runbooks/bare-metal.md)")
+				}
+				key, err := readS3Key(keyFile)
+				if err != nil {
+					return err
+				}
+				in["to_host"], in["s3_key"], runsOn = toHost, key, toHost
 			}
 			var res struct {
 				Command   string    `json:"command"`
@@ -50,12 +61,15 @@ func restoreCmd() *cobra.Command {
 					printJSON(raw)
 					return nil
 				}
-				fmt.Printf("restore %s queued for %s; the host must pick it up by %s\nholdfast restores shows its result\n", res.Command, a[0], res.ExpiresAt.Local().Format("2006-01-02 15:04"))
+				fmt.Printf("restore %s queued for %s; the host must pick it up by %s\nholdfast restores shows its result\n", res.Command, runsOn, res.ExpiresAt.Local().Format("2006-01-02 15:04"))
+				if toHost != "" {
+					fmt.Printf("%s's root learns %s's repository password: delete the read-only key at the S3 server once it is done\n", toHost, a[0])
+				}
 				return nil
 			}
 			for {
 				var evs []json.RawMessage
-				if _, err := call("GET", "/api/v1/hosts/"+url.PathEscape(a[0])+"/events?limit=200", nil, &evs); err != nil {
+				if _, err := call("GET", "/api/v1/hosts/"+url.PathEscape(runsOn)+"/events?limit=200", nil, &evs); err != nil {
 					return err
 				}
 				for _, rawEv := range evs {
@@ -87,6 +101,8 @@ func restoreCmd() *cobra.Command {
 	c.Flags().BoolVar(&wait, "wait", false, "wait for the agent's result")
 	c.Flags().StringVar(&overwrite, "overwrite", "", "with --in-place or --to, for a file that exists already, restic's choice: always, if-changed, if-newer or never")
 	c.Flags().StringVarP(&msg, "message", "m", "", "why, for the audit log")
+	c.Flags().StringVar(&toHost, "to-host", "", "admin: restore onto this other host, which must allow it (agent.yaml restore.allow_other_hosts)")
+	c.Flags().StringVar(&keyFile, "s3-key-file", "", "with --to-host: a read-only key for the snapshot's host's prefix, as for host add, or - for stdin")
 	c.AddCommand(restorePairCmd())
 	return c
 }

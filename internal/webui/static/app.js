@@ -9,6 +9,7 @@ import { Restores } from './pages/restores.js';
 import { History, PruneNow } from './pages/history.js';
 import { AddHost } from './pages/addhost.js';
 import { Audit, Access, Settings } from './pages/admin.js';
+import { Rollback } from './pages/rollback.js';
 
 function Search() {
   const [text, setText] = useState('');
@@ -58,6 +59,7 @@ function Shell({ me, settings }) {
     if (seg.length === 2) page = html`<${Host} fqdn=${fqdn} ...${ctx} />`;
     else if (seg[2] === 'pending') page = html`<${Pending} fqdn=${fqdn} ...${ctx} />`;
     else if (seg[2] === 'prune-now') page = html`<${PruneNow} fqdn=${fqdn} ...${ctx} />`;
+    else if (seg[2] === 'rollback') page = html`<${Rollback} fqdn=${fqdn} ...${ctx} />`;
     else if (seg[2] === 'configure') page = html`<${Configure} fqdn=${fqdn} job=${seg[3] || ''} ...${ctx} />`;
     else if (seg[2] === 'jobs' && seg[4] === 'snapshots') page = html`<${JobSnapshots} fqdn=${fqdn} job=${seg[3]} ...${ctx} />`;
     else if (seg[2] === 'snapshots' && seg[3]) page = html`<${Snapshot} fqdn=${fqdn} id=${seg[3]} tab=${seg[4] || 'files'} ...${ctx} />`;

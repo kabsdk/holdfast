@@ -49,6 +49,25 @@ func (a *Agent) runRestore(ctx context.Context, c proto.Command) bool {
 	a.mu.Unlock()
 	defer func() { a.mu.Lock(); a.running = nil; a.mu.Unlock() }()
 
+	// Another host's snapshot (plan-m6 §2.2): only if this host allows it, never in place, and with that
+	// host's password and read-only key, which live in root-only files for this one restore.
+	owner := a.cfg.FQDN
+	if src := spec.Source; src != nil {
+		if !a.cfg.Restore.AllowOtherHosts {
+			return fail("refused by this host: restores from other hosts are not allowed (agent.yaml restore.allow_other_hosts)")
+		}
+		if spec.Target == proto.TargetInPlace {
+			return fail("refused: another host's snapshot is restored into a directory, never in place")
+		}
+		other, cleanup, err := a.sourceRunner(c.ID, *src)
+		if err != nil {
+			return fail("preparing the restore from %s: %v", src.FQDN, err)
+		}
+		defer cleanup()
+		r, owner = other, src.FQDN
+		ev.Detail["source_host"] = src.FQDN
+	}
+
 	sn, err := r.SnapshotInfo(ctx, spec.Snapshot)
 	if ctx.Err() != nil {
 		return false
@@ -56,8 +75,15 @@ func (a *Agent) runRestore(ctx context.Context, c proto.Command) bool {
 	if err != nil {
 		return fail("snapshot %s: %v", spec.Snapshot, err)
 	}
-	if sn.Hostname != a.cfg.FQDN {
+	switch {
+	case sn.Hostname != owner && spec.Source != nil:
+		return fail("refused by this host: snapshot %s was made by %q, not by %q, whose repository this is", sn.ShortID, sn.Hostname, owner)
+	case sn.Hostname != owner:
 		return fail("refused by this host: snapshot %s was made by %q, and this host restores only its own snapshots", sn.ShortID, sn.Hostname)
+	}
+	// A dump is one file: it goes into a new directory, and loading it is the admin's job (decision 037).
+	if (spec.Dump || isDump(sn)) && spec.Target != proto.TargetNew && spec.Target != "" {
+		return fail("refused: a dump is restored into a new directory only")
 	}
 
 	b := a.cfg.Restore
@@ -117,8 +143,13 @@ func (a *Agent) runRestore(ctx context.Context, c proto.Command) bool {
 	a.mark(runMarker{Kind: proto.KindRestore, CommandID: c.ID, Started: started, Revision: rev})
 	defer os.Remove(a.path("running.json"))
 	rctx, cancel := context.WithTimeout(ctx, restoreTimeout)
-	sum, err := r.RestoreWith(rctx, sn.ID, restic.RestoreOptions{Target: target, Include: spec.Include, Exclude: spec.Exclude, DryRun: spec.DryRun,
-		Overwrite: spec.Overwrite})
+	opts := restic.RestoreOptions{Target: target, Include: spec.Include, Exclude: spec.Exclude, DryRun: spec.DryRun, Overwrite: spec.Overwrite}
+	// A dump's file has no SELinux label in the snapshot, and another host's labels belong to its policy: the
+	// restored files keep the label this host gives them (found in the lab, on el9 and ol9).
+	if spec.Dump || isDump(sn) || spec.Source != nil {
+		opts.ExcludeXattr = []string{"security.selinux"}
+	}
+	sum, err := r.RestoreWith(rctx, sn.ID, opts)
 	timedOut := errors.Is(rctx.Err(), context.DeadlineExceeded)
 	cancel()
 	if ctx.Err() != nil {
@@ -139,6 +170,33 @@ func (a *Agent) runRestore(ctx context.Context, c proto.Command) bool {
 	}
 	a.spool(ev)
 	return true
+}
+
+// isDump says whether a snapshot is a dump's: its tags hold dump=<name>.
+func isDump(sn restic.Snapshot) bool {
+	for _, t := range sn.Tags {
+		if strings.HasPrefix(t, "dump=") {
+			return true
+		}
+	}
+	return false
+}
+
+// sourceRunner is restic on another host's repository, with its password and the read-only key the admin
+// made. It runs without locks: the key may not write them. cleanup removes the files.
+func (a *Agent) sourceRunner(commandID string, src proto.RestoreSource) (restic.Runner, func(), error) {
+	dir := a.path("source-" + commandID)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return restic.Runner{}, nil, err
+	}
+	cleanup := func() { _ = os.RemoveAll(dir) }
+	pf := filepath.Join(dir, "repo.pass")
+	if err := writeFileAtomic(pf, []byte(src.RepoPassword), 0o600); err != nil {
+		cleanup()
+		return restic.Runner{}, nil, err
+	}
+	return restic.Runner{Bin: a.cfg.ResticBin, Repo: src.Repository, PasswordFile: pf, CacheDir: filepath.Join(dir, "cache"), NoLock: true,
+		Env: []string{"AWS_ACCESS_KEY_ID=" + src.S3AccessKeyID, "AWS_SECRET_ACCESS_KEY=" + src.S3SecretAccessKey}}, cleanup, nil
 }
 
 // safetyBackup backs up the paths an in-place restore will replace, and reports it as a pre_restore

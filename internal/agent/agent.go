@@ -83,6 +83,9 @@ type Agent struct {
 
 	warnedNewer bool // logged once: the server is older than this agent (only the poll loop sets it)
 
+	// paused is set by a pause command (plan-m6 Q3), under mu: no run starts until it ends.
+	paused *proto.Paused
+
 	wake     chan struct{}
 	flushNow chan struct{}
 }
@@ -191,6 +194,60 @@ func (a *Agent) load() {
 			a.lastCheck = c.Last
 		}
 	}
+	if b, err := os.ReadFile(a.path("paused.json")); err == nil {
+		var p proto.Paused
+		if json.Unmarshal(b, &p) == nil {
+			a.paused = &p
+		}
+	}
+}
+
+// maxPause is the longest a pause lasts: then the agent resumes by itself (plan-m6 Q3).
+const maxPause = 2 * time.Hour
+
+// pause stops runs starting until until, at most maxPause from now. A run under way has finished: the
+// work loop runs one thing at a time.
+func (a *Agent) pause(id string, until *time.Time) {
+	end := a.now().Add(maxPause)
+	if until != nil && until.Before(end) {
+		end = *until
+	}
+	p := proto.Paused{Command: id, Until: end.UTC()}
+	b, _ := json.Marshal(p)
+	a.mu.Lock()
+	a.paused = &p
+	a.mu.Unlock()
+	if err := writeFileAtomic(a.path("paused.json"), b, 0o600); err != nil {
+		a.log.Error("saving the pause", "err", err)
+	}
+	a.log.Warn("paused by the server: no run starts until it resumes", "until", p.Until)
+}
+
+// resume ends a pause.
+func (a *Agent) resume() {
+	a.mu.Lock()
+	was := a.paused != nil
+	a.paused = nil
+	a.mu.Unlock()
+	_ = os.Remove(a.path("paused.json"))
+	if was {
+		a.log.Info("resumed: runs start again, and missed slots are caught up")
+	}
+}
+
+// isPaused says whether a pause holds now, and ends one that is over.
+func (a *Agent) isPaused() bool {
+	a.mu.Lock()
+	p := a.paused
+	a.mu.Unlock()
+	if p == nil {
+		return false
+	}
+	if !a.now().Before(p.Until) {
+		a.resume()
+		return false
+	}
+	return true
 }
 
 // writeFileAtomic writes through a temporary file and a rename, so a crash never leaves half a file.
@@ -312,6 +369,7 @@ func (a *Agent) facts(ctx context.Context) proto.Facts {
 	f.Now = a.now().UTC()
 	bounds := a.cfg.Restore
 	f.RestoreBounds = &bounds
+	f.Dumps = a.cfg.DumpNames()
 	return f
 }
 
@@ -396,6 +454,10 @@ func (a *Agent) pollOnce(ctx context.Context, wait time.Duration) error {
 	req := proto.PollRequest{CredentialsVersion: a.credVer, AckedCommands: append([]string(nil), a.toAck...), Running: a.running}
 	if a.hc != nil {
 		req.Applied = proto.Applied{Revision: a.hc.Revision, SHA256: a.hc.SHA256}
+	}
+	if a.paused != nil && a.running == nil { // paused, and idle: what a rollback waits for
+		p := *a.paused
+		req.Paused = &p
 	}
 	a.mu.Unlock()
 	req.Facts = a.facts(ctx)
@@ -734,11 +796,16 @@ func (a *Agent) workLoop(ctx context.Context) {
 		case <-t.C:
 		case <-a.wake:
 		}
-		// One restic process per host (plan-m1 Q7): commands first, then due jobs, one at a time.
+		// One restic process per host (plan-m1 Q7): commands first, then due jobs, one at a time. While paused,
+		// only pause and resume run; due slots wait, and are caught up once it ends.
 		for ctx.Err() == nil {
-			if c, ok := a.nextCommand(); ok {
+			paused := a.isPaused()
+			if c, ok := a.nextCommand(paused); ok {
 				a.execCommand(ctx, c)
 				continue
+			}
+			if paused {
+				break
 			}
 			j, st, retry, ok := a.dueRun(a.now())
 			if !ok {
@@ -754,7 +821,8 @@ func (a *Agent) workLoop(ctx context.Context) {
 	}
 }
 
-func (a *Agent) nextCommand() (proto.Command, bool) {
+// nextCommand returns a stored command to run; only a pause or a resume when onlyControl.
+func (a *Agent) nextCommand(onlyControl bool) (proto.Command, bool) {
 	entries, err := os.ReadDir(a.path("commands"))
 	if err != nil {
 		return proto.Command{}, false
@@ -768,6 +836,9 @@ func (a *Agent) nextCommand() (proto.Command, bool) {
 		var c proto.Command
 		if err != nil || json.Unmarshal(b, &c) != nil {
 			_ = os.Remove(p)
+			continue
+		}
+		if onlyControl && c.Kind != proto.CommandPause && c.Kind != proto.CommandResume {
 			continue
 		}
 		return c, true
@@ -813,6 +884,11 @@ func (a *Agent) execCommand(ctx context.Context, c proto.Command) {
 		a.runCheck(ctx, c.ID)
 	case proto.CommandRestore:
 		a.runRestore(ctx, c)
+	case proto.CommandPause:
+		a.pause(c.ID, c.Until)
+	case proto.CommandResume:
+		a.resume()
+		nudge(a.wake)
 	default:
 		now := a.now().UTC()
 		a.spool(proto.Event{Kind: c.Kind, CommandID: c.ID, Status: proto.StatusFailed, Started: now, Finished: now, Error: "unknown command kind"})
@@ -920,10 +996,23 @@ func (a *Agent) runBackup(ctx context.Context, j proto.JobConfig, commandID stri
 
 	// The agent's own state (restic cache, spool, token) is never backed up (plan-m1 Q13).
 	excludes := append(append([]string(nil), j.Excludes...), a.cfg.StateDir)
+	opts := restic.BackupOptions{Paths: j.Paths, Excludes: excludes, Host: a.cfg.FQDN, Tags: []string{"job=" + j.ID},
+		LimitUploadKiB: j.LimitUploadKiB}
+	var res restic.BackupResult
+	var err error
+	if j.Dump != "" { // decision 037: the command is this host's, by name
+		if d, ok := a.cfg.Dumps[j.Dump]; ok {
+			opts = restic.BackupOptions{Host: a.cfg.FQDN, Tags: []string{"job=" + j.ID, "dump=" + j.Dump}, LimitUploadKiB: j.LimitUploadKiB,
+				StdinCommand: dumpCommand(d), StdinFilename: d.Filename}
+		} else {
+			err = fmt.Errorf("this host's agent.yaml defines no dump named %q", j.Dump)
+		}
+	}
 	timeout := a.runTimeout(j.Schedule)
 	rctx, cancel := context.WithTimeout(ctx, timeout)
-	res, err := r.Backup(rctx, restic.BackupOptions{Paths: j.Paths, Excludes: excludes, Host: a.cfg.FQDN, Tags: []string{"job=" + j.ID},
-		LimitUploadKiB: j.LimitUploadKiB})
+	if err == nil {
+		res, err = r.Backup(rctx, opts)
+	}
 	timedOut := errors.Is(rctx.Err(), context.DeadlineExceeded)
 	cancel()
 	if ctx.Err() != nil {

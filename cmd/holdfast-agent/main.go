@@ -62,6 +62,10 @@ func enroll(args []string, log *slog.Logger) error {
 	if c.Server == "" || c.FQDN == "" || *code == "" {
 		return fmt.Errorf("--server, --fqdn and --code are required")
 	}
+	// Enrolling again keeps what the host's root set: the restore bounds and the dumps.
+	if old, err := agent.LoadConfig(*cfgPath); err == nil {
+		c.Restore, c.Dumps = old.Restore, old.Dumps
+	}
 	c.Defaults()
 	if err := agent.Enroll(context.Background(), c, *code, log); err != nil {
 		return err

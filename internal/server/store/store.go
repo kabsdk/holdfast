@@ -506,6 +506,10 @@ type Agent struct {
 	RestoreBounds      *proto.RestoreBounds `json:"restore_bounds,omitempty"` // the host's own limits (plan-m2 Q5)
 	// Protocol is the agent protocol it last reported; 0 from an agent before M5, which speaks 1.
 	Protocol int `json:"protocol"`
+	// Dumps are the names of the dumps its agent.yaml defines (decision 037).
+	Dumps []string `json:"dumps"`
+	// Paused is set while the agent reports a pause, and idle (plan-m6 Q3).
+	Paused *proto.Paused `json:"paused,omitempty"`
 }
 
 // EnrollAgent records (or replaces, on re-enrollment) the agent's credential and marks the host enrolled.
@@ -537,6 +541,8 @@ type Heartbeat struct {
 	CredentialsVersion                                                   int
 	RestoreBounds                                                        *proto.RestoreBounds
 	Protocol                                                             int
+	Dumps                                                                []string
+	Paused                                                               *proto.Paused
 }
 
 // RecordHeartbeat updates the agent row. applied_at moves only when the applied sha256 changes.
@@ -549,25 +555,36 @@ func (q *Q) RecordHeartbeat(ctx context.Context, fqdn string, h Heartbeat, now t
 		}
 		bounds = b
 	}
+	pausedCommand, pausedUntil := "", (*time.Time)(nil)
+	if h.Paused != nil {
+		pausedCommand, pausedUntil = h.Paused.Command, &h.Paused.Until
+	}
 	_, err := q.db.Exec(ctx, `UPDATE agents SET last_seen_at = $2, agent_version = $3, restic_version = $4, os_id = $5, os_version = $6,
 		hostname_fqdn = $7, timezone = $8, clock_offset_ms = $9,
 		applied_at = CASE WHEN applied_sha256 IS DISTINCT FROM $11 THEN $2 ELSE applied_at END,
 		applied_revision = $10, applied_sha256 = $11, credentials_version = $12, restore_bounds = COALESCE($13, restore_bounds),
-		protocol = $14
+		protocol = $14, dumps = $15, paused_command = $16, paused_until = $17
 		WHERE fqdn = $1`,
 		fqdn, now, h.AgentVersion, h.ResticVersion, h.OSID, h.OSVersion, h.HostnameFQDN, h.Timezone, h.ClockOffsetMS,
-		h.AppliedRevision, h.AppliedSHA256, h.CredentialsVersion, bounds, h.Protocol)
+		h.AppliedRevision, h.AppliedSHA256, h.CredentialsVersion, bounds, h.Protocol, nonNil(h.Dumps), pausedCommand, pausedUntil)
 	return err
 }
 
 const agentCols = `fqdn, enrolled_at, last_seen_at, agent_version, restic_version, os_id, os_version, hostname_fqdn, timezone,
-	clock_offset_ms, applied_revision, applied_sha256, applied_at, credentials_version, restore_bounds, protocol`
+	clock_offset_ms, applied_revision, applied_sha256, applied_at, credentials_version, restore_bounds, protocol, dumps,
+	paused_command, paused_until`
 
 func scanAgent(row pgx.Row) (Agent, error) {
 	var a Agent
 	var bounds []byte
+	var pausedCommand string
+	var pausedUntil *time.Time
 	err := row.Scan(&a.FQDN, &a.EnrolledAt, &a.LastSeenAt, &a.AgentVersion, &a.ResticVersion, &a.OSID, &a.OSVersion, &a.HostnameFQDN,
-		&a.Timezone, &a.ClockOffsetMS, &a.AppliedRevision, &a.AppliedSHA256, &a.AppliedAt, &a.CredentialsVersion, &bounds, &a.Protocol)
+		&a.Timezone, &a.ClockOffsetMS, &a.AppliedRevision, &a.AppliedSHA256, &a.AppliedAt, &a.CredentialsVersion, &bounds, &a.Protocol, &a.Dumps,
+		&pausedCommand, &pausedUntil)
+	if err == nil && pausedCommand != "" && pausedUntil != nil {
+		a.Paused = &proto.Paused{Command: pausedCommand, Until: *pausedUntil}
+	}
 	if err == nil && len(bounds) > 0 {
 		a.RestoreBounds = &proto.RestoreBounds{}
 		err = json.Unmarshal(bounds, a.RestoreBounds)
@@ -890,8 +907,11 @@ type Command struct {
 	JobID     string          `json:"job_id,omitempty"`
 	CreatedAt time.Time       `json:"created_at"`
 	CreatedBy string          `json:"created_by"`
-	Payload   json.RawMessage `json:"payload,omitempty"`    // a restore's spec
+	Payload   json.RawMessage `json:"payload,omitempty"`    // a restore's spec, or a pause's end
 	ExpiresAt *time.Time      `json:"expires_at,omitempty"` // not sent once this has passed
+	// Sealed is a command's secrets, sealed (a restore from another host, plan-m6 §2.2). Never in an answer;
+	// cleared once the agent has the command.
+	Sealed []byte `json:"-"`
 }
 
 // EnqueueCommand queues a command.
@@ -900,12 +920,13 @@ func (q *Q) EnqueueCommand(ctx context.Context, c Command) error {
 	if len(c.Payload) > 0 {
 		payload = []byte(c.Payload)
 	}
-	_, err := q.db.Exec(ctx, `INSERT INTO commands (id, fqdn, kind, job_id, created_at, created_by, payload, expires_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-		c.ID, c.FQDN, c.Kind, c.JobID, c.CreatedAt, c.CreatedBy, payload, c.ExpiresAt)
+	_, err := q.db.Exec(ctx, `INSERT INTO commands (id, fqdn, kind, job_id, created_at, created_by, payload, expires_at, sealed)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		c.ID, c.FQDN, c.Kind, c.JobID, c.CreatedAt, c.CreatedBy, payload, c.ExpiresAt, c.Sealed)
 	return err
 }
 
-const commandCols = `id, fqdn, kind, job_id, created_at, created_by, payload, expires_at`
+const commandCols = `id, fqdn, kind, job_id, created_at, created_by, payload, expires_at, sealed`
 
 func scanCommands(rows pgx.Rows) ([]Command, error) {
 	defer rows.Close()
@@ -913,7 +934,7 @@ func scanCommands(rows pgx.Rows) ([]Command, error) {
 	for rows.Next() {
 		var c Command
 		var payload []byte
-		if err := rows.Scan(&c.ID, &c.FQDN, &c.Kind, &c.JobID, &c.CreatedAt, &c.CreatedBy, &payload, &c.ExpiresAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.FQDN, &c.Kind, &c.JobID, &c.CreatedAt, &c.CreatedBy, &payload, &c.ExpiresAt, &c.Sealed); err != nil {
 			return nil, err
 		}
 		c.Payload = payload
@@ -936,7 +957,7 @@ func (q *Q) PendingCommands(ctx context.Context, fqdn string) ([]Command, error)
 // ExpireCommands cancels the commands whose time ran out before their agent picked them up, and returns
 // them (plan-m2 Q6).
 func (q *Q) ExpireCommands(ctx context.Context, now time.Time) ([]Command, error) {
-	rows, err := q.db.Query(ctx, `UPDATE commands SET cancelled_at = $1 WHERE acked_at IS NULL AND cancelled_at IS NULL
+	rows, err := q.db.Query(ctx, `UPDATE commands SET cancelled_at = $1, sealed = NULL WHERE acked_at IS NULL AND cancelled_at IS NULL
 		AND expires_at IS NOT NULL AND expires_at <= $1 RETURNING `+commandCols, now)
 	if err != nil {
 		return nil, err
@@ -959,7 +980,7 @@ func (q *Q) AckCommands(ctx context.Context, fqdn string, ids []string, now time
 	if len(ids) == 0 {
 		return nil
 	}
-	_, err := q.db.Exec(ctx, `UPDATE commands SET acked_at = $3 WHERE fqdn = $1 AND id = ANY($2) AND acked_at IS NULL`, fqdn, ids, now)
+	_, err := q.db.Exec(ctx, `UPDATE commands SET acked_at = $3, sealed = NULL WHERE fqdn = $1 AND id = ANY($2) AND acked_at IS NULL`, fqdn, ids, now)
 	return err
 }
 

@@ -37,7 +37,7 @@ BROWSER_IMAGE  ?= chromedp/headless-shell@sha256:381353d3530ab9d579d2fe8b9c0f451
 BROWSER_NAME   ?= holdfast-test-browser
 BROWSER_PORT   ?= 59222
 
-.PHONY: build test unit vet fmt pg-up pg-down minio-up minio-down tools e2e rules-test authelia-up authelia-down browser-up browser-down packages
+.PHONY: build test unit vet fmt pg-up pg-down minio-up minio-down tools e2e e2e-image rules-test authelia-up authelia-down browser-up browser-down packages
 
 # promtool: the alert rules parse, and their unit tests pass.
 rules-test:
@@ -108,7 +108,10 @@ tools:
 # a PID 1 that reaps orphans, as systemd does on a host: without it a SIGKILLed restic stays a zombie,
 # and restic rightly will not call a lock stale while its process still exists.
 E2E_ARGS ?=
-e2e: tools pg-up minio-up authelia-up browser-up
+E2E_IMAGE ?= holdfast-e2e:local
+e2e-image:
+	@docker build -q -t $(E2E_IMAGE) --build-arg GO_IMAGE=$(GO_IMAGE) test/e2e >/dev/null
+e2e: tools pg-up minio-up authelia-up browser-up e2e-image
 	docker run --rm --init --privileged --network host -v $(CURDIR):/src -w /src \
 		-v holdfast-gomod:/go/pkg/mod -v holdfast-gocache:/root/.cache/go-build -v holdfast-e2e-work:/work \
 		-v $(TOOLS):/tools:ro -e TMPDIR=/work -e GOFLAGS=-buildvcs=false \
@@ -116,4 +119,4 @@ e2e: tools pg-up minio-up authelia-up browser-up
 		-e HOLDFAST_S3_ROOT_USER=$(S3_USER) -e HOLDFAST_S3_ROOT_PASSWORD=$(S3_PASS) \
 		-e HOLDFAST_RESTIC=/tools/restic-$(RESTIC_VERSION) -e HOLDFAST_MC=/tools/mc \
 		-e HOLDFAST_OIDC_DIR=/tools/authelia-e2e -e HOLDFAST_BROWSER=http://127.0.0.1:$(BROWSER_PORT) \
-		$(GO_IMAGE) go test ./test/e2e/ -count=1 -v -timeout 50m $(E2E_ARGS)
+		$(E2E_IMAGE) go test ./test/e2e/ -count=1 -v -timeout 60m $(E2E_ARGS)

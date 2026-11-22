@@ -138,7 +138,9 @@ supports.
   Removing stops and disables it, and never deletes `/etc/holdfast`, state or backups.
 - **The agent and the server agree on a protocol version.** The agent sends its own with every poll (an agent
   before M5 sends none and speaks 1), and the server answers with the range it accepts. The server accepts
-  every agent from its minimum on, so it is upgraded first, and agents after it, one by one.
+  every agent from its minimum on, so it is upgraded first, and agents after it, one by one. Protocol 2 (M6)
+  adds dump jobs, restores from another host, and pause and resume; a feature an agent does not speak is refused
+  for it (D002), and the rest goes on.
 - An agent older than the server accepts is refused with 426 and the range. It logs that it must be
   upgraded, keeps backing up on its cached config, and the server still takes its reports. It gets no new
   config and no commands meanwhile. The host shows the `agent_too_old` problem, and
@@ -261,6 +263,27 @@ disappeared (§3.6).
   current bytes and objects, and the bytes of the old versions S3 keeps. The host's page and the metrics
   `holdfast_repository_bytes{versions="current"|"noncurrent"}` and `holdfast_repository_objects` show it.
 
+### 3.5b Rolling a repository back
+
+For a repository damaged or emptied behind Holdfast's back (decision 032), or after a mistaken Prune now
+(decision 038):
+- `holdfast host rollback <fqdn> --to <time>` (`GET /api/v1/hosts/{fqdn}/rollback?to=…`) shows what rolling the
+  host's prefix back to that time changes: objects brought back and set aside, by kind, the snapshots that come
+  back and those set aside, and when snapshot files were deleted. `--confirm <fqdn>` does it; admin only
+  (`repository.rollback`). The UI's host page has the same, and the "disappeared" alert links to it.
+- It copies each object's version of then over today's, and puts a delete marker in front of each object that was
+  not there then. **No version is deleted**, so a rollback can itself be rolled back, to a time just before it.
+  That makes it the third exception to the 7-day protection, beside Prune now and Delete now.
+- `locks/` is left alone; `keys/` and `config` are rolled back with the rest.
+- It is refused for a time before the host's last password rotation, or older than the lifecycle rule's days
+  (B011), and when the maintenance key may not read old versions (`s3:GetObjectVersion`).
+- The host's agent is paused and idle while it runs (`agent_down` when the host is down instead); then `restic
+  check` runs, the snapshot list is read again, and the agent resumes and catches up on slots it missed.
+  Snapshots set aside get tombstones marked deleted by Holdfast; snapshots that come back are no longer
+  disappeared. `holdfast host rollbacks <fqdn>` lists each rollback and how it went.
+- A rollback past a prune brings back what the prune removed; the daily run forgets it again if no retention in
+  force during the last 7 days keeps it.
+
 ### 3.5a A compromised host
 
 `holdfast host rotate <fqdn>` (`config.storage`) does, in this order:
@@ -382,6 +405,14 @@ The UI, the API and the CLI use the same checks engine, and every check has a st
 | Code | Condition |
 | --- | --- |
 | I001 | There is no yearly tier. |
+| I002 | A dump job on a host whose agent has not enrolled yet: whether it defines the dump is not known. |
+
+**Dump checks** (decision 037), errors:
+
+| Code | Condition |
+| --- | --- |
+| D001 | The host's `agent.yaml` defines no dump of that name. |
+| D002 | The host's agent does not know dump jobs (protocol 1): upgrade it first. |
 
 **Storage checks** test the S3 server, not the config (decision 029, [storage.md](storage.md)). They are
 errors that cannot be accepted. A key that fails one is refused, and a host whose storage fails one
@@ -401,6 +432,8 @@ cannot enroll.
 | B010 | The maintenance key can change the bucket's settings: versioning, the lifecycle rule or the bucket policy. |
 | B011 | No enabled lifecycle rule expires noncurrent versions under `repos/`. |
 | B012 | The maintenance key cannot write and delete under `escrow/`. Tested only when `escrow.age_recipient` is set (decision 036). |
+| B014 | A read-only key, for a restore onto another host, cannot read or list its host's prefix. |
+| B015 | That key can write or delete under the prefix: it must only read. |
 
 - The accepted codes are stored in the revision and in the audit log.
 - The CLI takes them explicitly, for example `holdfast job set … --accept R102,R104`. Without them it
@@ -413,6 +446,28 @@ cannot enroll.
   old and the new policy. A change is a retention cut (R104) when the new policy keeps a strict subset of
   what the old one keeps. Removing a tier is therefore not a cut if a finer tier keeps the same snapshots.
   A job with no snapshots yet has nothing to cut. If restic cannot be asked, the change counts as a cut.
+
+### 4.6 Dumps
+
+A dump job backs up what a command prints, such as a database dump, as one file in the snapshot (decision 037).
+- **The command is the host's own**, in its `agent.yaml`, under a name; root on the host defines it. A job only
+  names it: `holdfast job set <fqdn> <job> --dump postgresql …`. A job backs up either paths or a dump.
+
+  ```yaml
+  dumps:
+    postgresql:
+      command: [/usr/bin/pg_dumpall, --clean]   # the first item an absolute path; no shell
+      user: postgres                            # run as this user; default root
+      filename: postgresql.sql                  # the file's name in the snapshot; default <name>.dump
+      env: {PGHOST: /run/postgresql}            # optional, on top of PATH and LANG
+  ```
+
+- The agent runs it with `restic backup --stdin-from-command`, as its user, with a clean environment: it never
+  sees restic's, which holds the host's S3 key. A command that exits non-zero, or is not there, fails the run,
+  and no snapshot is made. The snapshot is tagged `dump=<name>` beside `job=<id>`.
+- Schedule, retention, retries, the upload limit and the checks are those of any job, and D001 and D002 (§4.5).
+  The agent reports its dumps' names, never their commands.
+- `deploy/examples/agent.yaml` has examples for PostgreSQL and MySQL/MariaDB.
 
 ---
 
@@ -474,6 +529,24 @@ host.
   with counts and the target directory, is in the host's history and in the Restores tab (§5.5).
 - A restore that the host has not picked up within 24 hours is cancelled, and the cancellation is reported.
 
+**A dump** (§4.6) is one file: it is restored into a new directory only. Loading it is the admin's job, on the
+host.
+
+**SELinux labels** are restored as the snapshot has them, except for a dump's file and a restore from another
+host: those keep the label the host gives a new file (`restic restore --exclude-xattr security.selinux`). A dump
+has no label in its snapshot, another host's labels belong to its own policy, and SELinux refuses to remove a
+label, which made restic fail (found in the lab, on el9 and ol9).
+
+**Onto another host** (plan-m6 §2.2): an admin (`restore.in_place` on both hosts) restores host A's snapshot onto
+host B with `holdfast restore A <snapshot> --to-host B --s3-key-file <key>`:
+- the key is a read-only one for A's prefix, which the admin makes; it is tested first (B014, B015);
+- B must allow it in its own `agent.yaml` (`restore.allow_other_hosts`), and its agent must speak protocol 2;
+- the target is a new or another directory on B, never in place;
+- B's agent gets A's repository URL, A's password and the key in the restore command, which the server keeps
+  sealed and clears once B has it; B keeps them in root-only files for that one restore and runs restic without
+  locks. B's root learns A's password, so delete the key afterwards;
+- A's history and B's both have it.
+
 **Per-file actions**
 - **Restore only this**.
 - **Restore both versions to diff on the host** restores both versions into a directory only root can read,
@@ -494,7 +567,7 @@ host, each with a code:
   opens the repository), and `decommission` when a due decommission could not delete;
 - warnings: `incomplete`, `offline`, `drift`, `restic`, `not_made_by_holdfast`, `catalogue`, `retention`,
   `removing`, `enroll` (waiting to enroll again), `escrow` (no recipient, or the write failed), `size`,
-  `agent_too_old` (§2.4), and `decommission` while one waits.
+  `agent_too_old` (§2.4), `decommission` while one waits, and `rollback` while one runs (§3.5b).
 
 Paging stays with Prometheus and the alert rules that ship with Holdfast. The storage witness is judged
 there too, apart from the server (decisions 008 and 009).
@@ -552,6 +625,7 @@ There are three roles. Each has a flat set of permissions, and roles do not inhe
 | `maintenance`: acknowledge changes made outside Holdfast, `holdfast check` | | | ✓ |
 | `host.remove`: remove a host or a job (never deletes data) | | | ✓ |
 | `host.decommission`: delete a removed host's repository, after 7 days (§3.5) | | | ✓ |
+| `repository.rollback`: roll a repository back from S3's versions (§3.5b) | | | ✓ |
 
 A user can have several bindings. They combine per host. **A host you have no binding for does not exist
 for you:** it is not listed, not searchable and not counted (decision 033). Asking for it answers "not
@@ -560,7 +634,7 @@ found". Revisions and the audit log are cut down to your hosts. Nobody sees file
 Actions the table does not name (plan-m4 Q6):
 - adding a host, replacing its S3 key, issuing an enrollment code and rotating its password
   (`holdfast host rotate`) need `config.storage`;
-- a restore into another directory needs `restore.in_place`;
+- a restore into another directory needs `restore.in_place`, and a restore onto another host needs it on both;
 - saving a job needs `config.jobs`, and also `retention.cut` when it accepts R104;
 - `holdfast retention run` needs `retention.cut`;
 - the restore paths in the Restores list are file names, so they need `browse`.

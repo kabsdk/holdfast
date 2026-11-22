@@ -37,7 +37,13 @@ type Job struct {
 	Retention Retention         `json:"retention"` // stored from M1; acted on from M3
 	// LimitUploadKiB caps the backup's upload, in KiB/s: restic's --limit-upload. 0: no limit (M5).
 	LimitUploadKiB int `json:"limit_upload_kib,omitempty"`
+	// Dump names a dump defined in the host's agent.yaml (decision 037). A job backs up either paths or a
+	// dump, never both.
+	Dump string `json:"dump,omitempty"`
 }
+
+// IsDump says whether the job backs up a dump rather than paths.
+func (j Job) IsDump() bool { return j.Dump != "" }
 
 // Library holds paths items, protection items and profiles (M5). Until then the entries are kept
 // opaque so a document round-trips unchanged.

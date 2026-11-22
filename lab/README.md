@@ -287,6 +287,32 @@ The run found one gap: **measuring a repository's size needs `s3:ListBucketVersi
 the maintenance policy lacked; MinIO lists versions with `s3:ListBucket` alone, so the e2e suite did not see it.
 `docs/storage.md` and `rgw-documented-layout.sh` now grant it, and the size error names it.
 
+### M6's lab tests: the rebuild and the dump
+
+After the fidelity test, `lab/lab test m1` runs `lab/test-recovery.sh` (plan-m6 §3, Q8). `site.yml --tags agentdb`
+installs each agent's own PostgreSQL first.
+- **The bare-metal runbook's first path** (`docs/runbooks/bare-metal.md`), on one VM (`HF_REBUILD_VM`, default the
+  first agent): the last fidelity snapshot noted; the fixture moved aside; the agent's packages removed and
+  `/etc/holdfast` and `/var/lib/holdfast-agent` deleted; the packages installed again; a new code; the agent enrolled
+  with `restore.allow_in_place`; the snapshot restored in place; and `hf-fidelity compare` of the restored fixture with
+  the one moved aside.
+- **The dump test** on each agent: a database of 1000 rows, a dump in `agent.yaml` (`pg_dump` as `postgres`), a dump job,
+  a backup, a restore into a new directory, the file loaded into a fresh database as `postgres`, and its rows counted.
+
+**Result, 2026-11-22** (M6):
+
+```
+PASS   ub24 rebuild    wiped, reinstalled, enrolled again, restored in place: 13 of 13 properties kept
+PASS   ub24 dump       PostgreSQL 16.15 (Ubuntu): dumped as postgres, restored, loaded: 1000 of 1000 rows
+PASS   el9 dump        PostgreSQL 13.23: dumped as postgres, restored, loaded: 1000 of 1000 rows
+PASS   ol9 dump        PostgreSQL 13.23: dumped as postgres, restored, loaded: 1000 of 1000 rows
+```
+
+The first run found a bug: on el9 and ol9 a dump's restore failed with `xattr.LRemove … security.selinux: permission
+denied`. A dump's file has no SELinux label in its snapshot, so restic tried to remove the label the new file got, which
+SELinux refuses. A dump's restore, and a restore from another host, now leave that label alone
+(`--exclude-xattr security.selinux`); other restores still restore labels exactly, as the fidelity test checks.
+
 **What the run found in the product.** Both bugs are fixed; see `docs/plan-m2.md`.
 - The agent and the server now default `restic_bin` to `/usr/libexec/holdfast/restic`.
 - A repository Holdfast initialises, the first time or again, has its keys recorded as known, and the event is

@@ -52,6 +52,9 @@ func problems(v HostView, now time.Time, retentionFailed, escrowOn bool) []Probl
 		}
 		return out
 	}
+	if v.RollingBack {
+		add("rollback", "warning", "", "its repository is being rolled back; its agent is paused meanwhile (holdfast host rollbacks %s)", v.FQDN)
+	}
 	if v.RepoKeyRetiring != "" {
 		add("rotation", "error", "", "the old repository password still opens the repository (key %s): run holdfast host rotate %s again", v.RepoKeyRetiring, v.FQDN)
 	}

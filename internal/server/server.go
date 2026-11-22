@@ -112,6 +112,10 @@ func New(set Settings, d Deps) (*Server, error) {
 // Run starts the background work: the notification listener and the maintenance loop.
 func (s *Server) Run(ctx context.Context) {
 	s.runCtx = ctx
+	// A rollback runs in this process: one a stopped server left is not resumed (decision 038).
+	if err := s.st.Q().AbandonRollbacks(ctx, s.now()); err != nil {
+		s.log.Error("marking abandoned rollbacks", "err", err)
+	}
 	go s.hub.listen(ctx, s.st.Pool(), s.log)
 	go s.maintenanceLoop(ctx)
 }
@@ -158,7 +162,8 @@ func (s *Server) renderHost(doc config.Document, fqdn string) proto.HostConfig {
 		if sch.Zone == "" {
 			sch.Zone = s.set.DefaultZone
 		}
-		hc.Jobs = append(hc.Jobs, proto.JobConfig{ID: id, Engine: j.Engine, Paths: j.Paths, Excludes: j.Excludes, Schedule: sch, LimitUploadKiB: j.LimitUploadKiB})
+		hc.Jobs = append(hc.Jobs, proto.JobConfig{ID: id, Engine: j.Engine, Paths: j.Paths, Excludes: j.Excludes, Schedule: sch, LimitUploadKiB: j.LimitUploadKiB,
+			Dump: j.Dump})
 	}
 	if s.set.Maintenance.Check == CheckDaily {
 		hc.Check = &proto.CheckConfig{CycleDays: s.set.Maintenance.CheckCycleDays}
@@ -413,7 +418,8 @@ func (s *Server) AddHost(ctx context.Context, a Actor, in AddHostInput) (AddHost
 		if p := withJob(config.New(), in.FQDN, in.JobID, *in.Job).Validate(); len(p) > 0 {
 			return AddHostResult{}, &ValidationError{p}
 		}
-		fs = checks.Job(*in.Job, checks.History{})
+		fs = append(checks.Job(*in.Job, checks.History{}), s.dumpFindings(ctx, in.FQDN, *in.Job)...)
+		checks.Sort(fs)
 		if blocking := checks.Blocking(fs, in.Accept); len(blocking) > 0 {
 			return AddHostResult{}, &ChecksError{Findings: fs, Blocking: blocking}
 		}
@@ -780,17 +786,19 @@ func (s *Server) RunNow(ctx context.Context, a Actor, fqdn, jobID string) (strin
 
 // JobView is one job as the API shows it.
 type JobView struct {
-	ID            string           `json:"id"`
-	Paths         []string         `json:"paths"`
-	Excludes      []string         `json:"excludes,omitempty"`
-	Schedule      any              `json:"schedule"`
-	Retention     config.Retention `json:"retention"`
-	NextRuns      []time.Time      `json:"next_runs"`
-	LongestGap    string           `json:"longest_gap"`
-	WorstCaseLoss string           `json:"worst_case_loss"`
-	StaleAfter    string           `json:"stale_after"`
-	Status        *store.JobStatus `json:"status,omitempty"`
-	Stale         bool             `json:"stale"` // no success for more than StaleAfter
+	ID             string           `json:"id"`
+	Paths          []string         `json:"paths"`
+	Excludes       []string         `json:"excludes,omitempty"`
+	Schedule       any              `json:"schedule"`
+	Retention      config.Retention `json:"retention"`
+	LimitUploadKiB int              `json:"limit_upload_kib,omitempty"`
+	Dump           string           `json:"dump,omitempty"`
+	NextRuns       []time.Time      `json:"next_runs"`
+	LongestGap     string           `json:"longest_gap"`
+	WorstCaseLoss  string           `json:"worst_case_loss"`
+	StaleAfter     string           `json:"stale_after"`
+	Status         *store.JobStatus `json:"status,omitempty"`
+	Stale          bool             `json:"stale"` // no success for more than StaleAfter
 }
 
 // HostView is one host as the API shows it.
@@ -806,6 +814,8 @@ type HostView struct {
 	ResticWarning string `json:"restic_warning,omitempty"`
 	// AgentTooOld says the agent speaks an older protocol than this server accepts (protocol.go).
 	AgentTooOld bool `json:"agent_too_old"`
+	// RollingBack says a rollback of the repository is under way (rollback.go).
+	RollingBack bool `json:"rolling_back"`
 	// The snapshot catalogue's counts, and its banners (decision 032): snapshots in the repository that
 	// Holdfast did not make, and snapshots that disappeared without Holdfast deleting them.
 	Snapshots         int       `json:"snapshots"`
@@ -862,10 +872,14 @@ func (s *Server) Hosts(ctx context.Context) ([]HostView, error) {
 	for _, r := range health {
 		retentionFailed[r.FQDN] = r.LastFailed
 	}
+	rolling, err := q.RunningRollbacks(ctx)
+	if err != nil {
+		return nil, err
+	}
 	now := s.now()
 	out := make([]HostView, 0, len(hosts))
 	for _, h := range hosts {
-		v := HostView{Host: h, Jobs: []JobView{}}
+		v := HostView{Host: h, Jobs: []JobView{}, RollingBack: rolling[h.FQDN]}
 		switch {
 		case h.FirstBackupAt != nil:
 			v.Progress = "first_backup_done"
@@ -902,7 +916,7 @@ func (s *Server) Hosts(ctx context.Context) ([]HostView, error) {
 		for _, id := range ids {
 			j := hc.Jobs[id]
 			loc, _ := j.Schedule.Location(s.zone)
-			jv := JobView{ID: id, Paths: j.Paths, Excludes: j.Excludes, Schedule: j.Schedule, Retention: j.Retention,
+			jv := JobView{ID: id, Paths: j.Paths, Excludes: j.Excludes, Schedule: j.Schedule, Retention: j.Retention, LimitUploadKiB: j.LimitUploadKiB, Dump: j.Dump,
 				NextRuns: j.Schedule.NextN(now, 5, loc), LongestGap: j.Schedule.LongestGap().String(),
 				WorstCaseLoss: j.Schedule.WorstCaseLoss().String(), StaleAfter: j.Schedule.StaleAfter().String()}
 			for i := range statuses {

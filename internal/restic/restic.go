@@ -164,6 +164,10 @@ type BackupOptions struct {
 	Time     *time.Time // restic --time; the e2e tests use it to inject a clock
 	// LimitUploadKiB is restic's --limit-upload in KiB/s; 0: none.
 	LimitUploadKiB int
+	// StdinCommand, for a dump (decision 037), is run by restic, and its output stored as StdinFilename:
+	// --stdin-from-command. A command that fails makes no snapshot. Paths and Excludes are then unused.
+	StdinCommand  []string
+	StdinFilename string
 }
 
 // BackupResult is restic's JSON summary.
@@ -197,8 +201,13 @@ func (r Runner) Backup(ctx context.Context, o BackupOptions) (BackupResult, erro
 	if o.LimitUploadKiB > 0 {
 		args = append(args, "--limit-upload", strconv.Itoa(o.LimitUploadKiB))
 	}
-	args = append(args, "--")
-	args = append(args, o.Paths...)
+	if len(o.StdinCommand) > 0 {
+		args = append(args, "--stdin-from-command", "--stdin-filename", o.StdinFilename, "--")
+		args = append(args, o.StdinCommand...)
+	} else {
+		args = append(args, "--")
+		args = append(args, o.Paths...)
+	}
 
 	out, err := r.run(ctx, args...)
 	res, perr := parseSummary(out)
@@ -579,6 +588,10 @@ type RestoreOptions struct {
 	Exclude   []string // leave these out
 	DryRun    bool
 	Overwrite string // restic's --overwrite: always, if-changed, if-newer or never; empty: restic's default
+	// ExcludeXattr are extended attributes restic neither restores nor removes (--exclude-xattr). A file with no
+	// SELinux label in the snapshot (a dump, or another host's file) keeps the one it gets: SELinux refuses its
+	// removal, and restic would fail.
+	ExcludeXattr []string
 }
 
 // OverwriteModes are restic's own choices for a file that exists already.
@@ -610,6 +623,9 @@ func (r Runner) RestoreWith(ctx context.Context, snapshot string, o RestoreOptio
 	}
 	if o.Overwrite != "" {
 		args = append(args, "--overwrite", o.Overwrite)
+	}
+	for _, x := range o.ExcludeXattr {
+		args = append(args, "--exclude-xattr", x)
 	}
 	out, err := r.run(ctx, args...)
 	var sum RestoreSummary
