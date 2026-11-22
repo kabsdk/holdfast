@@ -152,7 +152,8 @@ Choices made inside the accepted proposals, for you to check:
   policy.
 
 Not decided, and needed before a public release: **the licence** (plan-m1: "None is chosen yet") and **the
-packages' maintainer field**, which is "Holdfast maintainers" with no address for now.
+packages' maintainer field**, which is "Holdfast maintainers" with no address for now. *(The licence was chosen
+later: Apache-2.0, decision 043. The maintainer field is still open.)*
 
 ## 5. Questions
 

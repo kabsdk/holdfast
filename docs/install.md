@@ -14,6 +14,9 @@ signed yet (plan-m5 Q2): check them against `dist/SHA256SUMS` before you install
 The binaries are static, so the same packages run on Ubuntu, Debian, RHEL, Oracle Linux and their
 relatives. The lab installs them on Ubuntu, RHEL and Oracle Linux (`lab/README.md`).
 
+Holdfast is under Apache-2.0, and restic under BSD-2-Clause (decision 043). Each package keeps its licence, and the
+licences of the software it contains, in `/usr/share/doc/<package>/`.
+
 ## Installing
 
 ```

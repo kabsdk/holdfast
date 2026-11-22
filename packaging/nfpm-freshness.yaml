@@ -10,6 +10,7 @@ section: admin
 priority: optional
 maintainer: ${HOLDFAST_MAINTAINER}
 homepage: https://github.com/kabsdk/holdfast
+license: Apache-2.0
 description: |-
   Holdfast storage witness
    Lists the bucket for Prometheus, apart from the Holdfast server, so backups are judged by what storage holds.
@@ -23,6 +24,15 @@ contents:
   - dst: /etc/holdfast
     type: dir
     file_info: {mode: 0700}
+  - src: LICENSE
+    dst: /usr/share/doc/holdfast-freshness/LICENSE
+    file_info: {mode: 0644}
+  - src: NOTICE
+    dst: /usr/share/doc/holdfast-freshness/NOTICE
+    file_info: {mode: 0644}
+  - src: ${THIRD_PARTY_NOTICES}
+    dst: /usr/share/doc/holdfast-freshness/THIRD-PARTY-NOTICES
+    file_info: {mode: 0644}
 scripts:
   postinstall: packaging/scripts/postinstall.sh
   preremove: packaging/scripts/preremove.sh

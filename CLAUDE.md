@@ -84,5 +84,8 @@ These also follow from the spec:
   reference for porting, so leave it as it is. The product code lives at the repository root (`cmd/`,
   `internal/`, `test/e2e/`).
 - `mockup/App.dc.html` is the UI mockup with mock data. Use it as a reference for behaviour, not for pixels.
+- Holdfast is under Apache-2.0 (decision 043). Anything linked into a program or vendored into the UI must be under a
+  licence that allows that: MIT, BSD, ISC, Apache-2.0, MPL-2.0. The GPL family, the SSPL and the BUSL are not allowed;
+  `scripts/third-party-notices.sh` stops the package build if one appears.
 - Run the PoC's e2e tests from `poc/`:
   `sudo -E HOLDFAST_RESTIC=/path/to/restic go test ./test/e2e/ -count=1 -v -timeout 10m`

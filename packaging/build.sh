@@ -22,6 +22,9 @@ trap 'rm -rf "$work"' EXIT
 mkdir -p dist "$work/scripts"
 cp "$RESTIC_BINARY" "$work/restic"
 
+# The licences of what the programs contain (decision 043), beside Holdfast's LICENSE and NOTICE in each package.
+scripts/third-party-notices.sh "$HOLDFAST_VERSION" >"$work/THIRD-PARTY-NOTICES"
+
 # Each package's scripts name its own unit.
 declare -A unit=([holdfast-agent]=holdfast-agent.service [holdfast-server]=holdfast-server.service [holdfast-freshness]=holdfast-freshness.service)
 for pkg in "${!unit[@]}"; do
@@ -36,7 +39,8 @@ for pkg in holdfast-restic holdfast-agent holdfast-server holdfast-cli holdfast-
   sed -e "s#packaging/scripts/postinstall.sh#$work/scripts/postinstall-$pkg.sh#" \
       -e "s#packaging/scripts/preremove.sh#$work/scripts/preremove-$pkg.sh#" \
       -e "s#\${HOLDFAST_VERSION}#$HOLDFAST_VERSION#g" -e "s#\${HOLDFAST_MAINTAINER}#$HOLDFAST_MAINTAINER#g" \
-      -e "s#\${RESTIC_VERSION}#$RESTIC_VERSION#g" -e "s#\${RESTIC_BINARY}#$work/restic#g" "$cfg" >"$work/$pkg.yaml"
+      -e "s#\${RESTIC_VERSION}#$RESTIC_VERSION#g" -e "s#\${RESTIC_BINARY}#$work/restic#g" \
+      -e "s#\${THIRD_PARTY_NOTICES}#$work/THIRD-PARTY-NOTICES#g" "$cfg" >"$work/$pkg.yaml"
   for fmt in deb rpm; do
     docker run --rm -u "$(id -u):$(id -g)" -v "$PWD:$PWD" -v "$work:$work" -w "$PWD" \
       "$NFPM_IMAGE" package --config "$work/$pkg.yaml" --packager "$fmt" --target dist/ >/dev/null

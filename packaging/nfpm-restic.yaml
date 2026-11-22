@@ -10,6 +10,7 @@ section: admin
 priority: optional
 maintainer: ${HOLDFAST_MAINTAINER}
 homepage: https://github.com/kabsdk/holdfast
+license: BSD-2-Clause
 description: |-
   restic ${RESTIC_VERSION}, as Holdfast is tested with it
    The upstream release binary of restic, checked against its SHA256SUMS, installed where Holdfast's agent
@@ -18,3 +19,6 @@ contents:
   - src: ${RESTIC_BINARY}
     dst: /usr/libexec/holdfast/restic
     file_info: {mode: 0755}
+  - src: packaging/licenses/restic.LICENSE
+    dst: /usr/share/doc/holdfast-restic/LICENSE
+    file_info: {mode: 0644}

@@ -34,3 +34,8 @@ make pg-up test     # unit and integration tests (a throwaway PostgreSQL in Dock
 make e2e            # the end-to-end suite: restic 0.19.1, MinIO, PostgreSQL; runs as root in a container
 make rules-test     # promtool unit tests for the alert rules
 ```
+
+## Licence
+
+Apache License 2.0: see [LICENSE](LICENSE) and [NOTICE](NOTICE) (decision 043). Each package also carries the
+licences of the third-party software it contains, in `/usr/share/doc/<package>/`.

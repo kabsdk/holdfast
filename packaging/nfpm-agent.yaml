@@ -10,6 +10,7 @@ section: admin
 priority: optional
 maintainer: ${HOLDFAST_MAINTAINER}
 homepage: https://github.com/kabsdk/holdfast
+license: Apache-2.0
 description: |-
   Holdfast backup agent
    Runs restic on this host on the schedule the Holdfast server sets, and reports to it.
@@ -32,6 +33,15 @@ contents:
   - dst: /etc/holdfast
     type: dir
     file_info: {mode: 0700}
+  - src: LICENSE
+    dst: /usr/share/doc/holdfast-agent/LICENSE
+    file_info: {mode: 0644}
+  - src: NOTICE
+    dst: /usr/share/doc/holdfast-agent/NOTICE
+    file_info: {mode: 0644}
+  - src: ${THIRD_PARTY_NOTICES}
+    dst: /usr/share/doc/holdfast-agent/THIRD-PARTY-NOTICES
+    file_info: {mode: 0644}
 scripts:
   postinstall: packaging/scripts/postinstall.sh
   preremove: packaging/scripts/preremove.sh

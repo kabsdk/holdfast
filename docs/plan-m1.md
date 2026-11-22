@@ -1045,7 +1045,7 @@ Also to confirm:
 **Q16. Repository housekeeping.**
 - **Git.** The directory is not a Git repository and has no remote, but the plan is "one milestone per PR".
   Should I run `git init`, and where is the remote?
-- **License.** None is chosen yet.
+- **License.** None is chosen yet. *(Chosen later: Apache-2.0, decision 043.)*
 - **`poc/`.** It was not in the repository. I unpacked it from `holdfast-poc.zip` in Downloads. A copy of
   that zip also appeared in the repository root. Should it stay?
 - **The mockup.** It appeared as `App.dc.html` in the repository root, not at `mockup/App.dc.html`, and its
