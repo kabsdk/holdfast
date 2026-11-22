@@ -15,7 +15,9 @@ A rule that fails is reported with its code (spec §4.5). The host cannot be add
 ## One bucket, with versioning and a lifecycle rule
 
 - **Make the bucket with an identity of your own, not with either key.** A bucket's owner can change its
-  settings, so a maintenance key that owns the bucket fails B010.
+  settings, so a maintenance key that owns the bucket fails B010. Holdfast makes no bucket. `restic init` would make
+  a missing one with the key it runs with, so Holdfast tests the storage before it makes any repository, in primary
+  and off-site: a missing bucket is a failed check, not a new bucket.
 - Each host's repository lives under `repos/<fqdn>/` in that bucket. With `escrow.age_recipient` set, each
   host's repository password is also written, encrypted, to `escrow/<fqdn>.age` (decision 036).
 - **Versioning must be enabled (B008).** It is what makes a deleted or overwritten object recoverable.

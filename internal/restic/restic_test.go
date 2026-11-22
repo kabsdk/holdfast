@@ -2,6 +2,7 @@ package restic
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -131,6 +132,35 @@ unused size after prune: 0 B (0.00% of remaining size)
 done`
 	if p := parsePrune(out); p.Freed != "2.164 KiB" || p.Remaining != "5.724 MiB" {
 		t.Fatalf("%+v", p)
+	}
+}
+
+// restic init makes a missing bucket itself, so InitFrom runs the server's storage test first, and makes nothing when
+// it fails; a repository that exists is neither tested nor made again.
+func TestInitFromTestsTheStorageFirst(t *testing.T) {
+	ctx := context.Background()
+	src := &Source{Repo: "rest:http://127.0.0.1:1/gateway/v1/web01.example.com/", PasswordFile: "/run/a.pass"}
+	bin, log := fake(t, "[ \"$1\" = cat ] && exit 10\nexit 0\n")
+	r := Runner{Bin: bin, Repo: "s3:https://s3.example/offsite/repos/web01.example.com", PasswordFile: "/run/b.pass", From: src}
+	refused := errors.New("the storage does not meet the contract")
+	if created, err := r.InitFrom(ctx, func() error { return refused }); !errors.Is(err, refused) || created {
+		t.Fatalf("a failed storage test: created %v, err %v", created, err)
+	}
+	if got := read(t, log); strings.Contains(got, "ARGS init") {
+		t.Fatalf("init ran although the storage test failed:\n%s", got)
+	}
+	tested := false
+	if created, err := r.InitFrom(ctx, func() error { tested = true; return nil }); err != nil || !created || !tested {
+		t.Fatalf("a passed storage test: created %v, tested %v, err %v", created, tested, err)
+	}
+	if got := read(t, log); !strings.Contains(got, "ARGS init --copy-chunker-params") {
+		t.Fatalf("init did not run:\n%s", got)
+	}
+
+	bin, _ = fake(t, "exit 0\n")
+	r.Bin = bin
+	if created, err := r.InitFrom(ctx, func() error { t.Fatal("the storage was tested for a repository that exists"); return nil }); err != nil || created {
+		t.Fatalf("an existing repository: created %v, err %v", created, err)
 	}
 }
 

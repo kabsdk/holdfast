@@ -183,13 +183,20 @@ func (r Runner) Init(ctx context.Context) (created bool, err error) {
 }
 
 // InitFrom creates the repository, unless it exists, with the chunker parameters of r.From, so copies from it
-// deduplicate (decision 039). It says whether it created it.
-func (r Runner) InitFrom(ctx context.Context) (created bool, err error) {
+// deduplicate (decision 039). It says whether it created it. before, unless nil, runs first when the repository is to
+// be made, and stops it with its error: restic init makes a missing bucket itself, owned by the key it runs with, so
+// the server tests the storage there, as it does before every init.
+func (r Runner) InitFrom(ctx context.Context, before func() error) (created bool, err error) {
 	if r.From == nil {
 		return false, errors.New("InitFrom needs a source repository")
 	}
 	if _, err := r.run(ctx, "cat", "config"); err == nil {
 		return false, nil
+	}
+	if before != nil {
+		if err := before(); err != nil {
+			return false, err
+		}
 	}
 	if _, err := r.run(ctx, "init", "--copy-chunker-params"); err != nil {
 		return false, err

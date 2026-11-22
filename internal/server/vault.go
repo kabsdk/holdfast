@@ -357,7 +357,13 @@ func (s *Server) copyOnce(ctx context.Context, src string, fh proto.VaultHost, j
 	}
 	// How far behind each job is, before the copy too: so it shows while this site's storage fails.
 	s.updateCopyState(ctx, fh.FQDN, listed, jobs)
-	created, err := b.InitFrom(ctx)
+	// The storage first, as for a primary repository (ensureStorage): restic init would make a missing bucket itself.
+	created, err := b.InitFrom(ctx, func() error {
+		if rep := s.vaultStorageCheck(ctx, fh.FQDN); !rep.OK() {
+			return &StorageError{Report: rep}
+		}
+		return nil
+	})
 	if err != nil {
 		return fmt.Errorf("initialising the off-site repository with the primary's chunker parameters: %w", err)
 	}
