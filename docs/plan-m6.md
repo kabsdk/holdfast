@@ -1,6 +1,8 @@
 # Plan for M6: recovering with Holdfast
 
-Status: draft, 2026-11-22, with questions in §5. No product code until they are answered.
+Status: accepted, 2026-11-22. You answered the questions in §5 with "Just do whatever, we can always revise", so
+every proposal stands as written. Q1 changes CLAUDE.md's 7-day rule to name a repository rollback as a third admin
+exception; decision 038 records it. Q9's "done when" goes into CLAUDE.md.
 
 M6 is plan-m5's items 8–10 (plan-m5 Q1): dumps, restore to another host with the bare-metal runbook, and rolling a
 repository back from S3's old versions. plan-m5 Q5, Q6 and Q8 were answered there ("Go"), so their proposals stand

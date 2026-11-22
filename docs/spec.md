@@ -161,7 +161,8 @@ supports.
 - Any two revisions can be diffed.
 - Each revision also stores the warning codes that were accepted for it (§4.5).
 
-**There is deliberately no rollback.** To undo a change, edit the config and save it. That save passes the
+**There is deliberately no rollback of the config.** (Rolling a repository's files back is another thing:
+§3.5b.) To undo a change, edit the config and save it. That save passes the
 same checks as any other change. A rollback would be a bulk edit in disguise, and it could silently cut
 retention. See [decision 013](decisions/013-no-rollback.md).
 
