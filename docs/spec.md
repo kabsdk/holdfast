@@ -144,7 +144,13 @@ retention. See [decision 013](decisions/013-no-rollback.md).
 ### 3.3 Interface parity and audit
 
 - The options in the UI, the API and the CLI are the same, with very few exceptions. Any exception is listed
-  here. None are listed yet.
+  here:
+  - **Escrow export** exists only on the server's root socket (`holdfast escrow export` as root), never over
+    the network.
+  - **Settings in `server.yaml`** are changed by editing the file as root. The UI and the API only show them,
+    without secrets.
+  - **Login** differs by client: a browser is redirected to the provider, the CLI shows a device code
+    (decision 034). Both end in the same kind of session.
 - The API comes first. The UI and the CLI are thin clients of the HTTP API, and all logic, validation and
   checks live behind it (decision 028).
 - Every action is recorded in the host's history and in the audit log.
@@ -211,7 +217,10 @@ disappeared (§3.6).
 
 ### 3.5 Removing and decommissioning
 
-- Removing a job or a host never deletes data. The repository is retired and keeps its last retention.
+- Removing a job or a host never deletes data (plan-m4 Q7).
+  - A removed job leaves the config. Its snapshots stay, and the daily run no longer touches them.
+  - A removed host is retired: its agent's token is revoked, and its repository stays and can still be
+    browsed. Adding the same FQDN again brings it back, with its repository, after a new enrollment.
 - Deleting data is a separate **decommission** action. It requires typing the FQDN, it has a grace period,
   and it is audited.
 
@@ -306,7 +315,7 @@ The UI, the API and the CLI use the same checks engine, and every check has a st
 | R006 | Keep newest is 0. |
 | R101 | The oldest restore point is less than 30 days old. |
 | R102 | More than 1000 snapshots would be kept. |
-| R103 | The worst-case data loss is more than 1 day. |
+| R103 | The longest gap between runs is more than 1 day. The message gives the worst-case data loss, spread included. |
 | R104 | The change cuts retention. |
 
 **Info**
@@ -432,8 +441,16 @@ Search finds:
 
 ### 6.1 Login
 
-- Login is through OIDC (Authelia).
-- Groups come from the groups claim. This works with or without LDAP.
+- Login is through OIDC (Authelia, or any provider with the code flow and the device flow). The server is
+  the only OIDC client (decision 034):
+  - a browser logs in with the code flow and gets a session cookie;
+  - `holdfast login --server <url>` shows a device code to enter at the provider, and gets a session token.
+- Groups come from the groups claim. This works with or without LDAP. They are read at login.
+- A browser session lasts 12 hours and ends after an hour without use; a CLI session lasts 7 days. An admin
+  can end a user's sessions (`holdfast access end-sessions <user>`).
+- People use the UI and the API on their own listener, `ui.listen`, with a certificate browsers trust. Agents
+  use the agent listener.
+- Root on the server uses the root-only socket, and is admin on every host.
 - The second factor is the OIDC provider's job, not Holdfast's.
 - There are no sudo checks on the hosts.
 
@@ -453,10 +470,21 @@ There are three roles. Each has a flat set of permissions, and roles do not inhe
 | `snapshot.delete` (includes Delete now) | | | ✓ |
 | `config.access` | | | ✓ |
 | `config.storage` | | | ✓ |
-| remove host / job | | | ✓ |
+| `maintenance`: acknowledge changes made outside Holdfast, `holdfast check` | | | ✓ |
+| `host.remove`: remove a host or a job (never deletes data) | | | ✓ |
 
 A user can have several bindings. They combine per host. **A host you have no binding for does not exist
-for you:** it is not listed, not searchable and not counted (decision 033). Nobody sees file contents.
+for you:** it is not listed, not searchable and not counted (decision 033). Asking for it answers "not
+found". Revisions and the audit log are cut down to your hosts. Nobody sees file contents.
+
+Actions the table does not name (plan-m4 Q6):
+- adding a host, replacing its S3 key and issuing an enrollment code need `config.storage`;
+- a restore into another directory needs `restore.in_place`;
+- saving a job needs `config.jobs`, and also `retention.cut` when it accepts R104;
+- `holdfast retention run` needs `retention.cut`;
+- the restore paths in the Restores list are file names, so they need `browse`.
+
+There are no custom roles (decision 035).
 
 ### 6.3 Default bindings
 
@@ -473,11 +501,17 @@ These are part of the normal config.
 Editing this file needs root on the server. Holdfast reloads it, and the reload is audited.
 
 ```yaml
+ui:
+  listen: ":443"
+  public_url: https://holdfast.example.internal
+  tls: {cert_file: /etc/holdfast/ui.crt, key_file: /etc/holdfast/ui.key}
 auth:
   oidc:
     issuer: https://auth.example.internal
+    client_id: holdfast
+    client_secret_file: /etc/holdfast/oidc-client-secret
     groups_claim: groups
-  bootstrap_admins: []
+  bootstrap_admins: []   # usernames that are admin everywhere, for the first login; each use is audited
 ```
 
 ### 6.5 File contents

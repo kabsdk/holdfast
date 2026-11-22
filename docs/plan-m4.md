@@ -1,7 +1,7 @@
 # Plan for M4: login, roles, and the UI
 
-Status: draft, 2026-11-22. Waiting for your answers to the questions in §7. No product code is written
-until they are answered.
+Status: accepted, 2026-11-22. You answered the questions in §7 with "Go", so every proposal stands as
+written. That decides OQ4 (Q8: no custom roles, decision 035). The login design is decision 034.
 
 ## 1. Goal and done when
 

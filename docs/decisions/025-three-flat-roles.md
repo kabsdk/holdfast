@@ -22,4 +22,4 @@ is no inheritance between them (spec §6.2).
 
 ## Consequences
 
-- Whether admins can define custom roles is open question OQ4.
+- Whether admins can define custom roles was open question OQ4. Decision 035 says no.

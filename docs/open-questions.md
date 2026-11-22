@@ -78,6 +78,9 @@ The points below are still open.
 
 ## OQ4. Custom roles
 
+> **Decided on 2026-11-22 (plan-m4 Q8; you answered "Go"):** no custom roles. See
+> [decision 035](decisions/035-no-custom-roles.md).
+
 Whether admins can define custom roles from the permission names.
 
 **Touches:** M4.

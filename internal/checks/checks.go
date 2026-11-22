@@ -131,8 +131,10 @@ func Job(j config.Job, h History) []Finding {
 				add("S002", Warning, "schedule", "runs take up to %s (p95 of the last %d), but come every %s: some will be skipped", human(p.Round(time.Minute)), n, human(shortest))
 			}
 		}
-		if wl := j.Schedule.WorstCaseLoss(); wl > day {
-			add("R103", Warning, "schedule", "the worst-case data loss is about %s, more than a day", human(wl))
+		// R103 looks at the gap, not the gap plus the spread, so a daily job with a spread does not warn
+		// (plan-m4 Q12). The message still gives the worst-case loss.
+		if longest > day {
+			add("R103", Warning, "schedule", "runs are up to %s apart, so the worst-case data loss is about %s", human(longest), human(j.Schedule.WorstCaseLoss().Round(time.Minute)))
 		}
 		oldest := time.Duration(r.KeepLast) * longest
 		for _, t := range present {

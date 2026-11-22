@@ -28,6 +28,11 @@ func TestJobChecks(t *testing.T) {
 		want []string
 	}{
 		{"a sound daily job", config.Job{Schedule: daily2, Retention: good}, History{}, nil},
+		{"a daily job with a spread does not lose more than a day's worth (plan-m4 Q12)", config.Job{Schedule: func() schedule.Schedule {
+			s := daily2
+			s.Spread = schedule.Spread{Enabled: true, Minutes: 20}
+			return s
+		}(), Retention: good}, History{}, nil},
 		{"an hourly tier on a daily schedule", config.Job{Schedule: daily2, Retention: config.Retention{Hourly: d(48, config.Hours), Daily: d(14, config.Days), Yearly: d(1, config.Years), KeepLast: 3}}, History{}, []string{"R001"}},
 		{"a weekly window of 3 days", config.Job{Schedule: daily2, Retention: config.Retention{Daily: d(60, config.Days), Weekly: d(3, config.Days), Yearly: d(1, config.Years), KeepLast: 3}}, History{}, []string{"R002", "R003"}},
 		{"a weekly tier shorter than the daily one", config.Job{Schedule: daily2, Retention: config.Retention{Daily: d(30, config.Days), Weekly: d(2, config.Weeks), Yearly: d(1, config.Years), KeepLast: 3}}, History{}, []string{"R003"}},

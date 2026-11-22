@@ -41,6 +41,8 @@ func (p Problems) Err() error {
 var (
 	labelRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 	jobIDRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
+	// hostPattern is a binding's host pattern: an FQDN, with * for any characters (internal/access).
+	hostPattern = regexp.MustCompile(`^[a-z0-9.*-]+$`)
 )
 
 // ValidFQDN checks a host identity (plan-m1 Q9): lower case, no trailing dot, letters, digits and
@@ -131,6 +133,11 @@ func (d Document) Validate() Problems {
 		}
 		if len(b.Hosts) == 0 {
 			add(bp, "hosts is empty; use [\"*\"] for every host")
+		}
+		for _, h := range b.Hosts {
+			if !hostPattern.MatchString(h) {
+				add(bp+".hosts", "host pattern %q may hold only lower-case letters, digits, dots, dashes and *", h)
+			}
 		}
 	}
 	return out
