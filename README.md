@@ -66,7 +66,7 @@ holdfast job set web01.example.com system --path /etc --path /home
 Or install everything with Ansible, with the same settings:
 
 ```sh
-ansible-galaxy collection install https://github.com/kabsdk/holdfast/releases/download/v0.5.0/kabsdk-holdfast-0.5.0.tar.gz
+ansible-galaxy collection install https://github.com/kabsdk/holdfast/releases/download/v0.6.0/kabsdk-holdfast-0.6.0.tar.gz
 ansible-playbook -i inventory.yml kabsdk.holdfast.site
 ```
 

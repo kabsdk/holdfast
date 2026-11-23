@@ -17,7 +17,7 @@ roles gather the little they need themselves, so it works with `gathering = expl
 ## Install the collection
 
 ```
-ansible-galaxy collection install https://github.com/kabsdk/holdfast/releases/download/v0.5.0/kabsdk-holdfast-0.5.0.tar.gz
+ansible-galaxy collection install https://github.com/kabsdk/holdfast/releases/download/v0.6.0/kabsdk-holdfast-0.6.0.tar.gz
 ```
 
 It needs ansible-core 2.16 or later, plus `ansible.posix` and `community.general`, which it installs with it. The
@@ -29,7 +29,7 @@ installs them with `ansible-galaxy collection install -r requirements.yml`:
 
 ```yaml
 collections:
-  - name: https://github.com/kabsdk/holdfast/releases/download/v0.5.0/kabsdk-holdfast-0.5.0.tar.gz
+  - name: https://github.com/kabsdk/holdfast/releases/download/v0.6.0/kabsdk-holdfast-0.6.0.tar.gz
     type: url
 ```
 
@@ -77,7 +77,7 @@ ansible-playbook -i inventory.yml kabsdk.holdfast.site
 name from the machine. db01's `postgresql` job backs up the export that a systemd timer on db01 writes, which your own
 play sets up: Holdfast runs no command on a host (see *Databases and other exports* in Holdfast's documentation).
 
-Keep the secrets in Ansible Vault. Pin the release with `holdfast_version: 0.5.0`; without it the roles install the
+Keep the secrets in Ansible Vault. Pin the release with `holdfast_version: 0.6.0`; without it the roles install the
 latest.
 
 After the first run:

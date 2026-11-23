@@ -2,7 +2,7 @@
 
 The collection is released with Holdfast and has its version; Holdfast's own changes are in its release notes.
 
-## Unreleased
+## 0.6.0
 
 Breaking:
 

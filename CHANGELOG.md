@@ -3,7 +3,7 @@
 What each release of Holdfast changes. The Ansible collection has its own notes in
 [ansible/CHANGELOG.md](ansible/CHANGELOG.md).
 
-## Unreleased
+## 0.6.0 (2026-11-23)
 
 Breaking:
 
