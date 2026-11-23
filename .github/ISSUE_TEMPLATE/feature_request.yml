@@ -1,0 +1,21 @@
+name: Feature request
+description: Something Holdfast should do that it does not.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Holdfast manages restic with sane defaults for a small team and one server. It does not add protections restic
+        itself lacks, and it has no high availability by design ([design choices](https://kabsdk.github.io/holdfast/#design)).
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What you are trying to do, and what stops you today.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What you would like
+      description: How it could work, in the UI, the API and the CLI alike.

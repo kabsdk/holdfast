@@ -11,6 +11,9 @@ shift
 git diff --quiet HEAD -- || { echo "the tree has changes not committed: commit them first" >&2; exit 1; }
 ! git rev-parse -q --verify "refs/tags/v$v" >/dev/null || { echo "v$v is tagged already" >&2; exit 1; }
 [ "$(sed -n 's/^version: //p' ansible/galaxy.yml)" = "$v" ] || { echo "ansible/galaxy.yml's version is not $v" >&2; exit 1; }
+# The release's notes are its section of CHANGELOG.md, from "## <version>" to the next "## ".
+changes=$(awk -v h="## $v " 'index($0, h) == 1 {p = 1; next} p && /^## / {exit} p' CHANGELOG.md)
+[ -n "$(echo "$changes" | tr -d '[:space:]')" ] || { echo "CHANGELOG.md has no section \"## $v (date)\"" >&2; exit 1; }
 
 rm -rf dist
 make packages HOLDFAST_VERSION="$v"
@@ -23,6 +26,7 @@ git push origin "v$v"
 notes=$(mktemp)
 cat >"$notes" <<EOF
 Holdfast $v: restic backups for a fleet of Linux servers, from one server, to your own S3.
+$changes
 
 **Install the server**, with its settings in the environment (\`sh install.sh help\` lists them):
 
@@ -33,7 +37,7 @@ Holdfast $v: restic backups for a fleet of Linux servers, from one server, to yo
     ansible-galaxy collection install https://github.com/kabsdk/holdfast/releases/download/v$v/kabsdk-holdfast-$v.tar.gz
 
 The packages are for x86_64, .deb and .rpm, and are not signed yet: install.sh and the collection check each against
-SHA256SUMS. The documentation is website/index.html.
+SHA256SUMS. The documentation is at https://kabsdk.github.io/holdfast/.
 EOF
 gh release create "v$v" "${files[@]}" --title "Holdfast $v" --notes-file "$notes" "$@"
 rm -f "$notes"

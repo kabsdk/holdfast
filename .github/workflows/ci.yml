@@ -1,0 +1,63 @@
+# The checks every push to main and every pull request must pass. Each job is one of the Makefile's targets, so a
+# failure here reproduces with the same make command on a Linux machine with Docker (CONTRIBUTING.md).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Unit tests, vet and alert rules
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l cmd internal test)
+          if [ -n "$unformatted" ]; then echo "Not gofmt'ed:"; echo "$unformatted"; exit 1; fi
+      - run: make vet
+      - run: make pg-up unit
+      - run: make rules-test
+
+  e2e:
+    name: End-to-end (restic, MinIO, PostgreSQL, OIDC, browser)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v5
+      - run: make e2e
+
+  install:
+    name: Packages, installer and Ansible collection
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # scripts/version.sh counts the commits
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Ansible
+        run: |
+          pip install "ansible-core==2.20.*" "ansible-lint==26.*"
+          ansible-galaxy collection install ansible.posix community.general community.docker
+      - run: make packages
+      - run: make install-test
+      - run: make ansible-test
