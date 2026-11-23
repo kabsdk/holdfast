@@ -38,8 +38,11 @@ A rule that fails is reported with its code (spec §4.5). The host cannot be add
 | Key | Must be able to | Must not be able to |
 | --- | --- | --- |
 | **Gateway key**, the server's: `storage.gateway_credentials_file` | Read, write and list under `repos/` (B001, B002). Delete lock files, under `repos/<fqdn>/locks/`. | Delete anything else (B005). Delete a version for good (B006). Use the bucket outside `repos/`, such as the escrow files and the nightly exports (B007). |
-| **Maintenance key**, the server's: `storage.maintenance_credentials_file` | Read, write, list and delete everything under `repos/`, **including objects the gateway key wrote** (B003, B004). Write and delete under `escrow/`, when an escrow recipient is set (B012). List object versions, for the repository's size, and read them, for a rollback. Read the bucket's versioning setting and lifecycle rule. | Delete an object version for good (B009). Change the bucket's settings, such as versioning, the lifecycle rule or the bucket policy (B010). |
-| **Witness key**, for `holdfast-freshness` | List `repos/`. | Anything else. |
+| **Maintenance key**, the server's: `storage.maintenance_credentials_file` | Read, write, list and delete everything under `repos/`, **including objects the gateway key wrote** (B003, B004). Write, read back and delete under `escrow/` and `meta/`, when an escrow recipient is set (B012, B016). List object versions, for the repository's size, and read them, for a rollback. Read the bucket's versioning setting and lifecycle rule. | Delete an object version for good (B009). Change the bucket's settings, such as versioning, the lifecycle rule or the bucket policy (B010). |
+
+There is no third key: the server is the storage witness too (decision 045). It reads each repository with the
+maintenance key, straight from S3 and not through the gateway, after every backup; M1's `holdfast-freshness` and its
+list-only key are gone.
 
 The gateway key may write every host's repository; the gateway decides which host may use which (spec §2.3): a
 host reads and adds to its own repository, deletes only its own lock files, and never rewrites a file. The
@@ -69,7 +72,7 @@ bucket.
    "s3:GetBucketVersioning", "s3:GetLifecycleConfiguration"], "Resource": ["arn:aws:s3:::holdfast"]},
   {"Effect": "Allow", "Action": ["s3:GetObject", "s3:GetObjectVersion", "s3:PutObject", "s3:DeleteObject"],
    "Resource": ["arn:aws:s3:::holdfast/repos/*"]},
-  {"Effect": "Allow", "Action": ["s3:PutObject", "s3:DeleteObject"],
+  {"Effect": "Allow", "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
    "Resource": ["arn:aws:s3:::holdfast/escrow/*"]},
   {"Effect": "Allow", "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
    "Resource": ["arn:aws:s3:::holdfast/meta/*"]},
@@ -81,11 +84,12 @@ bucket.
 lets the server measure each repository with its old versions, once a day; without it the host shows the
 `size` warning (AWS and Ceph RGW need it; MinIO lists versions with `s3:ListBucket`). `s3:GetObjectVersion`
 lets a rollback copy an old version over the current one (spec §3.5b); a rollback's preview tests it, the daily
-storage test does not. The maintenance key writes the escrow files, but does not need to read them: it could not
-decrypt them anyway. Deleting one happens only at decommission, and leaves its old versions, as everywhere else.
-It writes the nightly exports under `meta/` (decision 040) and reads them back: `holdfast-server restore-export
---latest` fetches the newest one with it. It deletes exports older than the newest 30; versioning keeps their old
-versions for the lifecycle rule's days.
+storage test does not. The maintenance key writes the escrow files and reads them back, still encrypted: it cannot
+decrypt them. A rebuilt server's `restore-export` reads them to bring back the hosts added after its export (decision
+047). Deleting one happens only at decommission, and leaves its old versions, as everywhere else. It writes the
+nightly exports under `meta/` (decision 040) and reads them back: `holdfast-server restore-export -latest` fetches the
+newest one with it. It deletes exports older than the newest 30; versioning keeps their old versions for the lifecycle
+rule's days.
 
 **Keep the explicit denies.** Some servers read the policy language differently, which is why Holdfast tests
 the policy instead of trusting it. On MinIO, `s3:DeleteObject` on its own also deletes versions for good,
@@ -132,7 +136,8 @@ Both were verified against Ceph Squid 19.2.3 in the lab (`lab/README.md`).
 ## Adding a host
 
 ```
-holdfast host add web01.example.com --job system --path /etc --daily 02:00
+holdfast host add web01.example.com
+holdfast job set web01.example.com system --path /etc
 ```
 
 Nothing to make at the S3 server: the host's storage is tested with the gateway key on `repos/web01.example.com/`,

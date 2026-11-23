@@ -49,6 +49,7 @@ export const api = {
   hosts: () => req('GET', '/api/v1/hosts'),
   host: (f) => req('GET', `/api/v1/hosts/${e(f)}`),
   addHost: (body) => req('POST', '/api/v1/hosts', body),
+  notifyTest: () => req('POST', '/api/v1/notify/test', {}),
   importHost: (body) => req('POST', '/api/v1/hosts/import', body),
   removeHost: (f, body) => req('DELETE', `/api/v1/hosts/${e(f)}`, body),
   hostEvents: (f, limit) => req('GET', `/api/v1/hosts/${e(f)}/events${q({ limit })}`),

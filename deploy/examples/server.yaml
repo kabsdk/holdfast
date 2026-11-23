@@ -2,15 +2,23 @@
 
 listen: ":8443"                      # agents, their backups (the gateway), /metrics and /healthz
 public_url: https://holdfast.example.internal:8443
-# Required: agents log in with their own certificates, in the TLS handshake (decision 041).
+# Required: agents log in with their own certificates, in the TLS handshake (decision 041). The nightly export carries
+# these files, so a rebuilt server gets them back (decision 047).
 tls:
   cert_file: /etc/holdfast/tls/server.crt
   key_file: /etc/holdfast/tls/server.key
+  # Holdfast's own CA, when the installer made it: it signed the certificate above and the UI's, and agents pin it.
+  # ca_file: /etc/holdfast/tls/ca.crt
+  # ca_key_file: /etc/holdfast/tls/ca.key
 ca_sha256: ""                        # shown in the install command so agents pin the server
-api_socket: /run/holdfast/api.sock   # /api/v1 for root on this host (M1); HTTPS with OIDC from M4
+api_socket: /run/holdfast/api.sock   # /api/v1 for root on this host, and holdfast ui-login
 
 database_dsn_file: /etc/holdfast/db.dsn
-credentials_key_file: /etc/holdfast/credentials.key   # holdfast-server keygen <path>; keep a copy offline
+# holdfast-server keygen <path>. It goes into the recovery file, with the age key, never into the bucket.
+credentials_key_file: /etc/holdfast/credentials.key
+# Where the installer wrote the recovery file (decision 047). While a file is there the server shows the problem
+# recovery_file: copy it offline, then delete it. holdfast-server recovery-file writes one for a running server.
+recovery_file: /root/holdfast-recovery.txt
 state_dir: /var/lib/holdfast-server
 restic_bin: /usr/libexec/holdfast/restic
 default_zone: Europe/Copenhagen      # for schedules without their own zone
@@ -50,16 +58,19 @@ maintenance:
   retention: daily
 
 # Each host's repository password, encrypted to this age public key, in escrow/<fqdn>.age in the bucket
-# (decision 036), and the nightly export of the server's database, in meta/<date>.age, which a new server is
-# restored from if this one is lost (decision 040, docs/runbooks/rebuild-holdfast.md). Make the key pair offline
-# with age-keygen, keep the private key offline, and put only the public key here. The maintenance key then needs
-# s3:PutObject and s3:DeleteObject on escrow/* (B012), and s3:GetObject, s3:PutObject and s3:DeleteObject on meta/*
-# (B016, docs/storage.md). Without it nothing is escrowed or exported, and the server warns.
+# (decision 036), and the nightly export of the server's database and files, in meta/<date>.age, which a new server
+# is restored from if this one is lost (decision 040, docs/runbooks/rebuild-holdfast.md). The installer makes the key
+# pair and puts the private key in the recovery file; with your own, put only the public key here and add the private
+# key's line to the recovery file. The maintenance key then needs s3:GetObject, s3:PutObject and s3:DeleteObject on
+# escrow/* (B012) and on meta/* (B016, docs/storage.md). Without it nothing is escrowed or exported, and the server
+# warns.
 escrow:
   age_recipient: age1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq   # replace with yours
 
-# The UI and the API for people, over HTTPS, with OIDC login (spec §6, decision 034). Off while ui.listen
-# is not set; root on the server can always use the socket. Use a certificate browsers trust, not the agents'.
+# The UI and the API for people, over HTTPS (spec §6, decisions 034 and 049). Off while ui.listen is not set; root on
+# the server can always use the socket. Root logs in with the one-time link that holdfast ui-login prints; others
+# through OIDC, below. The installer signs a certificate with Holdfast's CA, which browsers warn about until they
+# trust tls/ca.crt; put one browsers trust here instead if you have one.
 ui:
   listen: ":443"
   public_url: https://holdfast.example.internal
@@ -67,6 +78,23 @@ ui:
     cert_file: /etc/holdfast/tls/ui.crt
     key_file: /etc/holdfast/tls/ui.key
 
+# The server's own alerts (decision 046, docs/alerting.md): every problem it knows of, once when it has lasted
+# `after` and once when it ends, by mail, a webhook or both; and a heartbeat after each pass, every minute, for a dead
+# man's switch outside the site. Optional: without it, the Problems page and Prometheus's rules are all there is.
+# notify:
+#   mail:
+#     smtp: relay.example.internal:587
+#     tls: starttls                                  # starttls (the default), tls (port 465), or none
+#     username: holdfast                             # with password_file, if the relay wants a login
+#     password_file: /etc/holdfast/smtp-password     # the password alone, root only
+#     from: holdfast@holdfast.example.internal
+#     to: [backup-team@example.internal]
+#   webhook_url: https://chat.example.internal/hooks/…   # a JSON POST; Slack and Mattermost show its "text"
+#   heartbeat_url: https://hc.example.org/ping/…         # a GET, such as a Healthchecks ping URL
+#   after: 10m
+
+# Optional: login for others than root, through an OIDC provider; issuer, client ID and client secret, all three or
+# none. An LDAP or Active Directory goes behind the provider (Authelia, Dex, Keycloak); Holdfast has no LDAP of its own.
 auth:
   oidc:
     # Register Holdfast at the provider as a confidential client: the authorization code flow (with PKCE)

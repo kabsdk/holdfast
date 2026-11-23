@@ -276,32 +276,6 @@ func (s *Server) apiAcknowledge(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, got)
 }
 
-func (s *Server) apiSetJob(w http.ResponseWriter, r *http.Request) {
-	var in SetJobInput
-	if !decode(w, r, &in) {
-		return
-	}
-	res, err := s.SetJob(r.Context(), actorOf(r), r.PathValue("fqdn"), r.PathValue("job"), in)
-	if err != nil {
-		apiError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, res)
-}
-
-func (s *Server) apiCheckJob(w http.ResponseWriter, r *http.Request) {
-	var in JobCheckInput
-	if !decode(w, r, &in) {
-		return
-	}
-	res, err := s.CheckJob(r.Context(), r.PathValue("fqdn"), r.PathValue("job"), in)
-	if err != nil {
-		apiError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, res)
-}
-
 func (s *Server) apiKeepLonger(w http.ResponseWriter, r *http.Request) {
 	var in KeepLongerInput
 	if !decode(w, r, &in) {
@@ -539,13 +513,4 @@ func (s *Server) apiAudit(w http.ResponseWriter, r *http.Request) {
 func (s *Server) apiCheck(w http.ResponseWriter, r *http.Request) {
 	res := s.RunChecks(r.Context(), actorOf(r))
 	writeJSON(w, http.StatusOK, res)
-}
-
-func (s *Server) apiEscrow(w http.ResponseWriter, r *http.Request) {
-	b, err := s.EscrowExport(r.Context(), actorOf(r))
-	if err != nil {
-		apiError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, b)
 }

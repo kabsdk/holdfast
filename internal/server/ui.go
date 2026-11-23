@@ -7,11 +7,12 @@ import (
 	"github.com/kabsdk/holdfast/internal/webui"
 )
 
-// UIHandler serves the UI listener (decision 034): the login endpoints, /api/v1 behind a session, and the
-// UI's files. Escrow export is not here: it exists only on the root socket (spec §3.3).
+// UIHandler serves the UI listener (decision 034): the login endpoints, root's one-time link (plan-m10 item 6),
+// /api/v1 behind a session, and the UI's files.
 func (s *Server) UIHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /auth/login", s.handleLogin)
+	mux.HandleFunc("GET "+linkPath, s.handleLink)
 	mux.HandleFunc("GET "+callbackPath, s.handleCallback)
 	mux.HandleFunc("POST /auth/logout", s.handleLogout)
 	mux.HandleFunc("POST /auth/device", s.handleDeviceStart)

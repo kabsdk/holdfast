@@ -13,7 +13,7 @@ cd "$(dirname "$0")/.."
 : "${HOLDFAST_VERSION:?}" "${RESTIC_BINARY:?}" "${RESTIC_VERSION:?}" "${NFPM_IMAGE:?}"
 export HOLDFAST_MAINTAINER="${HOLDFAST_MAINTAINER:-Holdfast maintainers}"
 
-for b in holdfast-agent holdfast-server holdfast holdfast-freshness; do
+for b in holdfast-agent holdfast-server holdfast; do
   [ -x "bin/$b" ] || { echo "bin/$b is missing: make build first" >&2; exit 1; }
 done
 
@@ -26,7 +26,7 @@ cp "$RESTIC_BINARY" "$work/restic"
 scripts/third-party-notices.sh "$HOLDFAST_VERSION" >"$work/THIRD-PARTY-NOTICES"
 
 # Each package's scripts name its own unit.
-declare -A unit=([holdfast-agent]=holdfast-agent.service [holdfast-server]=holdfast-server.service [holdfast-freshness]=holdfast-freshness.service)
+declare -A unit=([holdfast-agent]=holdfast-agent.service [holdfast-server]=holdfast-server.service)
 for pkg in "${!unit[@]}"; do
   for s in postinstall preremove; do
     sed -e "s/@PACKAGE@/$pkg/g" -e "s/@UNIT@/${unit[$pkg]}/g" "packaging/$s.sh.in" >"$work/scripts/$s-$pkg.sh"
@@ -34,7 +34,7 @@ for pkg in "${!unit[@]}"; do
 done
 
 # The configs' ${...} are filled in here: nfpm expands variables in some fields only.
-for pkg in holdfast-restic holdfast-agent holdfast-server holdfast-cli holdfast-freshness; do
+for pkg in holdfast-restic holdfast-agent holdfast-server holdfast-cli; do
   cfg="packaging/nfpm-${pkg#holdfast-}.yaml"
   sed -e "s#packaging/scripts/postinstall.sh#$work/scripts/postinstall-$pkg.sh#" \
       -e "s#packaging/scripts/preremove.sh#$work/scripts/preremove-$pkg.sh#" \

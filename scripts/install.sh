@@ -5,7 +5,6 @@
 #     curl -sfL https://github.com/kabsdk/holdfast/releases/latest/download/install.sh | HOLDFAST_SERVER=… HOLDFAST_CODE=… sh -
 #   The server:     curl -sfL …/install.sh | sh -s - server      (its settings in the environment: see `help`)
 #   The CLI:        curl -sfL …/install.sh | sh -s - cli
-#   The witness:    curl -sfL …/install.sh | sh -s - witness     (its settings in the environment)
 #
 # It checks every setting before it changes anything, and never asks a question: a missing or wrong setting is an
 # error that names it, and nothing is changed. Run it again to upgrade: on a machine that is set up already it only
@@ -25,8 +24,8 @@ usage() {
 	cat <<'EOF'
 Holdfast's installer. Run it as root:  curl -sfL <url>/install.sh | [SETTINGS…] sh -s - [ROLE]
 
-ROLE is agent (the default), server, cli or witness. Settings are environment variables. The installer checks them
-all before it changes anything, and stops with the list of what is missing or wrong. On a machine that is set up
+ROLE is agent (the default), server or cli. Settings are environment variables. The installer checks them all
+before it changes anything, and stops with the list of what is missing or wrong. On a machine that is set up
 already it only upgrades the packages, and ignores the settings.
 
 Every role:
@@ -41,39 +40,44 @@ agent: a host to back up. `holdfast host add` prints the whole line.
   HOLDFAST_FQDN           this host's name as added in Holdfast (default: hostname -f)
   On an enrolled host, a code enrolls it again; without one the packages are only upgraded.
 
-server: the Holdfast server, with PostgreSQL. Make the bucket and its two keys first (docs: Storage).
+server: the Holdfast server, with PostgreSQL and the web UI. Make the bucket and its two keys first (docs: Storage).
+  It writes /root/holdfast-recovery.txt: copy it offline, then delete it here.
   HOLDFAST_S3_ENDPOINT                      required: the S3 endpoint, such as https://s3.example.com
   HOLDFAST_S3_BUCKET                        required: the bucket, with versioning and a lifecycle rule
   HOLDFAST_GATEWAY_ACCESS_KEY_ID            required: the gateway key, which may add but not delete
   HOLDFAST_GATEWAY_SECRET_ACCESS_KEY        required
   HOLDFAST_MAINTENANCE_ACCESS_KEY_ID        required: the maintenance key, which forgets and prunes
   HOLDFAST_MAINTENANCE_SECRET_ACCESS_KEY    required
-  HOLDFAST_ESCROW_RECIPIENT                 required: the age public key (age1…) whose private key you keep
-                                            offline; the passwords and the nightly export are encrypted to it
   HOLDFAST_S3_REGION                        the bucket's region, if the S3 server needs one
   HOLDFAST_PUBLIC_URL                       the URL agents use (default: https://<hostname -f>:8443)
+  HOLDFAST_UI_URL                           the URL people use (default: https://<hostname -f>); off: no web UI
   HOLDFAST_ZONE                             the default time zone for schedules (default: this machine's)
   HOLDFAST_DATABASE_DSN                     a PostgreSQL to use (default: install the distribution's PostgreSQL
                                             here, with a database and user for Holdfast)
-  HOLDFAST_TLS_CERT, HOLDFAST_TLS_KEY       the agent listener's certificate chain and key (default: make a CA of
-                                            its own and a certificate it signs; agents pin the CA)
+  HOLDFAST_ESCROW_RECIPIENT                 your own age public key (age1…), if you made one; default: the
+                                            installer makes the key pair and puts it in the recovery file
+  HOLDFAST_TLS_CERT, HOLDFAST_TLS_KEY       the agent listener's certificate chain and key (default: Holdfast's
+                                            own CA signs one; agents pin the CA)
+  HOLDFAST_UI_TLS_CERT, HOLDFAST_UI_TLS_KEY a certificate browsers trust for the UI (default: Holdfast's CA signs one)
+  Alerts (docs: Alerts):
+  HOLDFAST_MAIL_TO, HOLDFAST_SMTP           who gets them, comma-separated, and the relay, host:port; both or none
+  HOLDFAST_SMTP_USER, HOLDFAST_SMTP_PASSWORD  the relay's login, if it needs one
+  HOLDFAST_SMTP_TLS                         starttls (default), tls or none
+  HOLDFAST_MAIL_FROM                        default: holdfast@<hostname -f>
+  HOLDFAST_WEBHOOK_URL                      a webhook for them, such as a Slack or Mattermost incoming webhook
+  HOLDFAST_HEARTBEAT_URL                    called every minute, for a dead man's switch outside the site
+  Login for others than root, all three or none (root always logs in with holdfast ui-login):
+  HOLDFAST_OIDC_ISSUER, HOLDFAST_OIDC_CLIENT_ID, HOLDFAST_OIDC_CLIENT_SECRET
+  HOLDFAST_OIDC_CA_FILE                     a CA to trust for the provider, if the system does not
+  HOLDFAST_ADMINS                           user names that are admin everywhere at first login, comma-separated
   Off-site copies, all four or none:
   HOLDFAST_OFFSITE_ENDPOINT, HOLDFAST_OFFSITE_BUCKET, HOLDFAST_OFFSITE_ACCESS_KEY_ID,
   HOLDFAST_OFFSITE_SECRET_ACCESS_KEY        (and HOLDFAST_OFFSITE_REGION if needed)
-  The web UI and login, all six or none (without them, use the CLI as root on the server):
-  HOLDFAST_UI_URL                           the URL people use, such as https://holdfast.example.com
-  HOLDFAST_UI_TLS_CERT, HOLDFAST_UI_TLS_KEY a certificate browsers trust, and its key
-  HOLDFAST_OIDC_ISSUER                      your OIDC provider, such as https://auth.example.com
-  HOLDFAST_OIDC_CLIENT_ID, HOLDFAST_OIDC_CLIENT_SECRET
-  HOLDFAST_OIDC_CA_FILE                     a CA to trust for the provider, if the system does not
-  HOLDFAST_ADMINS                           user names that are admin everywhere at first login, comma-separated
+  Rebuilding a lost server, on a new machine:
+  HOLDFAST_RECOVERY_FILE                    the recovery file; with the same settings as the first install, it
+                                            restores the bucket's newest nightly export, and the agents come back
 
 cli: the holdfast command, for a workstation. Then: holdfast login --server <the UI's URL>
-
-witness: the storage witness, which lists the bucket for Prometheus apart from the server.
-  HOLDFAST_S3_ENDPOINT, HOLDFAST_S3_BUCKET  required, as for the server (and HOLDFAST_S3_REGION)
-  HOLDFAST_WITNESS_ACCESS_KEY_ID            required: a key that may only list repos/
-  HOLDFAST_WITNESS_SECRET_ACCESS_KEY        required
 EOF
 }
 
@@ -352,34 +356,40 @@ EOF
 	)
 }
 
-make_tls() { # the agent listener's own CA, and a certificate it signs for the public URL's name
-	host=$(url_host "$public_url")
+make_ca() { # Holdfast's own CA, made once: agents pin it, so a certificate it signs later needs nothing on them
+	(
+		umask 077
+		cd $ETC/tls
+		if [ -s ca.key ] && [ -s ca.crt ]; then exit 0; fi
+		printf '[req]\ndistinguished_name = dn\nprompt = no\n[dn]\nCN = Holdfast CA (%s)\n[ext]\nbasicConstraints = critical, CA:TRUE, pathlen:0\nkeyUsage = critical, keyCertSign, cRLSign\nsubjectKeyIdentifier = hash\n' "$(fqdn_here)" >"$tmp/ca.cnf"
+		openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out ca.key 2>/dev/null
+		openssl req -x509 -new -config "$tmp/ca.cnf" -extensions ext -key ca.key -sha256 -days 7300 -out ca.crt
+		chmod 0644 ca.crt
+	)
+}
+
+make_cert() { # make_cert NAME URL: NAME.crt (the chain) and NAME.key in $ETC/tls, signed by the CA for 10 years, for the
+	# URL's name and this machine's
+	host=$(url_host "$2")
 	san=$(san_of "$host")
 	here=$(fqdn_here)
 	[ "$here" = "$host" ] || san="$san,$(san_of "$here")"
 	(
 		umask 077
-		mkdir -p $ETC/tls
 		cd $ETC/tls
-		if [ ! -s ca.key ] || [ ! -s ca.crt ]; then
-			printf '[req]\ndistinguished_name = dn\nprompt = no\n[dn]\nCN = Holdfast agent CA (%s)\n[ext]\nbasicConstraints = critical, CA:TRUE, pathlen:0\nkeyUsage = critical, keyCertSign, cRLSign\nsubjectKeyIdentifier = hash\n' "$host" >"$tmp/ca.cnf"
-			openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out ca.key 2>/dev/null
-			openssl req -x509 -new -config "$tmp/ca.cnf" -extensions ext -key ca.key -sha256 -days 7300 -out ca.crt
-			chmod 0644 ca.crt
-		fi
-		printf '[req]\ndistinguished_name = dn\nprompt = no\n[dn]\nCN = %s\n[ext]\nbasicConstraints = critical, CA:FALSE\nkeyUsage = critical, digitalSignature\nextendedKeyUsage = serverAuth\nsubjectAltName = %s\nsubjectKeyIdentifier = hash\nauthorityKeyIdentifier = keyid\n' "$host" "$san" >"$tmp/leaf.cnf"
-		openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out server.key 2>/dev/null
-		openssl req -new -config "$tmp/leaf.cnf" -key server.key -out "$tmp/leaf.csr"
-		openssl x509 -req -in "$tmp/leaf.csr" -CA ca.crt -CAkey ca.key -set_serial "0x$(od -An -tx1 -N16 /dev/urandom | tr -d ' \n')" \
-			-extfile "$tmp/leaf.cnf" -extensions ext -sha256 -days 3650 -out "$tmp/leaf.crt" 2>/dev/null
-		cat "$tmp/leaf.crt" ca.crt >server.crt
-		chmod 0644 server.crt
+		printf '[req]\ndistinguished_name = dn\nprompt = no\n[dn]\nCN = %s\n[ext]\nbasicConstraints = critical, CA:FALSE\nkeyUsage = critical, digitalSignature\nextendedKeyUsage = serverAuth\nsubjectAltName = %s\nsubjectKeyIdentifier = hash\nauthorityKeyIdentifier = keyid\n' "$host" "$san" >"$tmp/$1.cnf"
+		openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out "$1.key" 2>/dev/null
+		openssl req -new -config "$tmp/$1.cnf" -key "$1.key" -out "$tmp/$1.csr"
+		openssl x509 -req -in "$tmp/$1.csr" -CA ca.crt -CAkey ca.key -set_serial "0x$(od -An -tx1 -N16 /dev/urandom | tr -d ' \n')" \
+			-extfile "$tmp/$1.cnf" -extensions ext -sha256 -days 3650 -out "$tmp/$1.leaf" 2>/dev/null
+		cat "$tmp/$1.leaf" ca.crt >"$1.crt"
+		chmod 0644 "$1.crt"
 	)
 }
 
-# A lost server's replacement (decision 040): /etc/holdfast was put back from its offline copy on a new machine. Install
-# what it needs, with the database's password from the copy, and leave the server stopped: restore-export loads the
-# nightly export into the empty database first.
+# A lost server's replacement from a copy of /etc/holdfast (decision 040): the copy was put back on a new machine.
+# Install what it needs, with the database's password from the copy, and leave the server stopped: restore-export loads
+# the nightly export into the empty database first.
 prepare_rebuild() {
 	stop_if_wrong
 	dsn=$(cat $ETC/db.dsn 2>/dev/null || true)
@@ -395,37 +405,28 @@ prepare_rebuild() {
 	cat <<EOF
 [holdfast] $ETC is back and Holdfast $pkgver is installed; the server is not started.
   Restore the newest nightly export into the empty database, then start it:
-    holdfast-server restore-export -identity /path/to/escrow-key.txt -latest
+    holdfast-server restore-export -identity /path/to/holdfast-recovery.txt -latest
     systemctl enable --now holdfast-server
   The agents come back by themselves. docs: Operating Holdfast, a lost server.
 EOF
 }
 
-role_server() {
-	if [ -s $ETC/server.yaml ] && ! command -v holdfast-server >/dev/null 2>&1; then
-		prepare_rebuild
-		return 0
-	fi
-	if [ -s $ETC/server.yaml ]; then
-		packages restic cli server
-		other_settings 'S3_[A-Z]+|GATEWAY_[A-Z_]+|MAINTENANCE_[A-Z_]+|ESCROW_RECIPIENT|PUBLIC_URL|DATABASE_DSN|UI_[A-Z_]+|OIDC_[A-Z_]+|OFFSITE_[A-Z_]+' &&
-			say "the server is set up already: the settings are ignored; change them in $ETC/server.yaml"
-		wait_server
-		say "upgraded the server to $pkgver; it migrated its database as it started. Upgrade the agents now, in any order."
-		return 0
-	fi
-
+# server_settings checks the server's settings, for a first install and for a rebuild from the recovery file.
+server_settings() {
 	need HOLDFAST_S3_ENDPOINT "the S3 endpoint, such as https://s3.example.com"
 	need HOLDFAST_S3_BUCKET "the bucket, with versioning on and a lifecycle rule (docs: Storage)"
 	need HOLDFAST_GATEWAY_ACCESS_KEY_ID "the gateway key's ID: it may read and add under repos/, and delete only lock files"
 	need HOLDFAST_GATEWAY_SECRET_ACCESS_KEY "the gateway key's secret"
 	need HOLDFAST_MAINTENANCE_ACCESS_KEY_ID "the maintenance key's ID: it forgets and prunes, and may not delete old versions"
 	need HOLDFAST_MAINTENANCE_SECRET_ACCESS_KEY "the maintenance key's secret"
-	need HOLDFAST_ESCROW_RECIPIENT "an age public key (age1…), made offline with age-keygen; without it there is no nightly export to rebuild a lost server from"
 	check_url HOLDFAST_S3_ENDPOINT
 	check_word HOLDFAST_S3_BUCKET
 	check_word HOLDFAST_S3_REGION
+	if isset HOLDFAST_RECOVERY_FILE && isset HOLDFAST_ESCROW_RECIPIENT; then
+		wrong HOLDFAST_ESCROW_RECIPIENT "give it, or HOLDFAST_RECOVERY_FILE, not both: a rebuild takes the age key from the recovery file"
+	fi
 	case "${HOLDFAST_ESCROW_RECIPIENT:-age1}" in age1*) ;; *) wrong HOLDFAST_ESCROW_RECIPIENT "is not an age public key: it starts with age1" ;; esac
+	check_file HOLDFAST_RECOVERY_FILE
 	public_url=${HOLDFAST_PUBLIC_URL:-https://$(fqdn_here):8443}
 	case "$public_url" in https://*) ;; *) wrong HOLDFAST_PUBLIC_URL "must start with https://: agents log in with TLS" ;; esac
 	check_url HOLDFAST_PUBLIC_URL
@@ -437,7 +438,9 @@ role_server() {
 		[ -n "$zone" ] || zone=$(readlink /etc/localtime 2>/dev/null | sed -n 's#.*/zoneinfo/##p')
 		[ -n "$zone" ] && [ -f "/usr/share/zoneinfo/$zone" ] || zone=UTC
 	fi
+	own_tls=false
 	if isset HOLDFAST_TLS_CERT || isset HOLDFAST_TLS_KEY; then
+		own_tls=true
 		need HOLDFAST_TLS_CERT "the agent listener's certificate chain, with its CA last (with HOLDFAST_TLS_KEY)"
 		need HOLDFAST_TLS_KEY "the agent listener's private key (with HOLDFAST_TLS_CERT)"
 		check_file HOLDFAST_TLS_CERT
@@ -457,24 +460,178 @@ role_server() {
 			wrong HOLDFAST_OFFSITE_BUCKET "is the primary bucket: off-site copies need a bucket of their own"
 		fi
 	fi
-	ui=false
-	if isset HOLDFAST_UI_URL || isset HOLDFAST_OIDC_ISSUER || isset HOLDFAST_OIDC_CLIENT_ID; then
-		ui=true
-		need HOLDFAST_UI_URL "the URL people use, such as https://holdfast.example.com (the UI needs all six UI and OIDC settings)"
-		need HOLDFAST_UI_TLS_CERT "a certificate for the UI that browsers trust"
-		need HOLDFAST_UI_TLS_KEY "its private key"
-		need HOLDFAST_OIDC_ISSUER "your OIDC provider's issuer URL"
-		need HOLDFAST_OIDC_CLIENT_ID "Holdfast's client ID at the provider"
-		need HOLDFAST_OIDC_CLIENT_SECRET "its client secret"
-		case "${HOLDFAST_UI_URL:-https://}" in https://*) ;; *) wrong HOLDFAST_UI_URL "must start with https://" ;; esac
+	# The web UI is on unless HOLDFAST_UI_URL=off: root logs in with holdfast ui-login, others through OIDC if it is set.
+	ui=true
+	ui_url=${HOLDFAST_UI_URL:-https://$(fqdn_here)}
+	if [ "$ui_url" = off ]; then
+		ui=false
+	else
+		case "$ui_url" in https://*) ;; *) wrong HOLDFAST_UI_URL "must start with https://, or be off" ;; esac
 		check_url HOLDFAST_UI_URL
-		check_url HOLDFAST_OIDC_ISSUER
+	fi
+	own_ui_tls=false
+	if isset HOLDFAST_UI_TLS_CERT || isset HOLDFAST_UI_TLS_KEY; then
+		own_ui_tls=true
+		need HOLDFAST_UI_TLS_CERT "a certificate for the UI that browsers trust (with HOLDFAST_UI_TLS_KEY)"
+		need HOLDFAST_UI_TLS_KEY "its private key (with HOLDFAST_UI_TLS_CERT)"
 		check_file HOLDFAST_UI_TLS_CERT
 		check_file HOLDFAST_UI_TLS_KEY
-		check_file HOLDFAST_OIDC_CA_FILE
-		check_word HOLDFAST_OIDC_CLIENT_ID
-		case "${HOLDFAST_ADMINS:-}" in *[!A-Za-z0-9._@,-]*) wrong HOLDFAST_ADMINS "user names, comma-separated, with no spaces" ;; esac
 	fi
+	if $own_tls && ! $own_ui_tls && $ui && [ -z "${HOLDFAST_RECOVERY_FILE:-}" ]; then
+		wrong HOLDFAST_UI_TLS_CERT "with your own agent certificate, give the UI's too, or HOLDFAST_UI_URL=off: there is no Holdfast CA to sign one"
+	fi
+	oidc=false
+	if isset HOLDFAST_OIDC_ISSUER || isset HOLDFAST_OIDC_CLIENT_ID || isset HOLDFAST_OIDC_CLIENT_SECRET; then
+		oidc=true
+		need HOLDFAST_OIDC_ISSUER "your OIDC provider's issuer URL (login needs all three HOLDFAST_OIDC_ settings)"
+		need HOLDFAST_OIDC_CLIENT_ID "Holdfast's client ID at the provider"
+		need HOLDFAST_OIDC_CLIENT_SECRET "its client secret"
+		check_url HOLDFAST_OIDC_ISSUER
+		check_word HOLDFAST_OIDC_CLIENT_ID
+		$ui || wrong HOLDFAST_OIDC_ISSUER "login is for the web UI, which HOLDFAST_UI_URL=off turns off"
+	fi
+	check_file HOLDFAST_OIDC_CA_FILE
+	case "${HOLDFAST_ADMINS:-}" in *[!A-Za-z0-9._@,-]*) wrong HOLDFAST_ADMINS "user names, comma-separated, with no spaces" ;; esac
+	mail=false
+	if isset HOLDFAST_MAIL_TO || isset HOLDFAST_SMTP; then
+		mail=true
+		need HOLDFAST_MAIL_TO "who gets the server's alerts, comma-separated (with HOLDFAST_SMTP)"
+		need HOLDFAST_SMTP "the mail relay, host:port, such as relay.example.com:587 (with HOLDFAST_MAIL_TO)"
+		case "${HOLDFAST_SMTP:-h:1}" in *:[0-9]*) ;; *) wrong HOLDFAST_SMTP "is host:port, such as relay.example.com:587" ;; esac
+		case "${HOLDFAST_SMTP_TLS:-starttls}" in starttls | tls | none) ;; *) wrong HOLDFAST_SMTP_TLS "is starttls, tls or none" ;; esac
+		check_word HOLDFAST_MAIL_TO
+		if isset HOLDFAST_SMTP_USER || isset HOLDFAST_SMTP_PASSWORD; then
+			need HOLDFAST_SMTP_USER "the relay's user (with HOLDFAST_SMTP_PASSWORD)"
+			need HOLDFAST_SMTP_PASSWORD "the relay's password (with HOLDFAST_SMTP_USER)"
+		fi
+	fi
+	check_url HOLDFAST_WEBHOOK_URL
+	check_url HOLDFAST_HEARTBEAT_URL
+}
+
+# write_server_yaml writes server.yaml from the settings server_settings checked, with the pin in $pin.
+write_server_yaml() {
+	listen=$(url_port "$public_url")
+	{
+		printf '# Written by Holdfast'"'"'s installer on %s (decision 044). Edit it as root, then: systemctl restart holdfast-server\n' "$(date -u +%Y-%m-%d)"
+		printf '# Every setting: /usr/share/holdfast/server.yaml.example\n\n'
+		printf 'listen: ":%s"                 # agents, their backups (the gateway), /metrics\n' "$listen"
+		printf 'public_url: %s\n' "$(q "$public_url")"
+		printf 'tls:\n  cert_file: %s/tls/server.crt\n  key_file: %s/tls/server.key\n' $ETC $ETC
+		$own_tls || printf '  ca_file: %s/tls/ca.crt          # Holdfast'"'"'s CA, which agents pin\n  ca_key_file: %s/tls/ca.key\n' $ETC $ETC
+		printf 'ca_sha256: %s   # agents pin this certificate\n' "$(q "$pin")"
+		printf 'api_socket: /run/holdfast/api.sock\n'
+		printf 'database_dsn_file: %s/db.dsn\n' $ETC
+		printf 'credentials_key_file: %s/credentials.key\n' $ETC
+		printf 'recovery_file: %s   # the server shows a problem while this file is here: it belongs offline\n' "$(q "$recovery")"
+		printf 'default_zone: %s\n' "$(q "$zone")"
+		[ -z "${HOLDFAST_DOWNLOAD_URL:-}" ] || printf 'download_url: %s   # where hosts fetch install.sh and the packages\n' "$(q "${HOLDFAST_DOWNLOAD_URL%/}")"
+		printf '\nstorage:\n  endpoint: %s\n  bucket: %s\n' "$(q "$HOLDFAST_S3_ENDPOINT")" "$(q "$HOLDFAST_S3_BUCKET")"
+		[ -z "${HOLDFAST_S3_REGION:-}" ] || printf '  region: %s\n' "$(q "$HOLDFAST_S3_REGION")"
+		printf '  maintenance_credentials_file: %s/maintenance.env\n  gateway_credentials_file: %s/gateway.env\n' $ETC $ETC
+		printf '\nescrow:\n  age_recipient: %s   # the recovery file'"'"'s age key\n' "$(q "$recipient")"
+		if $offsite; then
+			printf '\noffsite:\n  endpoint: %s\n  bucket: %s\n' "$(q "$HOLDFAST_OFFSITE_ENDPOINT")" "$(q "$HOLDFAST_OFFSITE_BUCKET")"
+			[ -z "${HOLDFAST_OFFSITE_REGION:-}" ] || printf '  region: %s\n' "$(q "$HOLDFAST_OFFSITE_REGION")"
+			printf '  maintenance_credentials_file: %s/offsite.env\n' $ETC
+		fi
+		if $ui; then
+			printf '\nui:\n  listen: ":%s"\n  public_url: %s\n' "$(url_port "$ui_url")" "$(q "${ui_url%/}")"
+			printf '  tls:\n    cert_file: %s/tls/ui.crt\n    key_file: %s/tls/ui.key\n' $ETC $ETC
+		fi
+		if $oidc; then
+			printf '\nauth:\n  oidc:\n    issuer: %s\n    client_id: %s\n' "$(q "$HOLDFAST_OIDC_ISSUER")" "$(q "$HOLDFAST_OIDC_CLIENT_ID")"
+			printf '    client_secret_file: %s/oidc-client-secret\n' $ETC
+			[ -z "${HOLDFAST_OIDC_CA_FILE:-}" ] || printf '    ca_file: %s/tls/oidc-ca.crt\n' $ETC
+			printf '  bootstrap_admins: ['
+			sep=
+			for a in $(printf '%s' "${HOLDFAST_ADMINS:-}" | tr ',' ' '); do
+				printf '%s%s' "$sep" "$(q "$a")"
+				sep=', '
+			done
+			printf ']\n'
+		fi
+		if $mail || [ -n "${HOLDFAST_WEBHOOK_URL:-}${HOLDFAST_HEARTBEAT_URL:-}" ]; then
+			printf '\nnotify:\n'
+			if $mail; then
+				printf '  mail:\n    smtp: %s\n    tls: %s\n' "$(q "$HOLDFAST_SMTP")" "${HOLDFAST_SMTP_TLS:-starttls}"
+				[ -z "${HOLDFAST_SMTP_USER:-}" ] || printf '    username: %s\n    password_file: %s/smtp-password\n' "$(q "$HOLDFAST_SMTP_USER")" $ETC
+				printf '    from: %s\n    to: [' "$(q "${HOLDFAST_MAIL_FROM:-holdfast@$(fqdn_here)}")"
+				sep=
+				for a in $(printf '%s' "$HOLDFAST_MAIL_TO" | tr ',' ' '); do
+					printf '%s%s' "$sep" "$(q "$a")"
+					sep=', '
+				done
+				printf ']\n'
+			fi
+			[ -z "${HOLDFAST_WEBHOOK_URL:-}" ] || printf '  webhook_url: %s\n' "$(q "$HOLDFAST_WEBHOOK_URL")"
+			[ -z "${HOLDFAST_HEARTBEAT_URL:-}" ] || printf '  heartbeat_url: %s\n' "$(q "$HOLDFAST_HEARTBEAT_URL")"
+		fi
+	} >"$tmp/server.yaml"
+	install -m 0600 "$tmp/server.yaml" $ETC/server.yaml
+}
+
+# server_files writes the secrets the settings give into their root-only files.
+server_files() {
+	write_key $ETC/gateway.env "$HOLDFAST_GATEWAY_ACCESS_KEY_ID" "$HOLDFAST_GATEWAY_SECRET_ACCESS_KEY"
+	write_key $ETC/maintenance.env "$HOLDFAST_MAINTENANCE_ACCESS_KEY_ID" "$HOLDFAST_MAINTENANCE_SECRET_ACCESS_KEY"
+	if $offsite; then write_key $ETC/offsite.env "$HOLDFAST_OFFSITE_ACCESS_KEY_ID" "$HOLDFAST_OFFSITE_SECRET_ACCESS_KEY"; fi
+	if $own_tls; then
+		install -m 0644 "$HOLDFAST_TLS_CERT" $ETC/tls/server.crt
+		install -m 0600 "$HOLDFAST_TLS_KEY" $ETC/tls/server.key
+	fi
+	if $ui && $own_ui_tls; then
+		install -m 0644 "$HOLDFAST_UI_TLS_CERT" $ETC/tls/ui.crt
+		install -m 0600 "$HOLDFAST_UI_TLS_KEY" $ETC/tls/ui.key
+	fi
+	[ -z "${HOLDFAST_OIDC_CA_FILE:-}" ] || install -m 0644 "$HOLDFAST_OIDC_CA_FILE" $ETC/tls/oidc-ca.crt
+	(
+		umask 077
+		if $oidc; then printf '%s\n' "$HOLDFAST_OIDC_CLIENT_SECRET" >$ETC/oidc-client-secret; fi
+		if [ -n "${HOLDFAST_SMTP_PASSWORD:-}" ]; then printf '%s\n' "$HOLDFAST_SMTP_PASSWORD" >$ETC/smtp-password; fi
+	)
+}
+
+start_server() {
+	open_port "$(url_port "$public_url")"
+	! $ui || open_port "$(url_port "$ui_url")"
+	systemctl enable -q holdfast-server
+	systemctl restart holdfast-server
+	wait_server
+}
+
+server_summary() {
+	if $ui; then
+		if $oidc; then
+			echo "  The web UI          ${ui_url%/}: people log in through ${HOLDFAST_OIDC_ISSUER}; root also with holdfast ui-login"
+		else
+			echo "  The web UI          ${ui_url%/}: log in with the link that holdfast ui-login prints, as root here"
+		fi
+		$own_ui_tls || echo "                      Browsers warn about its certificate until you trust $ETC/tls/ca.crt, or install with HOLDFAST_UI_TLS_CERT"
+	fi
+	echo "  Agents connect to   $public_url, and pin $pin"
+	echo "  The CLI, as root    holdfast status"
+	if ! $mail && [ -z "${HOLDFAST_WEBHOOK_URL:-}${HOLDFAST_HEARTBEAT_URL:-}" ]; then
+		echo
+		echo "  No alerts are set up: nobody is told when backups stop. Set notify: in $ETC/server.yaml (docs: Alerts),"
+		echo "  or point Prometheus at the rules in /usr/share/holdfast/prometheus/."
+	fi
+}
+
+role_server() {
+	if [ -s $ETC/server.yaml ] && ! command -v holdfast-server >/dev/null 2>&1; then
+		prepare_rebuild
+		return 0
+	fi
+	if [ -s $ETC/server.yaml ]; then
+		packages restic cli server
+		other_settings 'S3_[A-Z]+|GATEWAY_[A-Z_]+|MAINTENANCE_[A-Z_]+|ESCROW_RECIPIENT|RECOVERY_FILE|PUBLIC_URL|DATABASE_DSN|UI_[A-Z_]+|OIDC_[A-Z_]+|OFFSITE_[A-Z_]+|MAIL_[A-Z_]+|SMTP[A-Z_]*|WEBHOOK_URL|HEARTBEAT_URL' &&
+			say "the server is set up already: the settings are ignored; change them in $ETC/server.yaml"
+		wait_server
+		say "upgraded the server to $pkgver; it migrated its database as it started. Upgrade the agents now, in any order."
+		return 0
+	fi
+	server_settings
 	stop_if_wrong
 
 	install -d -m 0700 $ETC
@@ -488,92 +645,80 @@ role_server() {
 			printf '%s\n' "$HOLDFAST_DATABASE_DSN" >$ETC/db.dsn
 		)
 	fi
-	[ -s $ETC/credentials.key ] || holdfast-server keygen $ETC/credentials.key >/dev/null
-	write_key $ETC/gateway.env "$HOLDFAST_GATEWAY_ACCESS_KEY_ID" "$HOLDFAST_GATEWAY_SECRET_ACCESS_KEY"
-	write_key $ETC/maintenance.env "$HOLDFAST_MAINTENANCE_ACCESS_KEY_ID" "$HOLDFAST_MAINTENANCE_SECRET_ACCESS_KEY"
-	if [ -n "${HOLDFAST_TLS_CERT:-}" ]; then
-		install -m 0644 "$HOLDFAST_TLS_CERT" $ETC/tls/server.crt
-		install -m 0600 "$HOLDFAST_TLS_KEY" $ETC/tls/server.key
+	server_files
+
+	if [ -n "${HOLDFAST_RECOVERY_FILE:-}" ]; then
+		rebuild_from_recovery
+		return 0
+	fi
+
+	# The recovery file: a new age key and credentials key, unless the admin gave an age key of their own.
+	recovery=/root/holdfast-recovery.txt
+	if [ -n "${HOLDFAST_ESCROW_RECIPIENT:-}" ]; then
+		recipient=$HOLDFAST_ESCROW_RECIPIENT
+		[ -s $ETC/credentials.key ] || holdfast-server keygen $ETC/credentials.key >/dev/null
+	elif [ -s "$recovery" ]; then
+		recipient=$(holdfast-server recovery-file -recipient "$recovery") || die "$recovery is there from an earlier install, but holds no age key"
 	else
-		make_tls
+		recipient=$(holdfast-server recovery-file -new -credentials-key $ETC/credentials.key "$recovery" | sed -n 's/^recipient //p')
+		[ -n "$recipient" ] || die "could not make the recovery file"
+	fi
+	if ! $own_tls; then
+		make_ca
+		make_cert server "$public_url"
+	fi
+	if $ui && ! $own_ui_tls; then make_cert ui "$ui_url"; fi
+	pin=$(pin_of $ETC/tls/server.crt)
+	write_server_yaml
+	if [ -n "${HOLDFAST_ESCROW_RECIPIENT:-}" ] && [ ! -s "$recovery" ]; then
+		holdfast-server recovery-file -config $ETC/server.yaml "$recovery" >/dev/null
+	fi
+	start_server
+
+	echo "[holdfast] The Holdfast server $pkgver runs."
+	server_summary
+	cat <<EOF
+
+  The recovery file is $recovery. Copy it now to a safe place off this server, such as a password
+  manager, then delete it here. With the bucket's two keys it rebuilds a lost server, and it opens every backup.
+  Until it is gone from here, the server shows the problem recovery_file.
+EOF
+	[ -z "${HOLDFAST_ESCROW_RECIPIENT:-}" ] || echo "  It holds the credentials key: add your own age key's AGE-SECRET-KEY-… line to it."
+	cat <<EOF
+  Keep the settings you installed with, the two S3 keys in them, as safely: a rebuild needs them too.
+
+  Next, add a host, then its first job. host add prints the one line to run on that host:
+    holdfast host add web01.example.com
+    holdfast job set web01.example.com system --path /etc --path /home
+EOF
+}
+
+# rebuild_from_recovery replaces a lost server (decision 040, plan-m10 item 3): the bucket's newest nightly export,
+# opened with the recovery file, gives the database, the agents' certificate and CA, and the credentials key comes from
+# the recovery file. The agents reconnect by themselves.
+rebuild_from_recovery() {
+	recovery=$HOLDFAST_RECOVERY_FILE
+	recipient=$(holdfast-server recovery-file -recipient "$recovery") || die "$recovery holds no age key (AGE-SECRET-KEY-…): add it"
+	pin=
+	write_server_yaml
+	say "restoring the newest nightly export from the bucket"
+	holdfast-server restore-export -config $ETC/server.yaml -identity "$recovery" -latest ||
+		die "restore-export failed (above). The database may hold part of the export now: drop it and make it again, empty, before you try again"
+	if [ ! -s $ETC/tls/server.crt ] || [ ! -s $ETC/tls/server.key ]; then
+		die "the export holds no certificate for the agents (it was made before Holdfast 0.6): put the old server's $ETC/tls back, or give HOLDFAST_TLS_CERT and HOLDFAST_TLS_KEY from the CA the agents pinned, then systemctl enable --now holdfast-server"
+	fi
+	if $ui && [ ! -s $ETC/tls/ui.crt ]; then
+		if [ -s $ETC/tls/ca.key ]; then make_cert ui "$ui_url"; else ui=false; fi
 	fi
 	pin=$(pin_of $ETC/tls/server.crt)
-	listen=$(url_port "$public_url")
-	if $offsite; then
-		write_key $ETC/offsite.env "$HOLDFAST_OFFSITE_ACCESS_KEY_ID" "$HOLDFAST_OFFSITE_SECRET_ACCESS_KEY"
-	fi
-	if $ui; then
-		install -m 0644 "$HOLDFAST_UI_TLS_CERT" $ETC/tls/ui.crt
-		install -m 0600 "$HOLDFAST_UI_TLS_KEY" $ETC/tls/ui.key
-		[ -z "${HOLDFAST_OIDC_CA_FILE:-}" ] || install -m 0644 "$HOLDFAST_OIDC_CA_FILE" $ETC/tls/oidc-ca.crt
-		(
-			umask 077
-			printf '%s\n' "$HOLDFAST_OIDC_CLIENT_SECRET" >$ETC/oidc-client-secret
-		)
-	fi
-
-	{
-		printf '# Written by Holdfast'"'"'s installer on %s (decision 044). Edit it as root, then: systemctl restart holdfast-server\n' "$(date -u +%Y-%m-%d)"
-		printf '# Every setting: /usr/share/holdfast/server.yaml.example\n\n'
-		printf 'listen: ":%s"                 # agents, their backups (the gateway), /metrics\n' "$listen"
-		printf 'public_url: %s\n' "$(q "$public_url")"
-		printf 'tls:\n  cert_file: %s/tls/server.crt\n  key_file: %s/tls/server.key\n' $ETC $ETC
-		printf 'ca_sha256: %s   # agents pin this certificate\n' "$(q "$pin")"
-		printf 'api_socket: /run/holdfast/api.sock\n'
-		printf 'database_dsn_file: %s/db.dsn\n' $ETC
-		printf 'credentials_key_file: %s/credentials.key   # keep a copy offline\n' $ETC
-		printf 'default_zone: %s\n' "$(q "$zone")"
-		[ -z "${HOLDFAST_DOWNLOAD_URL:-}" ] || printf 'download_url: %s   # where hosts fetch install.sh and the packages\n' "$(q "${HOLDFAST_DOWNLOAD_URL%/}")"
-		printf '\nstorage:\n  endpoint: %s\n  bucket: %s\n' "$(q "$HOLDFAST_S3_ENDPOINT")" "$(q "$HOLDFAST_S3_BUCKET")"
-		[ -z "${HOLDFAST_S3_REGION:-}" ] || printf '  region: %s\n' "$(q "$HOLDFAST_S3_REGION")"
-		printf '  maintenance_credentials_file: %s/maintenance.env\n  gateway_credentials_file: %s/gateway.env\n' $ETC $ETC
-		printf '\nescrow:\n  age_recipient: %s\n' "$(q "$HOLDFAST_ESCROW_RECIPIENT")"
-		if $offsite; then
-			printf '\noffsite:\n  endpoint: %s\n  bucket: %s\n' "$(q "$HOLDFAST_OFFSITE_ENDPOINT")" "$(q "$HOLDFAST_OFFSITE_BUCKET")"
-			[ -z "${HOLDFAST_OFFSITE_REGION:-}" ] || printf '  region: %s\n' "$(q "$HOLDFAST_OFFSITE_REGION")"
-			printf '  maintenance_credentials_file: %s/offsite.env\n' $ETC
-		fi
-		if $ui; then
-			printf '\nui:\n  listen: ":%s"\n  public_url: %s\n' "$(url_port "$HOLDFAST_UI_URL")" "$(q "${HOLDFAST_UI_URL%/}")"
-			printf '  tls:\n    cert_file: %s/tls/ui.crt\n    key_file: %s/tls/ui.key\n' $ETC $ETC
-			printf '\nauth:\n  oidc:\n    issuer: %s\n    client_id: %s\n' "$(q "$HOLDFAST_OIDC_ISSUER")" "$(q "$HOLDFAST_OIDC_CLIENT_ID")"
-			printf '    client_secret_file: %s/oidc-client-secret\n' $ETC
-			[ -z "${HOLDFAST_OIDC_CA_FILE:-}" ] || printf '    ca_file: %s/tls/oidc-ca.crt\n' $ETC
-			printf '  bootstrap_admins: ['
-			sep=
-			for a in $(printf '%s' "${HOLDFAST_ADMINS:-}" | tr ',' ' '); do
-				printf '%s%s' "$sep" "$(q "$a")"
-				sep=', '
-			done
-			printf ']\n'
-		fi
-	} >"$tmp/server.yaml"
-	install -m 0600 "$tmp/server.yaml" $ETC/server.yaml
-
-	open_port "$listen"
-	! $ui || open_port "$(url_port "$HOLDFAST_UI_URL")"
-	systemctl enable -q holdfast-server
-	systemctl restart holdfast-server
-	wait_server
-
-	cat <<EOF
-[holdfast] The Holdfast server $pkgver runs.
-  Agents connect to   $public_url
-  Agents pin          $pin
-  On this host, as root, the CLI works now:  holdfast status
-EOF
-	if $ui; then echo "  People log in at    ${HOLDFAST_UI_URL%/}"; else
-		echo "  The web UI is off until you set ui: and auth: in $ETC/server.yaml (docs: Installation, the web UI)."
-	fi
+	write_server_yaml
+	start_server
+	echo "[holdfast] The Holdfast server $pkgver runs, restored from the bucket's newest nightly export. Its agents come back by themselves."
+	server_summary
 	cat <<EOF
 
-  Copy $ETC to a safe place offline now, and keep the escrow's age private key with it: a new server is
-  rebuilt from them if this one is lost. It holds the credentials key, the storage keys, the agents' CA and
-  server.yaml.
-
-  Next, add a host. It prints the one line to run on that host:
-    holdfast host add web01.example.com --job system --path /etc --daily 02:00 \\
-      --keep-daily 14d --keep-weekly 8w --keep-monthly 12mo --keep-yearly 3y
+  Delete $recovery from this server once you have checked that hosts come back (holdfast host list):
+  until then the server shows the problem recovery_file.
 EOF
 }
 
@@ -584,39 +729,6 @@ role_cli() {
 	say "installed the holdfast command. Log in with: holdfast login --server <the UI's URL>"
 }
 
-# ---------------------------------------------------------------------------------------------------------- witness
-role_witness() {
-	if [ -s $ETC/witness.env ]; then
-		packages freshness
-		other_settings 'S3_[A-Z]+|WITNESS_[A-Z_]+' && say "the witness is set up already: the settings are ignored"
-		say "upgraded the storage witness to $pkgver"
-		return 0
-	fi
-	need HOLDFAST_S3_ENDPOINT "the S3 endpoint, such as https://s3.example.com"
-	need HOLDFAST_S3_BUCKET "the bucket Holdfast backs up to"
-	need HOLDFAST_WITNESS_ACCESS_KEY_ID "the witness key's ID: a key that may only list repos/"
-	need HOLDFAST_WITNESS_SECRET_ACCESS_KEY "the witness key's secret"
-	check_url HOLDFAST_S3_ENDPOINT
-	check_word HOLDFAST_S3_BUCKET
-	check_word HOLDFAST_S3_REGION
-	stop_if_wrong
-	packages freshness
-	write_key $ETC/witness.env "$HOLDFAST_WITNESS_ACCESS_KEY_ID" "$HOLDFAST_WITNESS_SECRET_ACCESS_KEY"
-	region=
-	[ -z "${HOLDFAST_S3_REGION:-}" ] || region=" -region $HOLDFAST_S3_REGION"
-	mkdir -p /etc/systemd/system/holdfast-freshness.service.d
-	{
-		printf '# Written by Holdfast'"'"'s installer (decision 044): where the witness looks.\n[Service]\nExecStart=\n'
-		printf 'ExecStart=/usr/bin/holdfast-freshness -endpoint %s -bucket %s%s -credentials-file ${CREDENTIALS_DIRECTORY}/witness.env -listen :9817\n' \
-			"$HOLDFAST_S3_ENDPOINT" "$HOLDFAST_S3_BUCKET" "$region"
-	} >/etc/systemd/system/holdfast-freshness.service.d/install.conf
-	systemctl daemon-reload
-	systemctl enable -q holdfast-freshness
-	systemctl restart holdfast-freshness
-	open_port 9817
-	say "the storage witness runs. Point Prometheus at http://$(fqdn_here):9817/metrics, with the rules in /usr/share/holdfast/prometheus/ on the server."
-}
-
 # ---------------------------------------------------------------------------------------------------------- main
 role=${1:-agent}
 case "$role" in
@@ -624,8 +736,8 @@ help | -h | --help)
 	usage
 	exit 0
 	;;
-agent | server | cli | witness) ;;
-*) die "'$role' is not a role: agent, server, cli or witness (sh install.sh help)" ;;
+agent | server | cli) ;;
+*) die "'$role' is not a role: agent, server or cli (sh install.sh help)" ;;
 esac
 preflight
 tmp=$(mktemp -d)

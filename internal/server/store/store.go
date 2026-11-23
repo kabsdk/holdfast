@@ -670,28 +670,27 @@ func (q *Q) ListAgents(ctx context.Context) ([]Agent, error) {
 // SealedCredentials is a host's credentials as stored: the repository and its password, which is ciphertext. A host
 // has no S3 key (decision 041).
 type SealedCredentials struct {
-	FQDN           string
-	Version        int
-	Repository     string
-	RepoPassword   []byte
-	CreatedAt      time.Time
-	EscrowExportID *int64
+	FQDN         string
+	Version      int
+	Repository   string
+	RepoPassword []byte
+	CreatedAt    time.Time
 }
 
 // PutCredentials stores a host's credentials, replacing any older version.
 func (q *Q) PutCredentials(ctx context.Context, c SealedCredentials) error {
 	_, err := q.db.Exec(ctx, `INSERT INTO host_credentials (fqdn, version, repository, repo_password, created_at)
 		VALUES ($1, $2, $3, $4, $5)
-		ON CONFLICT (fqdn) DO UPDATE SET version = $2, repository = $3, repo_password = $4, created_at = $5, escrow_export_id = NULL`,
+		ON CONFLICT (fqdn) DO UPDATE SET version = $2, repository = $3, repo_password = $4, created_at = $5`,
 		c.FQDN, c.Version, c.Repository, c.RepoPassword, c.CreatedAt)
 	return err
 }
 
-const credCols = `fqdn, version, repository, repo_password, created_at, escrow_export_id`
+const credCols = `fqdn, version, repository, repo_password, created_at`
 
 func scanCreds(row pgx.Row) (SealedCredentials, error) {
 	var c SealedCredentials
-	err := row.Scan(&c.FQDN, &c.Version, &c.Repository, &c.RepoPassword, &c.CreatedAt, &c.EscrowExportID)
+	err := row.Scan(&c.FQDN, &c.Version, &c.Repository, &c.RepoPassword, &c.CreatedAt)
 	return c, notFound(err)
 }
 
@@ -700,7 +699,7 @@ func (q *Q) GetCredentials(ctx context.Context, fqdn string) (SealedCredentials,
 	return scanCreds(q.db.QueryRow(ctx, `SELECT `+credCols+` FROM host_credentials WHERE fqdn = $1`, fqdn))
 }
 
-// AllCredentials returns every host's sealed credentials, for escrow export.
+// AllCredentials returns every host's sealed credentials.
 func (q *Q) AllCredentials(ctx context.Context) ([]SealedCredentials, error) {
 	rows, err := q.db.Query(ctx, `SELECT `+credCols+` FROM host_credentials ORDER BY fqdn`)
 	if err != nil {
@@ -716,24 +715,6 @@ func (q *Q) AllCredentials(ctx context.Context) ([]SealedCredentials, error) {
 		out = append(out, c)
 	}
 	return out, rows.Err()
-}
-
-// RecordEscrowExport records a bundle and marks the given hosts' current credentials as escrowed.
-func (q *Q) RecordEscrowExport(ctx context.Context, actor string, fqdns []string, bundleSHA string) (int64, error) {
-	var id int64
-	if err := q.db.QueryRow(ctx, `INSERT INTO escrow_exports (actor, host_count, bundle_sha256) VALUES ($1, $2, $3) RETURNING id`,
-		actor, len(fqdns), bundleSHA).Scan(&id); err != nil {
-		return 0, err
-	}
-	_, err := q.db.Exec(ctx, `UPDATE host_credentials SET escrow_export_id = $1 WHERE fqdn = ANY($2)`, id, fqdns)
-	return id, err
-}
-
-// HostsMissingEscrow counts hosts whose current credentials are in no escrow bundle.
-func (q *Q) HostsMissingEscrow(ctx context.Context) (int, error) {
-	var n int
-	err := q.db.QueryRow(ctx, `SELECT count(*) FROM host_credentials WHERE escrow_export_id IS NULL`).Scan(&n)
-	return n, err
 }
 
 /* ---------------- events ---------------- */

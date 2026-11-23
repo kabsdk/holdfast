@@ -618,8 +618,8 @@
     lab_deploy: false
     is_server: "{{ inventory_hostname in groups['server'] }}"
     is_debian: "{{ images[vms[inventory_hostname].image].family == 'debian' }}"
-    hf_packages: "{{ ['holdfast-restic', 'holdfast-cli', 'holdfast-server', 'holdfast-freshness'] if is_server else ['holdfast-restic', 'holdfast-agent'] }}"
-    hf_units: "{{ ['holdfast-server.service', 'holdfast-freshness.service'] if is_server else ['holdfast-agent.service'] }}"
+    hf_packages: "{{ ['holdfast-restic', 'holdfast-cli', 'holdfast-server'] if is_server else ['holdfast-restic', 'holdfast-agent'] }}"
+    hf_units: "{{ ['holdfast-server.service'] if is_server else ['holdfast-agent.service'] }}"
     hf_version: "{{ hostvars['localhost'].lab_pkg_version }}"
     hf_suffix: "{{ ('_' ~ hf_version ~ '_amd64.deb') if is_debian else ('-' ~ hf_version ~ '.x86_64.rpm') }}"
     hf_files: "{{ hf_packages | product([hf_suffix]) | map('join') | list }}"
@@ -651,6 +651,25 @@
       args:
         executable: /bin/bash
       when: is_server and hf_vault_pkg.rc == 0
+
+    # M10 removed holdfast-freshness, the storage witness (plan-m10 item 1): the server reads the bucket itself. On a lab
+    # made before M10 its package goes, once; holdfast-server's package conflicts with it.
+    - name: Read whether holdfast-freshness is installed
+      ansible.builtin.command:
+        argv: [rpm, -q, holdfast-freshness]
+      register: hf_freshness_pkg
+      changed_when: false
+      failed_when: false
+      when: is_server
+
+    - name: Remove it
+      ansible.builtin.shell: |
+        set -euo pipefail
+        systemctl disable --now holdfast-freshness.service || true
+        rpm -e holdfast-freshness
+      args:
+        executable: /bin/bash
+      when: is_server and hf_freshness_pkg.rc == 0
 
     - name: Make {{ hf_dir }}
       ansible.builtin.file:

@@ -3,10 +3,8 @@ package e2e
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -168,78 +166,68 @@ func TestGatewayIsolation(t *testing.T) {
 	}
 }
 
-// The witness lists the bucket with a list-only key: it agrees with the server while healthy, and
-// shows the gap when the newest snapshot object disappears from storage (PoC test 5). The alert
-// thresholds themselves are checked by the promtool rule tests.
-func TestStalenessAndIndependentStorageWitness(t *testing.T) {
+// The server is the storage witness (plan-m10 item 1): it reads each repository from the bucket with restic and the
+// maintenance key, not through the gateway, and reports each job's newest snapshot there. It agrees with the agents'
+// reports while healthy, and shows the gap when the newest snapshot disappears from storage behind Holdfast's back (PoC
+// test 5). The alert thresholds themselves are checked by the promtool rule tests.
+func TestStalenessAndStorageWitness(t *testing.T) {
 	src := filepath.Join(t.TempDir(), "data")
 	must(t, os.MkdirAll(src, 0o755))
 	must(t, os.WriteFile(filepath.Join(src, "f.txt"), []byte("x"), 0o644))
 	e := newEnv(t)
-	code := e.addHost("file01.example.com", "home", "--path", src, "--every", "1m")
-	a := e.startAgent("file01.example.com", code)
+	const fqdn = "file01.example.com"
+	code := e.addHost(fqdn, "home", "--path", src, "--every", "1m")
+	a := e.startAgent(fqdn, code)
 	key := `holdfast_runs_total{host="file01.example.com",kind="backup",job_id="home",status="success"}`
 	// Three backups: the first runs at enrollment and the next at the coming minute slot, which can be
 	// seconds later; the third is a full slot after the second.
 	waitFor(t, "three backups", 4*time.Minute, func() bool { return metrics(t, e.url+"/metrics")[key] >= 3 })
 	a.kill(syscall.SIGTERM)
 
-	// A list-only identity for the witness.
-	witnessKey, witnessSecret := "HFWITNESS"+strings.ToUpper(randHex(4)), randHex(16)
-	pol := filepath.Join(e.dir, "witness-policy.json")
-	must(t, os.WriteFile(pol, []byte(fmt.Sprintf(`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:ListBucket"],"Resource":["arn:aws:s3:::%s"],"Condition":{"StringLike":{"s3:prefix":["repos/","repos/*"]}}}]}`, e.bucket)), 0o600))
-	mc(t, "admin", "user", "add", "hf", witnessKey, witnessSecret)
-	mc(t, "admin", "policy", "create", "hf", "witness-"+e.bucket, pol)
-	mc(t, "admin", "policy", "attach", "hf", "witness-"+e.bucket, "--user", witnessKey)
-	wenv := filepath.Join(e.dir, "witness.env")
-	must(t, os.WriteFile(wenv, []byte("AWS_ACCESS_KEY_ID="+witnessKey+"\nAWS_SECRET_ACCESS_KEY="+witnessSecret+"\n"), 0o600))
-	witness := func() map[string]float64 {
-		out, err := exec.Command(filepath.Join(binDir, "holdfast-freshness"), "-endpoint", s3Endpoint, "-bucket", e.bucket, "-region", "us-east-1",
-			"-credentials-file", wenv, "-once").CombinedOutput()
-		if err != nil {
-			t.Fatalf("witness: %v %s", err, out)
-		}
-		return parseMetrics(strings.NewReader(string(out)))
+	const stored = `holdfast_storage_newest_snapshot_timestamp_seconds{host="file01.example.com",job_id="home"}`
+	e.cli("snapshot", "list", fqdn, "--refresh")
+	m := metrics(t, e.url+"/metrics")
+	reported, newest := m[`holdfast_job_last_success_timestamp_seconds{host="file01.example.com",job_id="home"}`], m[stored]
+	if newest == 0 || reported-newest > 60 || reported < newest {
+		t.Fatalf("while healthy the bucket's newest snapshot must match the last reported backup: reported %v, bucket %v", reported, newest)
 	}
-	w := witness()
-	if w["holdfast_storage_scrape_success"] != 1 {
-		t.Fatal("the witness could not list storage with its list-only key")
+	if m[`holdfast_catalogue_read_failed{host="file01.example.com"}`] != 0 || m[`holdfast_catalogue_read_timestamp_seconds{host="file01.example.com"}`] == 0 {
+		t.Fatalf("the catalogue read metrics: %v", m)
 	}
-	server := metrics(t, e.url+"/metrics")[`holdfast_job_last_success_timestamp_seconds{host="file01.example.com",job_id="home"}`]
-	newest := w[`holdfast_storage_newest_snapshot_timestamp_seconds{host="file01.example.com"}`]
-	if gap := server - newest; gap > 10 || gap < -10 {
-		t.Fatalf("witnesses should agree while healthy: server %v, storage %v", server, newest)
+	// The exact test: the snapshot the agent last reported is in the bucket, as the server read it after the report.
+	const held = `holdfast_job_snapshot_in_bucket{host="file01.example.com",job_id="home"}`
+	if v, ok := m[held]; !ok || v != 1 {
+		t.Fatalf("%s = %v (present %v), want 1", held, v, ok)
+	}
+	if h := e.host(fqdn); hasProblem(h, "not_in_bucket") || h.Jobs[0].InBucket == nil || !*h.Jobs[0].InBucket {
+		t.Fatalf("file01 while healthy: %+v", h)
 	}
 
-	// Storage loses the newest snapshot (a delete marker, as the bucket is versioned). The witness must
-	// fall back to the second-newest object, and the server now leads it by at least their gap.
-	type obj struct {
-		Key          string    `json:"key"`
-		LastModified time.Time `json:"lastModified"`
+	// Storage loses the newest snapshot (a delete marker, as the bucket is versioned). The server, reading the bucket
+	// again, falls back to the second-newest, and the agents' report now leads it by at least their gap.
+	var snaps []struct {
+		ID   string    `json:"id"`
+		Time time.Time `json:"time"`
 	}
-	var objs []obj
-	for _, line := range strings.Split(mc(t, "ls", "--json", "hf/"+e.bucket+"/repos/file01.example.com/snapshots/"), "\n") {
-		var o obj
-		if json.Unmarshal([]byte(line), &o) == nil && o.Key != "" {
-			objs = append(objs, o)
-		}
+	must(t, json.Unmarshal(e.cli("snapshot", "list", fqdn), &snaps))
+	sort.Slice(snaps, func(i, j int) bool { return snaps[i].Time.After(snaps[j].Time) })
+	if len(snaps) < 3 {
+		t.Fatalf("expected at least 3 snapshots, got %d", len(snaps))
 	}
-	sort.Slice(objs, func(i, j int) bool { return objs[i].LastModified.After(objs[j].LastModified) })
-	if len(objs) < 3 {
-		t.Fatalf("expected at least 3 snapshot objects, got %d", len(objs))
+	mc(t, "rm", "hf/"+e.bucket+"/repos/"+fqdn+"/snapshots/"+snaps[0].ID)
+	e.cli("snapshot", "list", fqdn, "--refresh")
+	after := metrics(t, e.url+"/metrics")[stored]
+	if want := float64(snaps[1].Time.Unix()); after != want {
+		t.Fatalf("after the deletion the server reports the bucket's newest at %v, want the second-newest snapshot's %v", after, want)
 	}
-	mc(t, "rm", "hf/"+e.bucket+"/repos/file01.example.com/snapshots/"+objs[0].Key)
-	w = witness()
-	after := w[`holdfast_storage_newest_snapshot_timestamp_seconds{host="file01.example.com"}`]
-	if want := float64(objs[1].LastModified.Unix()); after != want {
-		t.Fatalf("after the deletion the witness reports newest %v, want the second-newest object's %v", after, want)
+	if gap := reported - after; gap < 30 {
+		t.Fatalf("the reported backup leads the bucket by %.0fs; want at least 30s", gap)
 	}
-	gap := server - after
-	if min := objs[0].LastModified.Sub(objs[1].LastModified).Seconds() - 2; gap < min || gap < 30 {
-		t.Fatalf("the witness gap is %.0fs; want at least %.0fs (the deleted snapshot's lead) and 30s", gap, min)
+	// It was there when the server read it, so it went later: a disappearance, not a backup that never arrived.
+	if h := e.host(fqdn); !hasProblem(h, "disappeared") || hasProblem(h, "not_in_bucket") {
+		t.Fatalf("file01 after its newest snapshot went: %+v", h.Problems)
 	}
 	if lg := metrics(t, e.url+"/metrics")[`holdfast_job_longest_gap_seconds{host="file01.example.com",job_id="home"}`]; lg != 60 {
 		t.Errorf("longest gap metric = %v, want 60 (every 1 minute)", lg)
 	}
-	t.Logf("healthy witness gap %.0fs; after deleting the newest snapshot object the witness lags the server by %.0fs", server-newest, gap)
 }

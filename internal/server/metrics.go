@@ -156,6 +156,38 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(&b, "holdfast_snapshots_not_made_by_holdfast{host=%q} %d\n", h.FQDN, h.NotMadeByHoldfast)
 		fmt.Fprintf(&b, "holdfast_snapshots_disappeared{host=%q} %d\n", h.FQDN, h.Disappeared)
 	}
+	// The server is the storage witness (plan-m10 item 1, in place of holdfast-freshness and decision 008): what the
+	// bucket holds, as restic read it with the maintenance key straight from S3, not through the gateway, after every
+	// backup and at least once a day. HoldfastBackupNotInBucket compares it with what the agents reported.
+	gauge("holdfast_storage_newest_snapshot_timestamp_seconds", "Each job's newest snapshot in the bucket, as restic last read the repository.")
+	if newest, err := q.NewestSnapshots(ctx); err == nil {
+		for _, n := range newest {
+			fmt.Fprintf(&b, "holdfast_storage_newest_snapshot_timestamp_seconds{host=%q,job_id=%q} %d\n", n.FQDN, n.JobID, n.Newest.Unix())
+		}
+	}
+	gauge("holdfast_job_snapshot_in_bucket", "1 if the bucket held the snapshot the agent last reported for the job when the server next read the repository; 0 if it did not.")
+	if reported, err := q.ReportedInBucket(ctx); err == nil {
+		for _, r := range reported {
+			in := 0
+			if r.InBucket {
+				in = 1
+			}
+			fmt.Fprintf(&b, "holdfast_job_snapshot_in_bucket{host=%q,job_id=%q} %d\n", r.FQDN, r.JobID, in)
+		}
+	}
+	gauge("holdfast_catalogue_read_timestamp_seconds", "When the server last read the host's repository from the bucket.")
+	gauge("holdfast_catalogue_read_failed", "1 if the server's last read of the host's repository failed.")
+	for _, h := range hosts {
+		if h.State != "enrolled" {
+			continue
+		}
+		failed := 0
+		if h.CatalogueError != "" {
+			failed = 1
+		}
+		fmt.Fprintf(&b, "holdfast_catalogue_read_timestamp_seconds{host=%q} %s\n", h.FQDN, ts(h.CatalogueRefreshedAt))
+		fmt.Fprintf(&b, "holdfast_catalogue_read_failed{host=%q} %d\n", h.FQDN, failed)
+	}
 	gauge("holdfast_repository_foreign_keys", "Repository keys (restic passwords) added outside Holdfast (decision 032).")
 	for _, h := range hosts {
 		if h.CatalogueRefreshedAt != nil {
@@ -178,10 +210,6 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 			fmt.Fprintf(&b, "holdfast_storage_contract_failed{host=%q,code=%q} 1\n", h.FQDN, code)
 		}
 		fmt.Fprintf(&b, "holdfast_storage_checked_timestamp_seconds{host=%q} %s\n", h.FQDN, ts(&h.Storage.CheckedAt))
-	}
-	if n, err := q.HostsMissingEscrow(ctx); err == nil {
-		gauge("holdfast_escrow_missing_hosts", "Hosts whose current credentials are in no escrow bundle.")
-		fmt.Fprintf(&b, "holdfast_escrow_missing_hosts %d\n", n)
 	}
 	// Decision 036: the escrow files in the bucket. Without a recipient none is written.
 	on := 0
@@ -254,6 +282,7 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	if s.gw != nil {
 		s.gw.WriteMetrics(&b)
 	}
+	s.writeNotifyMetrics(&b)
 	s.writeOffsiteMetrics(ctx, &b) // nothing without offsite:
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
 	_, _ = w.Write([]byte(b.String()))

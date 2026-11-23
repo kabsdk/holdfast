@@ -93,11 +93,15 @@ function Shell({ me, settings }) {
       <header class="top">
         <div class="crumbs"><a href=${link()}>Holdfast${vault ? ' off-site' : ''}</a> / ${seg.length ? seg.slice(0, 2).join(' / ') : 'Fleet'}</div>
         <${Search} />
-        <span>${me.name} · ${me.admin_everywhere ? 'admin' : 'by host'} · via ${settings.login.issuer ? new URL(settings.login.issuer).host : 'the root socket'}</span>
+        <span>${me.name} · ${me.admin_everywhere ? 'admin' : 'by host'} · via ${me.name === 'local:root' ? 'holdfast ui-login' : settings.login.issuer ? new URL(settings.login.issuer).host : 'the root socket'}</span>
         <button class="small" onClick=${async () => { try { await api.logout(); } finally { location.href = '/'; } }}>Log out</button>
       </header>
       ${hosts.error && html`<${ErrorBox} error=${hosts.error} />`}
-      ${!vault && (status.data?.problems || []).map((p) => html`<div class=${'banner ' + (p.severity === 'error' ? 'error' : 'warning')}>${p.message} · <a href=${link('exports')}>Exports</a></div>`)}
+      ${!vault && (status.data?.problems || []).map((p) => {
+        // Where to look next: the export's problems on Exports, a failing alert channel on Settings.
+        const where = p.code === 'notify' ? [link('settings'), 'Settings'] : p.code.startsWith('export') ? [link('exports'), 'Exports'] : null;
+        return html`<div class=${'banner ' + (p.severity === 'error' ? 'error' : 'warning')}>${p.message}${where && html` · <a href=${where[0]}>${where[1]}</a>`}</div>`;
+      })}
       ${page}
     </main>
   </div>`;

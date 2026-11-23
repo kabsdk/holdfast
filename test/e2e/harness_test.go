@@ -37,6 +37,7 @@ import (
 	"time"
 
 	"filippo.io/age"
+	"github.com/minio/minio-go/v7"
 	"go.yaml.in/yaml/v3"
 
 	"github.com/kabsdk/holdfast/internal/pin"
@@ -230,6 +231,8 @@ type envOpts struct {
 	MaintPolicy   string    // give the server a maintenance key with this policy instead of docs/storage.md's
 	GatewayPolicy string    // give the server a gateway key with this policy instead of docs/storage.md's
 	OIDC          bool      // serve the UI listener on uiAddr, with login through the e2e Authelia (M4)
+	UI            bool      // serve the UI listener on uiAddr with no identity provider: root logs in with ui-login (plan-m10 item 6)
+	Webhook       string    // notify.webhook_url and heartbeat_url: the server's alerts go there (plan-m10 item 2)
 	Offsite       bool      // a second bucket, and offsite: in server.yaml (decision 041)
 }
 
@@ -305,17 +308,22 @@ func newEnvWith(t *testing.T, o envOpts) *env {
 		must(t, os.WriteFile(offFile, []byte("AWS_ACCESS_KEY_ID="+oak+"\nAWS_SECRET_ACCESS_KEY="+osk+"\n"), 0o600))
 		set["offsite"] = map[string]any{"endpoint": s3Endpoint, "bucket": e.offBucket, "region": "us-east-1", "maintenance_credentials_file": offFile, "poll": "2s"}
 	}
-	if o.OIDC {
-		if oidcDir == "" {
+	if o.OIDC || o.UI {
+		if oidcDir == "" { // the UI's certificate is the one made for the e2e Authelia, for *.holdfast.test
 			t.Skip("needs the e2e OIDC provider (HOLDFAST_OIDC_DIR; make e2e starts it)")
 		}
+		set["ui"] = map[string]any{"listen": uiAddr, "public_url": uiURL,
+			"tls": map[string]any{"cert_file": filepath.Join(oidcDir, "tls", "public.crt"), "key_file": filepath.Join(oidcDir, "tls", "private.pem")}}
+	}
+	if o.Webhook != "" {
+		set["notify"] = map[string]any{"webhook_url": o.Webhook, "heartbeat_url": o.Webhook}
+	}
+	if o.OIDC {
 		// The client secret goes into a root-only file, as in production.
 		secret := filepath.Join(dir, "oidc-client-secret")
 		b, err := os.ReadFile(filepath.Join(oidcDir, "client-secret"))
 		must(t, err)
 		must(t, os.WriteFile(secret, b, 0o600))
-		set["ui"] = map[string]any{"listen": uiAddr, "public_url": uiURL,
-			"tls": map[string]any{"cert_file": filepath.Join(oidcDir, "tls", "public.crt"), "key_file": filepath.Join(oidcDir, "tls", "private.pem")}}
 		set["auth"] = map[string]any{"oidc": map[string]any{"issuer": issuerURL, "client_id": "holdfast", "client_secret_file": secret,
 			"ca_file": filepath.Join(oidcDir, "ca", "ca.public.crt")}}
 	}
@@ -427,7 +435,7 @@ func maintPolicy(b string) string {
 	return `{"Version":"2012-10-17","Statement":[
  {"Effect":"Allow","Action":["s3:ListBucket","s3:ListBucketVersions","s3:GetBucketLocation","s3:GetBucketVersioning","s3:GetLifecycleConfiguration"],"Resource":["arn:aws:s3:::` + b + `"]},
  {"Effect":"Allow","Action":["s3:GetObject","s3:GetObjectVersion","s3:PutObject","s3:DeleteObject"],"Resource":["arn:aws:s3:::` + b + `/repos/*"]},
- {"Effect":"Allow","Action":["s3:PutObject","s3:DeleteObject"],"Resource":["arn:aws:s3:::` + b + `/escrow/*"]},
+ {"Effect":"Allow","Action":["s3:GetObject","s3:PutObject","s3:DeleteObject"],"Resource":["arn:aws:s3:::` + b + `/escrow/*"]},
  {"Effect":"Allow","Action":["s3:GetObject","s3:PutObject","s3:DeleteObject"],"Resource":["arn:aws:s3:::` + b + `/meta/*"]},
  {"Effect":"Deny","Action":["s3:DeleteObjectVersion"],"Resource":["arn:aws:s3:::` + b + `/*"]}]}`
 }
@@ -455,25 +463,26 @@ func (e *env) makeUserWithPolicy(policy string) (accessKey, secret, policyName s
 // which the checks rightly warn about for real jobs (spec §4.5). TestChecks tests the checks themselves.
 const testAccept = "--accept=R006,R101,R102,R103,S002"
 
-// addHost adds a host with one job through the CLI and returns the enrollment code. A host needs no S3 key
-// (decision 041). Unless jobArgs say otherwise, it accepts testAccept.
+// addHost adds a host, then its one job, through the CLI, as people do (plan-m10 item 4), and returns the enrollment
+// code. A host needs no S3 key (decision 041). Unless jobArgs say otherwise, the job accepts testAccept.
 func (e *env) addHost(fqdn, jobID string, jobArgs ...string) string {
 	e.t.Helper()
 	var res struct {
 		Enrollment struct{ Code string } `json:"enrollment"`
 		Warning    string                `json:"warning"`
 	}
-	args := []string{"host", "add", fqdn, "--job", jobID}
-	if !slices.ContainsFunc(jobArgs, func(a string) bool { return strings.HasPrefix(a, "--accept") }) {
-		args = append(args, testAccept)
-	}
-	out := e.cli(append(args, jobArgs...)...)
+	out := e.cli("host", "add", fqdn)
 	if err := json.Unmarshal(out, &res); err != nil || res.Enrollment.Code == "" {
 		e.t.Fatalf("host add: %v %s", err, out)
 	}
 	if res.Warning != "" {
 		e.t.Fatalf("host add warned: %s", res.Warning)
 	}
+	args := []string{"job", "set", fqdn, jobID}
+	if !slices.ContainsFunc(jobArgs, func(a string) bool { return strings.HasPrefix(a, "--accept") }) {
+		args = append(args, testAccept)
+	}
+	e.cli(append(args, jobArgs...)...)
 	return res.Enrollment.Code
 }
 
@@ -791,8 +800,9 @@ type hostView struct {
 		} `json:"findings"`
 	} `json:"storage"`
 	Jobs []struct {
-		ID     string     `json:"id"`
-		Status *jobStatus `json:"status"`
+		ID       string     `json:"id"`
+		Status   *jobStatus `json:"status"`
+		InBucket *bool      `json:"in_bucket"`
 	} `json:"jobs"`
 	// M5: the escrow file, the repository's size, a rotation not finished, decommission.
 	Escrow struct {
@@ -849,29 +859,25 @@ type escrowHost struct {
 	RepoPassword string `json:"repo_password"`
 }
 
-// escrow exports the escrow bundle through the CLI (root on the server only).
+// escrow reads every host's escrow file from the bucket, escrow/<fqdn>.age, and decrypts it with the recovery key, as
+// someone recovering without Holdfast would (decision 036; plan-m10 item 5: there is no plaintext bundle).
 func (e *env) escrow() map[string]escrowHost {
 	e.t.Helper()
-	p := filepath.Join(e.dir, "escrow-"+randHex(4)+".json")
-	e.cli("escrow", "export", "--to", p)
-	st, err := os.Stat(p)
-	if err != nil || st.Mode().Perm() != 0o600 {
-		e.t.Fatalf("escrow bundle must be 0600: %v %v", st, err)
-	}
-	var b struct{ Hosts []escrowHost }
-	raw, _ := os.ReadFile(p)
-	if err := json.Unmarshal(raw, &b); err != nil {
-		e.t.Fatal(err)
-	}
 	out := map[string]escrowHost{}
-	for _, h := range b.Hosts {
-		out[h.FQDN] = h
+	for o := range s3(e.t).ListObjects(context.Background(), e.bucket, minio.ListObjectsOptions{Prefix: "escrow/"}) {
+		must(e.t, o.Err)
+		fqdn, ok := strings.CutSuffix(strings.TrimPrefix(o.Key, "escrow/"), ".age")
+		if !ok {
+			continue
+		}
+		f := e.escrowFile(fqdn)
+		out[f.FQDN] = escrowHost{FQDN: f.FQDN, Repository: f.Repository, RepoPassword: f.RepoPassword}
 	}
 	return out
 }
 
 // resticFor opens a host's repository with plain restic, straight from S3 with the storage admin's key, as
-// someone recovering from the escrow bundle would.
+// someone recovering from the escrow files would.
 func (e *env) resticFor(h escrowHost) restic.Runner {
 	pf := filepath.Join(e.dir, "pass-"+randHex(4))
 	must(e.t, os.WriteFile(pf, []byte(h.RepoPassword), 0o600))

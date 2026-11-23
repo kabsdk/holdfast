@@ -165,8 +165,8 @@ probe() {
 		fi
 		if [[ $vm == "$HF_SERVER_VM" ]]; then
 			c+="; echo postgresql \$(systemctl is-active postgresql)"
-			for bin in holdfast-server holdfast holdfast-freshness; do c+="; echo bin-$bin \$(sha256sum /usr/bin/$bin 2>/dev/null | cut -c1-64)"; done
-			for u in holdfast-server holdfast-freshness; do c+="; echo unit-$u \$(systemctl is-enabled $u 2>/dev/null)"; done
+			for bin in holdfast-server holdfast; do c+="; echo bin-$bin \$(sha256sum /usr/bin/$bin 2>/dev/null | cut -c1-64)"; done
+			c+="; echo unit-holdfast-server \$(systemctl is-enabled holdfast-server 2>/dev/null)"
 			c+="; echo holdfast-server \$(systemctl is-active holdfast-server 2>/dev/null)"
 			c+="; echo authelia \$(systemctl is-active authelia 2>/dev/null)"
 		elif [[ $vm != "$HF_STORAGE_VM" ]]; then

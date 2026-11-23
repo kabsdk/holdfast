@@ -6,11 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"go.yaml.in/yaml/v3"
 
 	"github.com/kabsdk/holdfast/internal/access"
 	"github.com/kabsdk/holdfast/internal/config"
@@ -191,8 +194,45 @@ func (s *Server) sealExport(ctx context.Context, now time.Time) ([]byte, int, er
 	for _, t := range c.Tables {
 		n += len(t)
 	}
+	files, err := s.exportFiles()
+	if err != nil {
+		return nil, 0, err
+	}
+	c.Files = files
 	data, err := export.Seal(c, s.set.Escrow.AgeRecipient)
 	return data, n, err
+}
+
+// ServerFiles names the server's files a rebuild needs besides its database (plan-m10 item 3), by the setting that
+// gives their path: the agent listener's certificate, key and CA, which the agents pin, and the UI's certificate and
+// key. The nightly export carries them, and restore-export writes them where the new server.yaml says.
+func ServerFiles(set Settings) map[string]string {
+	return map[string]string{"tls.cert_file": set.TLS.CertFile, "tls.key_file": set.TLS.KeyFile, "tls.ca_file": set.TLS.CAFile,
+		"tls.ca_key_file": set.TLS.CAKeyFile, "ui.tls.cert_file": set.UI.TLS.CertFile, "ui.tls.key_file": set.UI.TLS.KeyFile}
+}
+
+// exportFiles reads ServerFiles, and the settings in force without the database's DSN, as server.yaml. The S3 keys,
+// the database's password and the OIDC secret stay out of the export: the admin gives them again.
+func (s *Server) exportFiles() (map[string][]byte, error) {
+	out := map[string][]byte{}
+	for name, p := range ServerFiles(s.set) {
+		if p == "" {
+			continue
+		}
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", name, err)
+		}
+		out[name] = b
+	}
+	set := s.set
+	set.DatabaseDSN = ""
+	y, err := yaml.Marshal(set)
+	if err != nil {
+		return nil, err
+	}
+	out["server.yaml"] = y
+	return out, nil
 }
 
 // pruneExports deletes the exports beyond the newest ExportKeep, and returns their names. Versioning keeps their old
@@ -252,6 +292,22 @@ func (s *Server) serverProblems(ctx context.Context) []Problem {
 	if s.set.IsVault() {
 		return ps
 	}
+	// The recovery file belongs offline (plan-m10 item 3): while it is on the server, a thief of the server's disk
+	// gets the key to every backup, and a lost server takes it along.
+	if p := s.set.RecoveryFile; p != "" {
+		if _, err := os.Stat(p); err == nil {
+			ps = append(ps, Problem{Code: "recovery_file", Severity: "warning",
+				Message: fmt.Sprintf("the recovery file is still on the server, at %s: copy it somewhere safe off this server, such as a password manager, then delete it here", p)})
+		}
+	}
+	s.notes.mu.Lock()
+	for _, ch := range []string{"mail", "webhook", "heartbeat"} {
+		if s.notes.failed[ch] {
+			ps = append(ps, Problem{Code: "notify", Severity: "warning",
+				Message: fmt.Sprintf("the server's alerts by %s fail; its log says why, and holdfast notify test tries again", ch)})
+		}
+	}
+	s.notes.mu.Unlock()
 	if !s.escrowOn() {
 		return append(ps, Problem{Code: "export", Severity: "warning",
 			Message: "no nightly export is written, so a lost server cannot be rebuilt from one: set escrow.age_recipient in server.yaml (decision 040)"})

@@ -217,6 +217,44 @@ func (b S3Bucket) PutEscrow(ctx context.Context, fqdn string, data []byte) error
 	return nil
 }
 
+// ListEscrow lists the hosts that have an escrow file, for a rebuilt server to bring back the ones its export lacks
+// (plan-m10 item 5). It needs s3:ListBucket.
+func (b S3Bucket) ListEscrow(ctx context.Context) ([]string, error) {
+	c, err := b.client()
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for o := range c.ListObjects(ctx, b.Location.Bucket, minio.ListObjectsOptions{Prefix: "escrow/"}) {
+		if o.Err != nil {
+			return nil, fmt.Errorf("listing escrow/: %s", s3err(o.Err))
+		}
+		if fqdn, ok := strings.CutSuffix(strings.TrimPrefix(o.Key, "escrow/"), ".age"); ok && !strings.HasPrefix(fqdn, "holdfast-probe-") {
+			out = append(out, fqdn)
+		}
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+// GetEscrow reads a host's escrow file, still encrypted: the maintenance key may read it (B012) but cannot open it.
+func (b S3Bucket) GetEscrow(ctx context.Context, fqdn string) ([]byte, error) {
+	c, err := b.client()
+	if err != nil {
+		return nil, err
+	}
+	o, err := c.GetObject(ctx, b.Location.Bucket, EscrowKey(fqdn), minio.GetObjectOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("reading %s: %s", EscrowKey(fqdn), s3err(err))
+	}
+	defer o.Close()
+	data, err := io.ReadAll(o)
+	if err != nil {
+		return nil, fmt.Errorf("reading %s: %s; the maintenance key needs s3:GetObject on escrow/* (docs/storage.md)", EscrowKey(fqdn), s3err(err))
+	}
+	return data, nil
+}
+
 // PutMeta writes an export.
 func (b S3Bucket) PutMeta(ctx context.Context, name string, data []byte) error {
 	if !ValidMetaName(name) {

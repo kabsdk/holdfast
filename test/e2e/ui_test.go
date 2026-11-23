@@ -75,7 +75,8 @@ func TestUIPages(t *testing.T) {
 	src := smallSource(t)
 	e := newEnvWith(t, envOpts{OIDC: true})
 	const web = "web01.example.com"
-	e.startAgent(web, e.addHost(web, "system", "--path", src, "--daily", "02:00"))
+	// A short retention, so that every save trips R101 and the UI's accept is used below.
+	e.startAgent(web, e.addHost(web, "system", "--path", src, "--daily", "02:00", "--keep-daily", "7d", "--keep-last", "3"))
 	e.waitProgress(web, "first_backup_done", 2*time.Minute)
 	must(t, os.WriteFile(src+"/later.txt", []byte("a second version\n"), 0o644))
 	e.cli("job", "run", web, "system")
@@ -108,7 +109,7 @@ func TestUIPages(t *testing.T) {
 	field(t, ctx, "Exclude", "*.tmp")
 	waitText(t, ctx, "excludes[0]") // the diff of the change
 	field(t, ctx, "Message", "exclude temporary files, from the UI")
-	// The test job keeps only the newest 3, so R101 fires, and Save waits until it is accepted.
+	// The test job keeps 7 days, so R101 fires, and Save waits until it is accepted.
 	waitText(t, ctx, "R101")
 	clickText(t, ctx, "label", "I accept")
 	waitText(t, ctx, "Ready to save")

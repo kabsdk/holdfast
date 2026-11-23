@@ -7,7 +7,7 @@
 #      statements in the bucket policy, keeping the bucket's data, and lab/rgw-offsite-layout.sh, the off-site bucket.
 #      No host has an RGW user: hosts back up through the server's gateway (decision 041)
 #   1. the fixture, made anew: hf-fidelity build /srv/hf-fixture
-#   2. Holdfast, on the server: holdfast host add <fqdn> --job fidelity --path /srv/hf-fixture --daily 03:00 --keep-daily 14d --keep-monthly 12mo;
+#   2. Holdfast, on the server: holdfast host add <fqdn>, then holdfast job set <fqdn> fidelity --path /srv/hf-fixture --daily 03:00 --keep-daily 14d --keep-monthly 12mo;
 #      on the VM: holdfast-agent enroll against https://<server>:8443 with the lab CA's pin, which makes the agent's own
 #      key and certificate, restore.root /var/restore in agent.yaml, and holdfast-agent.service enabled and started. The
 #      first backup runs at once. A host Holdfast knows whose agent is enrolled to this server with a certificate:
@@ -163,11 +163,13 @@ print(h[0]["state"] if h else "absent")' "$fqdn" <<<"$hosts")
 		vm_ssh "$vm" 'systemctl disable -q --now holdfast-agent 2>/dev/null; rm -rf /etc/holdfast/agent.yaml /etc/holdfast/credentials /var/lib/holdfast-agent' </dev/null
 		local code
 		if [[ $hstate == absent ]]; then
-			say "  $vm: holdfast host add $fqdn --job $job --path $fixture --daily 03:00 --keep-daily 14d --keep-monthly 12mo"
-			out=$(vm_ssh "$HF_SERVER_VM" "holdfast host add $fqdn --job $job --path $fixture --daily 03:00 --keep-daily 14d --keep-monthly 12mo -m 'lab/lab test: the fidelity fixture' --json" \
+			say "  $vm: holdfast host add $fqdn; holdfast job set $fqdn $job --path $fixture --daily 03:00 --keep-daily 14d --keep-monthly 12mo"
+			out=$(vm_ssh "$HF_SERVER_VM" "holdfast host add $fqdn -m 'lab/lab test: the fidelity fixture' --json" \
 				</dev/null) || { fail "holdfast host add failed (the log has its answer)"; return 1; }
 			code=$(js 'print(j["enrollment"]["code"])' <<<"$out")
 			js 'print("added in revision %s; storage checks: %s%s" % (j["revision"], ", ".join(f["code"] for f in (j.get("storage") or {}).get("findings") or []) or "all passed", "; warning: " + j["warning"] if j.get("warning") else ""))' <<<"$out"
+			vm_ssh "$HF_SERVER_VM" "holdfast job set $fqdn $job --path $fixture --daily 03:00 --keep-daily 14d --keep-monthly 12mo -m 'lab/lab test: the fidelity fixture' --json" \
+				</dev/null >/dev/null || { fail "holdfast job set failed (the log has its answer)"; return 1; }
 		else
 			say "  $vm: Holdfast has $fqdn ($hstate); a new enrollment code: holdfast host enroll-code $fqdn"
 			out=$(hf host enroll-code "$fqdn" --json) || { fail "holdfast host enroll-code failed"; return 1; }

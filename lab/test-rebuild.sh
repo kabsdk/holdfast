@@ -84,7 +84,7 @@ if ! vm_ssh "$HF_SERVER_VM" bash -s <<'EOF'; then
 set -euo pipefail
 systemctl stop holdfast-server
 runuser -u postgres -- psql -X -q -v ON_ERROR_STOP=1 -c 'DROP DATABASE holdfast WITH (FORCE)' -c 'CREATE DATABASE holdfast OWNER holdfast'
-rpm -e holdfast-server holdfast-freshness holdfast-cli holdfast-restic
+rpm -e holdfast-server holdfast-cli holdfast-restic
 rm -rf /etc/holdfast /var/lib/holdfast-server
 EOF
 	result FAIL "server lost" "wiping $HF_SERVER_VM failed: the log has why"
@@ -94,12 +94,12 @@ result PASS "server lost" "database dropped and made again empty; packages, /etc
 
 # 4. The runbook.
 say "$HF_SERVER_VM: the packages $pkgver installed again, /etc/holdfast put back, restore-export -latest, holdfast-server started"
-pkgs=$(printf '/var/tmp/holdfast-packages/holdfast-%s-'"$pkgver"'.x86_64.rpm ' restic cli server freshness)
+pkgs=$(printf '/var/tmp/holdfast-packages/holdfast-%s-'"$pkgver"'.x86_64.rpm ' restic cli server)
 if ! vm_ssh "$HF_SERVER_VM" "rpm -i $pkgs" </dev/null || ! vm_ssh "$HF_SERVER_VM" 'tar -C / -xpf -' <"$copy"; then
 	result FAIL "reinstalled" "installing the packages or putting /etc/holdfast back failed"
 	finish
 fi
-result PASS "reinstalled" "holdfast-restic, -cli, -server and -freshness $pkgver installed again; /etc/holdfast put back"
+result PASS "reinstalled" "holdfast-restic, -cli and -server $pkgver installed again; /etc/holdfast put back"
 vm_ssh "$HF_SERVER_VM" 'umask 077; cat >/root/hf-escrow-age.key' <"$HF_STATE/credentials/escrow-age.key"
 rc=0
 out=$(vm_ssh "$HF_SERVER_VM" 'holdfast-server restore-export -identity /root/hf-escrow-age.key -latest; rc=$?; rm -f /root/hf-escrow-age.key; exit $rc' </dev/null 2>&1) || rc=$?

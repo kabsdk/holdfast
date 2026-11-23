@@ -9,7 +9,9 @@ signed yet (plan-m5 Q2): check them against `dist/SHA256SUMS` before you install
 | `holdfast-agent` | `/usr/bin/holdfast-agent` and `holdfast-agent.service` | `holdfast-restic` of the same version |
 | `holdfast-server` | `/usr/bin/holdfast-server`, `holdfast-server.service`, the example `server.yaml`, the alert rules and scripts | `holdfast-restic` and `holdfast-cli` of the same version |
 | `holdfast-cli` | `/usr/bin/holdfast` | |
-| `holdfast-freshness` | `/usr/bin/holdfast-freshness`, the storage witness, and its unit | |
+
+M1's `holdfast-freshness`, the storage witness, left in M10: the server is the witness now (decision 045), and its
+package replaces the old one.
 
 The binaries are static, so the same packages run on Ubuntu, Debian, RHEL, Oracle Linux and their
 relatives. The lab installs them on Ubuntu, RHEL and Oracle Linux (`lab/README.md`).
@@ -23,19 +25,21 @@ licences of the software it contains, in `/usr/share/doc/<package>/`.
 Run it as root. It checks every setting before it changes anything, and stops with the list of what is missing or
 wrong. Run again, it upgrades. `sh install.sh help` lists every setting.
 
-**The server.** First make the bucket and its two keys ([storage.md](storage.md)), and an age key pair offline
-(`age-keygen -o escrow-key.txt`; keep that file offline). Put the settings in a root-only file, so the secrets stay
-out of the shell's history:
+**The server.** First make the bucket and its two keys ([storage.md](storage.md)). Put the settings in a root-only
+file, so the secrets stay out of the shell's history, and keep a copy offline: a rebuild needs them again.
 
 ```
-# holdfast.env
+# holdfast.env: required
 HOLDFAST_S3_ENDPOINT=https://s3.example.internal
 HOLDFAST_S3_BUCKET=holdfast
 HOLDFAST_GATEWAY_ACCESS_KEY_ID=…
 HOLDFAST_GATEWAY_SECRET_ACCESS_KEY=…
 HOLDFAST_MAINTENANCE_ACCESS_KEY_ID=…
 HOLDFAST_MAINTENANCE_SECRET_ACCESS_KEY=…
-HOLDFAST_ESCROW_RECIPIENT=age1…
+# alerts (decision 046): mail, a webhook, or both, and a heartbeat for a dead man's switch outside the site
+HOLDFAST_MAIL_TO=backup-team@example.internal
+HOLDFAST_SMTP=relay.example.internal:587
+HOLDFAST_HEARTBEAT_URL=https://hc.example.org/ping/…
 ```
 
 ```
@@ -43,10 +47,25 @@ set -a; . ./holdfast.env; set +a
 curl -sfL https://github.com/kabsdk/holdfast/releases/latest/download/install.sh | sh -s - server
 ```
 
-It installs PostgreSQL from the distribution (or uses `HOLDFAST_DATABASE_DSN`), makes the credentials key and a CA for
-the agent listener, writes `server.yaml`, starts the server and prints the pin agents use. The web UI's settings
-(`HOLDFAST_UI_URL`, its certificate, and the OIDC provider) are optional; without them, use the CLI as root on the
-server.
+It installs PostgreSQL from the distribution (or uses `HOLDFAST_DATABASE_DSN`), makes the credentials key, an age key
+pair, and a CA that signs the agent listener's certificate and the web UI's, writes `server.yaml`, starts the server
+and prints the pin agents use. Then:
+- **The recovery file**, `/root/holdfast-recovery.txt` (decision 047): the age private key and the credentials key.
+  Copy it to a safe place off the server, such as a password manager, then delete it there; until then the server
+  shows the problem `recovery_file`. With the bucket's two keys it rebuilds a lost server, and with the escrow files it
+  opens every repository. To use an age key of your own instead, give its public key as `HOLDFAST_ESCROW_RECIPIENT`:
+  the file then holds the credentials key alone, and you add your key's `AGE-SECRET-KEY-…` line to it.
+- **The web UI** is at `https://<the server's FQDN>/` (decision 049). Log in as root on the server with `holdfast
+  ui-login`, which prints a one-time link. Browsers warn about the certificate until they trust
+  `/etc/holdfast/tls/ca.crt`; give `HOLDFAST_UI_TLS_CERT` and `HOLDFAST_UI_TLS_KEY` for one they trust, or
+  `HOLDFAST_UI_URL=off` for no UI. For others to log in as themselves, with roles from their groups, give the OIDC
+  provider: `HOLDFAST_OIDC_ISSUER`, `HOLDFAST_OIDC_CLIENT_ID` and `HOLDFAST_OIDC_CLIENT_SECRET`, all three. An LDAP or
+  Active Directory goes behind the provider (Authelia, Dex, Keycloak).
+- **Hosts.** `holdfast host add web01.example.com` prints the line to run on the host. `holdfast job set
+  web01.example.com system --path /etc --path /home` gives it a job, with the default schedule and retention (daily at
+  02:00; 14 days, 8 weeks, 12 months, 3 years) unless you give others (decision 048).
+
+`sh install.sh help` lists every setting, with off-site copies and the rest.
 
 **An agent.** `holdfast host add` prints the line to run on the host, as root:
 
@@ -54,8 +73,8 @@ server.
 curl -sfL …/install.sh | HOLDFAST_SERVER=https://holdfast.example.internal:8443 HOLDFAST_FQDN=web01.example.com HOLDFAST_CODE=… HOLDFAST_CA_SHA256=… HOLDFAST_VERSION=… sh -
 ```
 
-**A workstation's CLI**: `… | sh -s - cli`. **The witness**: `… | sh -s - witness`, with `HOLDFAST_S3_ENDPOINT`,
-`HOLDFAST_S3_BUCKET` and its list-only key.
+**A workstation's CLI**: `… | sh -s - cli`, then `holdfast login --server <the UI's URL>`, which needs the OIDC
+provider.
 
 To read the script before running it: `curl -sfLO …/install.sh`, read it, then `sh install.sh server`.
 
@@ -72,13 +91,13 @@ Installing enables nothing, because each service needs its config first:
   ([storage.md](storage.md)), and a TLS certificate for the agent listener, which is required. Write
   `/etc/holdfast/server.yaml`, using `/usr/share/holdfast/server.yaml.example`, with `ca_sha256` set to the sha256
   of your CA's certificate (or of the server's own, if it is self-signed), then `systemctl enable --now
-  holdfast-server`. The alert rules and the alerting scripts are in `/usr/share/holdfast/` too
-  ([alerting.md](alerting.md)).
+  holdfast-server`. `holdfast-server recovery-file -config /etc/holdfast/server.yaml holdfast-recovery.txt` writes
+  its recovery file; add your age key's line to it (decision 047). The Prometheus rules and scripts, optional, are in
+  `/usr/share/holdfast/` ([alerting.md](alerting.md)).
 - **An agent:** run the command `holdfast host add` printed, as root on the host:
   `holdfast-agent enroll --server … --fqdn … --code … --ca-sha256 …`. It makes the agent's own key and
   certificate, which the server pins; nothing else is needed on the host, no S3 key. Then `systemctl enable
   --now holdfast-agent`.
-- **The witness:** see `holdfast-freshness.service`'s comments.
 - **Off-site copies**, optional (spec §3.7): make the off-site bucket and its key ([storage.md](storage.md)), add
   the `offsite:` section to `server.yaml` (the example has it, commented out), and restart holdfast-server. It makes
   the schema `offsite` in its own database and starts copying. Nothing else is installed or registered.
@@ -87,10 +106,10 @@ The agent's unit runs it at low CPU and I/O priority (`Nice=10`, `IOSchedulingCl
 gives way to the host's own work.
 
 **Keep offline, from the start**, what a rebuilt server needs (decision 042: one server, replaced if lost;
-[runbooks/rebuild-holdfast.md](runbooks/rebuild-holdfast.md)): the escrow's age key, the credentials key,
-`server.yaml` with every file it names, and the agent listener's TLS certificate and key, or at least their CA, which
-the agents pin. The server exports its database every night to `meta/` in the bucket, encrypted to the age key; a
-new server is restored from the newest with `holdfast-server restore-export`.
+[runbooks/rebuild-holdfast.md](runbooks/rebuild-holdfast.md)): the recovery file and the settings you installed with,
+the bucket's two keys among them. The server exports its database and its TLS files every night to `meta/` in the
+bucket, encrypted to the age key; on a new machine, the server's line with `HOLDFAST_RECOVERY_FILE` restores the
+newest and starts the server.
 
 ## Sizing
 
@@ -114,6 +133,17 @@ primary has. The vault's old bucket keeps its copies, with the passwords in its 
 
 **From a release before M9**, give the maintenance key `s3:GetObject`, `s3:PutObject` and `s3:DeleteObject` on
 `meta/*` in each bucket ([storage.md](storage.md)): the nightly export goes there, and B016 fails without them.
+
+**From a release before M10:**
+- give the maintenance key `s3:GetObject` on `escrow/*` too: a rebuilt server reads the escrow files of hosts added
+  after the export, and B012 fails without it;
+- remove `holdfast-freshness` where it runs, its list-only key, and its scrape job; the server reads the bucket itself
+  (decision 045);
+- write the recovery file, `holdfast-server recovery-file -config /etc/holdfast/server.yaml holdfast-recovery.txt`, add
+  your age key's `AGE-SECRET-KEY-…` line to it, and keep it offline (decision 047). `holdfast escrow export` is gone;
+- scripts that ran `host add` with a job's flags run `holdfast job set` after it (decision 048);
+- for alerts without Prometheus, add `notify:` to `server.yaml` (decision 046). For the web UI without an OIDC
+  provider, set `ui:` and log in with `holdfast ui-login` (decision 049). An upgrade does not change `server.yaml`.
 
 **Otherwise, upgrade the server first, then the agents, in any order and at any pace.** The agent sends its protocol
 version with every poll, and the server answers with the range it accepts:

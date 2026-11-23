@@ -20,9 +20,10 @@ import (
 // of a matching version, and the files can be read without Holdfast.
 
 // exportSkip are left out of an export (plan-m9 Q2): the sessions, stale after a rebuild, whose users log in again;
-// the gateway's grants, each of which lasts one restore, which a rebuild ends; and the migrations' own table, which
-// restoring makes again.
-var exportSkip = map[string]bool{"sessions": true, "gateway_grants": true, "schema_migrations": true}
+// the gateway's grants, each of which lasts one restore, which a rebuild ends; the alerts sent (plan-m10 item 2),
+// which a rebuilt server sends again for what is still wrong; and the migrations' own table, which restoring makes
+// again.
+var exportSkip = map[string]bool{"sessions": true, "gateway_grants": true, "notify_state": true, "schema_migrations": true}
 
 // identifier is a table or column name Holdfast's migrations make.
 var identifier = regexp.MustCompile(`^[a-z_][a-z0-9_]{0,62}$`)

@@ -70,7 +70,7 @@ func TestKilledBackupIsReportedAndRecovered(t *testing.T) {
 	waitFor(t, "interrupted reported, then a success on the new revision", 3*time.Minute, func() bool {
 		h := e.host(fqdn)
 		evs := e.events(fqdn)
-		return countStatus(evs, "big", "interrupted") == 1 && countStatus(evs, "big", "success") >= 1 && h.InSync && h.Agent != nil && h.Agent.AppliedRevision == 2
+		return countStatus(evs, "big", "interrupted") == 1 && countStatus(evs, "big", "success") >= 1 && h.InSync && h.Agent != nil && h.Agent.AppliedRevision == 3
 	})
 	evs := e.events(fqdn) // newest first: the success came after the interruption
 	var order []string
@@ -149,8 +149,9 @@ func TestConfigHistoryDriftCheckAndNoLeaks(t *testing.T) {
 	e.waitProgress(fqdn, "first_backup_done", 2*time.Minute)
 	waitFor(t, "in sync", 30*time.Second, func() bool { return e.host(fqdn).InSync })
 
-	e.cli("job", "set", fqdn, "system", "--path", src, "--path", other, "--daily", "02:00", "--base", "1", "-m", "two paths", testAccept)
-	if out, err := e.cliErr("job", "set", fqdn, "system", "--path", src, "--daily", "03:00", "--base", "1", "-m", "stale", testAccept); err == nil || !strings.Contains(string(out), "conflict") {
+	// Revision 1 added the host and revision 2 its job (plan-m10 item 4); this is revision 3.
+	e.cli("job", "set", fqdn, "system", "--path", src, "--path", other, "--daily", "02:00", "--base", "2", "-m", "two paths", testAccept)
+	if out, err := e.cliErr("job", "set", fqdn, "system", "--path", src, "--daily", "03:00", "--base", "2", "-m", "stale", testAccept); err == nil || !strings.Contains(string(out), "conflict") {
 		t.Fatalf("a save from a stale base must be refused with a conflict: %v %s", err, out)
 	}
 	var diff struct {
@@ -159,28 +160,28 @@ func TestConfigHistoryDriftCheckAndNoLeaks(t *testing.T) {
 			To   any    `json:"to"`
 		} `json:"changes"`
 	}
-	must(t, json.Unmarshal(e.cli("revision", "diff", "1", "2"), &diff))
+	must(t, json.Unmarshal(e.cli("revision", "diff", "2", "3"), &diff))
 	if len(diff.Changes) != 1 || diff.Changes[0].Path != "hosts.mon01.example.com.jobs.system.paths[1]" || diff.Changes[0].To != other {
-		t.Fatalf("diff 1 2: %+v", diff.Changes)
+		t.Fatalf("diff 2 3: %+v", diff.Changes)
 	}
 	var revs []struct{ Number int64 }
 	must(t, json.Unmarshal(e.cli("revision", "list"), &revs))
-	if len(revs) != 2 {
+	if len(revs) != 3 {
 		t.Fatalf("revisions: %+v", revs)
 	}
-	waitFor(t, "revision 2 applied", 30*time.Second, func() bool { h := e.host(fqdn); return h.InSync && h.Agent != nil && h.Agent.AppliedRevision == 2 })
+	waitFor(t, "revision 3 applied", 30*time.Second, func() bool { h := e.host(fqdn); return h.InSync && h.Agent != nil && h.Agent.AppliedRevision == 3 })
 
 	// Drift: the agent is down while a change is saved.
 	a.kill(syscall.SIGTERM)
 	e.cli("job", "set", fqdn, "system", "--path", src, "--path", other, "--daily", "02:00", "--exclude", "*.log", "-m", "exclude logs", testAccept)
-	if h := e.host(fqdn); h.InSync || h.DesiredRevision != 3 {
+	if h := e.host(fqdn); h.InSync || h.DesiredRevision != 4 {
 		t.Fatalf("the host should show drift: in_sync=%v desired=%d", h.InSync, h.DesiredRevision)
 	}
 	if m := metrics(t, e.url+"/metrics"); m[`holdfast_agent_config_in_sync{host="mon01.example.com"}`] != 0 {
 		t.Fatal("drift not exported")
 	}
 	e.runAgent(a)
-	waitFor(t, "back in sync on revision 3", 30*time.Second, func() bool { h := e.host(fqdn); return h.InSync && h.Agent != nil && h.Agent.AppliedRevision == 3 })
+	waitFor(t, "back in sync on revision 4", 30*time.Second, func() bool { h := e.host(fqdn); return h.InSync && h.Agent != nil && h.Agent.AppliedRevision == 4 })
 
 	// A repository check: the server tests the storage at once, and the agent runs restic check in its own
 	// loop and reports it (decision 030).
@@ -226,7 +227,7 @@ func TestConfigHistoryDriftCheckAndNoLeaks(t *testing.T) {
 	secrets := map[string]string{"repository password": h.RepoPassword, "gateway key's secret": strings.TrimSpace(gwSecret), "agent's private key": agentKeyLine(t, a)}
 	var blobs []string
 	for _, args := range [][]string{{"host", "list"}, {"host", "show", fqdn}, {"host", "events", fqdn}, {"audit"}, {"revision", "list"},
-		{"revision", "show", "1"}, {"revision", "show", "3"}, {"status"}} {
+		{"revision", "show", "1"}, {"revision", "show", "4"}, {"status"}} {
 		blobs = append(blobs, string(e.cli(args...)))
 	}
 	for _, l := range e.logs {
@@ -329,7 +330,8 @@ func TestTLSPinning(t *testing.T) {
 			InstallScript  string `json:"install_script"`
 		} `json:"enrollment"`
 	}
-	must(t, json.Unmarshal(e.cli("host", "add", fqdn, "--job", "system", "--path", src, "--daily", "02:00", testAccept), &res))
+	must(t, json.Unmarshal(e.cli("host", "add", fqdn), &res))
+	e.cli("job", "set", fqdn, "system", "--path", src, "--daily", "02:00", testAccept)
 	if !strings.Contains(res.Enrollment.InstallCommand, "--ca-sha256 "+cert.pin) {
 		t.Fatalf("the install command does not pin the server: %s", res.Enrollment.InstallCommand)
 	}

@@ -1,6 +1,7 @@
 # 009: Prometheus scrapes only the server and the witness
 
-Status: accepted, 2026-11-21
+Status: accepted, 2026-11-21. **Amended by decisions 045 and 046 (2026-11-23):** there is no witness to scrape, and
+Prometheus is optional, since the server sends its own alerts.
 
 ## Decision
 

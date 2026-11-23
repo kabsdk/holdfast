@@ -7,8 +7,8 @@ import (
 )
 
 // Problems are what the server knows is wrong with a host (plan-m4 Q11): the UI's Problems page and Fleet's
-// "Needs attention". They are the server's own view; paging stays with Prometheus and its alert rules, and
-// the storage witness is judged there, apart from the server (decisions 008 and 009).
+// "Needs attention", and what the server's own alerts send (notify.go). The server is the storage witness too
+// (plan-m10 item 1): not_in_bucket compares the agents' reports with what restic reads from the bucket.
 
 // Problem is one thing wrong with a host, or with one of its jobs.
 type Problem struct {
@@ -18,8 +18,8 @@ type Problem struct {
 	Message  string `json:"message"`
 }
 
-// OfflineAfter is how long an enrolled agent may be silent before it is a problem. Backups go on without the
-// server, so this is a warning; a job that goes stale is the error.
+// OfflineAfter is how long an enrolled agent may be silent before it is a problem. It is a warning: a host may be
+// down on purpose, and a job that goes stale or fails is the error.
 const OfflineAfter = 10 * time.Minute
 
 func ago(d time.Duration) string {
@@ -71,7 +71,7 @@ func problems(v HostView, now time.Time, retentionFailed, escrowOn bool) []Probl
 		add("size", "warning", "", "the repository's size could not be measured: %s", v.SizeError)
 	}
 	if v.State == "enrolled" && v.Agent != nil && v.Agent.LastSeenAt != nil && now.Sub(*v.Agent.LastSeenAt) > OfflineAfter {
-		add("offline", "warning", "", "the agent has not been in touch for %s; it backs up on its own meanwhile", ago(now.Sub(*v.Agent.LastSeenAt)))
+		add("offline", "warning", "", "the agent has not been in touch for %s: its backups go through this server, so none runs until it is back", ago(now.Sub(*v.Agent.LastSeenAt)))
 	}
 	if v.Storage != nil && !v.Storage.OK() {
 		add("storage", "error", "", "the S3 key fails the storage contract: %s (docs/storage.md)", strings.Join(v.Storage.Codes(), ", "))
@@ -113,6 +113,11 @@ func problems(v HostView, now time.Time, retentionFailed, escrowOn bool) []Probl
 		add("offsite_copy", "error", "", "the last copy to off-site failed: %s", o.CopyError)
 	}
 	for _, j := range v.Jobs {
+		// The storage witness (plan-m10 item 1): the agent said it backed up, and restic, reading the bucket after the
+		// report, did not find the snapshot. Whatever the agent says, that backup is not there to restore.
+		if j.InBucket != nil && !*j.InBucket && j.Status != nil {
+			add("not_in_bucket", "error", j.ID, "the agent reported a backup (snapshot %.8s), but the bucket does not hold it: the server read the repository after the report and did not find it", j.Status.LastSnapshotID)
+		}
 		switch {
 		case j.Lagging:
 			add("lag", "error", j.ID, "the newest off-site copy is %s behind the newest snapshot in primary, more than twice the job's longest gap", ago(time.Duration(*j.BehindS)*time.Second))

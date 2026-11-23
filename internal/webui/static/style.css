@@ -15,6 +15,10 @@ h2 { font-size: 1.1rem; margin: 1.4rem 0 .5rem; }
 h3 { font-size: 1rem; margin: 1rem 0 .4rem; }
 .muted { color: var(--muted); }
 .ok { color: var(--ok); }
+/* The login page of a server without an identity provider (uilogin.go). */
+.panel.loginpage { max-width: 36rem; margin: 4rem auto; line-height: 1.55; }
+.loginpage p { margin: .6rem 0; }
+.loading { padding: 2rem; }
 
 .layout { display: grid; grid-template-columns: 220px 1fr; min-height: 100vh; }
 nav.side { background: #151b2b; color: #cfd6e4; padding: 1rem .75rem; }

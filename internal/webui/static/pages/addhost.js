@@ -1,4 +1,4 @@
-import { html, useState, usePoll, useAction, link, fmtTime, ErrorBox, Findings, EnrollLines } from '../lib.js';
+import { html, useState, usePoll, useAction, link, fmtTime, ErrorBox, EnrollLines } from '../lib.js';
 import { api } from '../api.js';
 
 function Progress({ fqdn }) {
@@ -13,24 +13,26 @@ function Progress({ fqdn }) {
   ${p === 'first_backup_done' && html`<a class="button primary" href=${link('hosts', fqdn)}>Open ${fqdn}</a>`}`;
 }
 
-export function AddHost({ me, settings }) {
+// Adding a host is one API call, and its first job another (PUT …/jobs/{job}), the same two as holdfast host add and
+// holdfast job set (plan-m10 item 4). The job takes the default schedule and retention; Configure changes them.
+export function AddHost({ me }) {
   const [fqdn, setFqdn] = useState('');
   const [withJob, setWithJob] = useState(true);
   const [jobID, setJobID] = useState('system');
   const [paths, setPaths] = useState('/etc\n/root\n/home');
-  const [accept, setAccept] = useState([]);
   const act = useAction();
   if (!me.add_hosts) return html`<div class="banner warning">Adding hosts needs config.storage (an admin).</div>`;
-  const submit = () => {
-    const body = { fqdn: fqdn.trim(), accept };
-    if (withJob) {
-      body.job_id = jobID.trim();
-      body.job = { ...settings.default_job, paths: paths.split('\n').map((x) => x.trim()).filter(Boolean) };
+  const submit = () => act.run(async () => {
+    const host = await api.addHost({ fqdn: fqdn.trim() });
+    if (!host || !withJob) return { host };
+    try {
+      const job = await api.setJob(fqdn.trim(), jobID.trim(), { job: { paths: paths.split('\n').map((x) => x.trim()).filter(Boolean) } });
+      return { host, job };
+    } catch (err) {
+      return { host, jobError: err };
     }
-    act.run(() => api.addHost(body));
-  };
+  });
   const done = act.done;
-  const findings = act.error?.data?.findings;
   return html`<h1>Add host</h1>
     <p class="muted">The FQDN is the host's identity. Adding it saves a config revision and issues a one-time enrollment code for the agent. The host needs no S3 key: it backs up through this server, with a certificate it makes when it enrolls.</p>
     ${!done && html`<div class="grid2"><div class="panel">
@@ -38,13 +40,14 @@ export function AddHost({ me, settings }) {
       <h3><label><input type="checkbox" checked=${withJob} onChange=${(e) => setWithJob(e.target.checked)} /> And a first job</label></h3>
       ${withJob && html`<label class="field"><span>Job ID</span><input value=${jobID} onInput=${(e) => setJobID(e.target.value)} /></label>
         <label class="field"><span>Paths (one per line)</span><textarea value=${paths} onInput=${(e) => setPaths(e.target.value)} /></label>
-        <p class="muted">It starts from the default: daily at 02:00 with a 20-minute spread; one per day for 14 days, per week for 8 weeks, per month for 12 months, per year for 3 years; the newest 3. Change it later under Configure.</p>`}
+        <p class="muted">It takes the default schedule and retention: daily at 02:00 with a 20-minute spread; one per day for 14 days, per week for 8 weeks, per month for 12 months, per year for 3 years; the newest 3. Change them later under Configure.</p>`}
       <button class="primary" disabled=${act.busy || !fqdn.trim()} onClick=${submit}>Add host and issue enrollment code</button>
       <${ErrorBox} error=${act.error} />
-      ${findings && html`<${Findings} findings=${findings} accepted=${accept} onAccept=${(c, on) => setAccept(on ? [...accept, c] : accept.filter((x) => x !== c))} />`}
     </div>
     ${me.admin_everywhere && html`<${ImportHost} />`}</div>`}
-    ${done && html`<${Enroll} fqdn=${fqdn.trim()} done=${done} />`}`;
+    ${done && html`<${Enroll} fqdn=${fqdn.trim()} done=${done.host} />
+      ${done.job && html`<div class="banner ok">Job ${jobID.trim()} saved in r${done.job.revision}${done.job.findings?.length ? ` (${done.job.findings.map((f) => f.code).join(', ')})` : ''}.</div>`}
+      ${done.jobError && html`<div class="banner warning">The host was added, but its first job was not saved. Add it under Configure on <a href=${link('hosts', fqdn.trim())}>${fqdn.trim()}</a>.</div><${ErrorBox} error=${done.jobError} />`}`}`;
 }
 
 function Enroll({ fqdn, done }) {
@@ -68,7 +71,7 @@ function ImportHost() {
     <${Enroll} fqdn=${fqdn.trim()} done=${act.done} /></div>`;
   return html`<div class="panel">
     <h3>Or import a host from its escrow file</h3>
-    <p class="muted">For a host the server no longer knows, after a rebuild without an export that has it. Decrypt its escrow file with the offline key (<code>${'age -d -i key.txt escrow/<fqdn>.age'}</code>) and paste it here. Its repository stays; the password must open it. Same: <code>${'holdfast host import <fqdn> --escrow-file -'}</code></p>
+    <p class="muted">For a host the server does not know, whose repository is in the bucket. A rebuild brings back the hosts in <code>escrow/</code> by itself; this is for the rest. Decrypt its escrow file with the age key of the recovery file (<code>${'grep AGE-SECRET-KEY holdfast-recovery.txt > key.txt; age -d -i key.txt <fqdn>.age'}</code>) and paste it here. Its repository stays; the password must open it. Same: <code>${'holdfast host import <fqdn> --escrow-file -'}</code></p>
     <label class="field"><span>FQDN</span><input style="width:100%" placeholder="web03.dc1.example.com" value=${fqdn} onInput=${(e) => setFqdn(e.target.value)} /></label>
     <label class="field"><span>Escrow file, decrypted</span><textarea class="mono" autocomplete="off" spellcheck="false" value=${file} onInput=${(e) => setFile(e.target.value)} placeholder='{"format": "holdfast-escrow-1", …}' /></label>
     <button class="primary" disabled=${act.busy || !fqdn.trim() || !file.trim()} onClick=${() => act.run(() => api.importHost({ fqdn: fqdn.trim(), escrow_file: file })).then((r) => r && setFile(''))}>Import host and issue enrollment code</button>

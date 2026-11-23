@@ -44,6 +44,14 @@ type SettingsView struct {
 		// BootstrapAdmins are shown to admins everywhere only.
 		BootstrapAdmins []string `json:"bootstrap_admins,omitempty"`
 	} `json:"login"`
+	// Notify is where the server sends its own alerts (plan-m10 item 2), without the relay's password.
+	Notify struct {
+		MailTo    []string `json:"mail_to,omitempty"`
+		Relay     string   `json:"relay,omitempty"`
+		Webhook   bool     `json:"webhook"`
+		Heartbeat bool     `json:"heartbeat"`
+		After     string   `json:"after"`
+	} `json:"notify"`
 	DefaultJob config.Job          `json:"default_job"` // where a new job starts
 	Roles      map[string][]string `json:"roles"`
 }
@@ -65,6 +73,10 @@ func (s *Server) SettingsFor(ctx context.Context, a Actor) (SettingsView, error)
 	if v.everywhere() {
 		out.Login.BootstrapAdmins = slices.Clone(s.set.Auth.BootstrapAdmins)
 	}
+	if n := s.set.Notify; n.Mail != nil {
+		out.Notify.MailTo, out.Notify.Relay = slices.Clone(n.Mail.To), n.Mail.SMTP
+	}
+	out.Notify.Webhook, out.Notify.Heartbeat, out.Notify.After = s.set.Notify.WebhookURL != "", s.set.Notify.HeartbeatURL != "", s.set.Notify.After.String()
 	out.DefaultJob, out.Roles = config.DefaultJob(), access.Roles
 	return out, nil
 }

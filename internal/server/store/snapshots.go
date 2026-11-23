@@ -276,6 +276,65 @@ func (q *Q) CountCatalogue(ctx context.Context) (map[string]CatalogueCounts, err
 	return out, rows.Err()
 }
 
+// JobNewest is the newest snapshot of one job that the repository held when the catalogue was last read.
+type JobNewest struct {
+	FQDN, JobID string
+	Newest      time.Time
+}
+
+// NewestSnapshots returns, for every job with a snapshot in its repository, the newest one's time, as restic read it
+// from the bucket: the storage witness the server is (plan-m10 item 1).
+func (q *Q) NewestSnapshots(ctx context.Context) ([]JobNewest, error) {
+	rows, err := q.db.Query(ctx, `SELECT fqdn, job_id, max(time) FROM snapshots WHERE gone_at IS NULL AND job_id <> ''
+		GROUP BY fqdn, job_id ORDER BY fqdn, job_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []JobNewest
+	for rows.Next() {
+		var n JobNewest
+		if err := rows.Scan(&n.FQDN, &n.JobID, &n.Newest); err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
+}
+
+// ReportedSnapshot is the snapshot an agent last reported for a job, and whether the bucket held it when the server
+// next read the repository.
+type ReportedSnapshot struct {
+	FQDN, JobID, SnapshotID string
+	InBucket                bool
+}
+
+// ReportedInBucket is the storage witness (plan-m10 item 1): for every job whose last reported snapshot the server has
+// read the repository since, whether restic found it there. The read is the server's, with the maintenance key
+// straight from S3, and the report's arrival is the server's clock, so the agent's clock plays no part. A snapshot
+// that was there and went later stays in the catalogue with gone_at set: it counts as held here, and as disappeared.
+func (q *Q) ReportedInBucket(ctx context.Context) ([]ReportedSnapshot, error) {
+	rows, err := q.db.Query(ctx, `SELECT js.fqdn, js.job_id, js.last_snapshot_id,
+		EXISTS (SELECT 1 FROM snapshots s WHERE s.fqdn = js.fqdn AND s.id = js.last_snapshot_id)
+		FROM job_status js JOIN hosts h ON h.fqdn = js.fqdn
+		WHERE js.last_snapshot_id <> '' AND h.catalogue_refreshed_at >
+			(SELECT min(e.received_at) FROM events e WHERE e.fqdn = js.fqdn AND e.snapshot_id = js.last_snapshot_id)
+		ORDER BY js.fqdn, js.job_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ReportedSnapshot
+	for rows.Next() {
+		var r ReportedSnapshot
+		if err := rows.Scan(&r.FQDN, &r.JobID, &r.SnapshotID, &r.InBucket); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 func nonNil(s []string) []string {
 	if s == nil {
 		return []string{}

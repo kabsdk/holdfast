@@ -52,11 +52,13 @@ type Server struct {
 
 	runCtx    context.Context // set by Run; background work stops with it
 	refresher catalogueRefresher
-	maintBusy busyHosts  // one forget-or-prune at a time per host
-	repoLock  repoLocks  // a vault's copy, or a forget-or-prune: never both at once
-	oidc      oidcClient // the server's side of the OIDC provider (decision 034)
-	op        operating  // escrow, size and decommission (operating.go)
-	exp       exporting  // the nightly export (rebuild.go)
+	maintBusy busyHosts   // one forget-or-prune at a time per host
+	repoLock  repoLocks   // a vault's copy, or a forget-or-prune: never both at once
+	oidc      oidcClient  // the server's side of the OIDC provider (decision 034)
+	links     loginLinks  // root's one-time links into the UI (plan-m10 item 6)
+	notes     notifyState // the server's own alerts (plan-m10 item 2)
+	op        operating   // escrow, size and decommission (operating.go)
+	exp       exporting   // the nightly export (rebuild.go)
 	// minProtocol is the oldest agent protocol accepted (protocol.go): proto.MinProtocol, or a test's.
 	minProtocol int
 	vault       vaultState // in the off-site instance only (vault.go)
@@ -330,15 +332,15 @@ func (e *StorageError) Error() string {
 
 /* ---------------- operations (each is an /api/v1 endpoint) ---------------- */
 
-// AddHostInput adds a host, optionally with its first job.
+// AddHostInput adds a host. The API adds the host alone: its jobs are PUT …/jobs/{job} (plan-m10 item 4). JobID, Job
+// and Accept add a first job in the same revision, for Go callers only: the tests.
 type AddHostInput struct {
 	FQDN    string      `json:"fqdn"`
 	Message string      `json:"message"`
-	JobID   string      `json:"job_id,omitempty"`
-	Job     *config.Job `json:"job,omitempty"`
 	Base    *int64      `json:"base_revision,omitempty"` // omitted: the current head
-	// Accept lists the warning codes the person accepts for the job (spec §4.5).
-	Accept []string `json:"accept,omitempty"`
+	JobID   string      `json:"-"`
+	Job     *config.Job `json:"-"`
+	Accept  []string    `json:"-"`
 }
 
 // Enrollment is what a person needs to enroll a host: the one-line install, which installs the agent's packages and
@@ -384,9 +386,9 @@ type AddHostResult struct {
 	Enrollment Enrollment     `json:"enrollment"`
 	Storage    storage.Report `json:"storage"`
 	Warning    string         `json:"warning,omitempty"`
-	// Findings are the checks that fired on the job, if one was added: accepted warnings, and info.
-	Findings []checks.Finding `json:"findings"`
-	Accepted []string         `json:"accepted_codes"`
+	// Findings are the checks that fired on a Go caller's first job (AddHostInput.Job).
+	Findings []checks.Finding `json:"-"`
+	Accepted []string         `json:"-"`
 }
 
 func (s *Server) installCommand(fqdn, code string) string {
@@ -769,6 +771,9 @@ type JobView struct {
 	StaleAfter     string           `json:"stale_after"`
 	Status         *store.JobStatus `json:"status,omitempty"`
 	Stale          bool             `json:"stale"` // no success for more than StaleAfter
+	// InBucket is the storage witness (plan-m10 item 1): whether the bucket held the snapshot the agent last reported,
+	// when the server next read the repository with restic. Absent until it has.
+	InBucket *bool `json:"in_bucket,omitempty"`
 	// In a vault (decision 039): the source's retention, Exclude and Retired, and how far the newest copy is behind
 	// the source's newest snapshot. Lagging is that lag past StaleAfter, which alerts.
 	Primary  *config.Retention `json:"primary_retention,omitempty"`
@@ -841,6 +846,14 @@ func (s *Server) Hosts(ctx context.Context) ([]HostView, error) {
 	counts, err := q.CountCatalogue(ctx)
 	if err != nil {
 		return nil, err
+	}
+	reported, err := q.ReportedInBucket(ctx)
+	if err != nil {
+		return nil, err
+	}
+	inBucket := map[[2]string]bool{}
+	for _, r := range reported {
+		inBucket[[2]string{r.FQDN, r.JobID}] = r.InBucket
 	}
 	foreign, err := q.ForeignRepositoryKeys(ctx)
 	if err != nil {
@@ -922,6 +935,9 @@ func (s *Server) Hosts(ctx context.Context) ([]HostView, error) {
 				since = jv.Status.LastSuccessAt
 			}
 			jv.Stale = h.State == "enrolled" && since != nil && now.Sub(*since) > j.Schedule.StaleAfter()
+			if in, ok := inBucket[[2]string{h.FQDN, id}]; ok && !s.set.IsVault() {
+				jv.InBucket = &in
+			}
 			if s.set.IsVault() {
 				// Off-site jobs lag rather than go stale: the agents back them up in primary (decision 039).
 				jv.Primary, jv.Excluded, jv.Retired, jv.Stale = j.Primary, j.Excluded, j.Retired, false
@@ -961,49 +977,4 @@ func (s *Server) Host(ctx context.Context, fqdn string) (HostView, error) {
 		}
 	}
 	return HostView{}, ErrNotFound
-}
-
-/* ---------------- escrow ---------------- */
-
-// EscrowHost is one host's credentials in an escrow bundle: its repository and the password that opens it. A host
-// has no S3 key (decision 041).
-type EscrowHost struct {
-	FQDN         string `json:"fqdn"`
-	Repository   string `json:"repository"`
-	RepoPassword string `json:"repo_password"`
-}
-
-// EscrowBundle is what escrow export returns. Its encrypted format is still open (plan-m1 Q5); M1
-// returns it in the clear on the root-only socket, and the CLI writes it to a 0600 file.
-type EscrowBundle struct {
-	CreatedAt time.Time    `json:"created_at"`
-	ExportID  int64        `json:"export_id"`
-	Hosts     []EscrowHost `json:"hosts"`
-}
-
-// EscrowExport returns every host's credentials and records the export.
-func (s *Server) EscrowExport(ctx context.Context, a Actor) (EscrowBundle, error) {
-	all, err := s.st.Q().AllCredentials(ctx)
-	if err != nil {
-		return EscrowBundle{}, err
-	}
-	b := EscrowBundle{CreatedAt: s.now()}
-	var fqdns []string
-	for _, c := range all {
-		pw, err := s.seal.Open(c.RepoPassword, c.FQDN)
-		if err != nil {
-			return EscrowBundle{}, fmt.Errorf("%s: %w", c.FQDN, err)
-		}
-		b.Hosts = append(b.Hosts, EscrowHost{FQDN: c.FQDN, Repository: c.Repository, RepoPassword: pw})
-		fqdns = append(fqdns, c.FQDN)
-	}
-	err = s.st.InTx(ctx, func(q *store.Q) error {
-		id, err := q.RecordEscrowExport(ctx, a.Name, fqdns, creds.HashToken(strings.Join(fqdns, ",")+b.CreatedAt.String()))
-		if err != nil {
-			return err
-		}
-		b.ExportID = id
-		return q.Audit(ctx, store.AuditEntry{Actor: a.Name, Source: a.Source, Action: "escrow.exported", Detail: map[string]any{"hosts": len(fqdns), "export_id": id}})
-	})
-	return b, err
 }

@@ -1,6 +1,7 @@
 # 024: Login through OIDC, with no sudo checks on hosts
 
-Status: accepted, 2026-11-21
+Status: accepted, 2026-11-21. **Amended by decision 049 (2026-11-23):** OIDC is optional; without it, root logs in to
+the UI with `holdfast ui-login`.
 
 ## Decision
 

@@ -7,7 +7,7 @@ one command. One lab ships, `m1`.
 | VM | Role | OS (image) | vCPU | MiB | Disk GiB | Address |
 | --- | --- | --- | --- | --- | --- | --- |
 | `s3a` | the storage: MicroCeph (Squid 19.2.3, snap `squid/stable`, held), 3 loop-file OSDs of 4 GiB, RGW on port 80, the buckets `holdfast` and `holdfast-offsite` | Ubuntu 24.04 | 2 | 4096 | 40 | 10.79.20.10 |
-| `hfsrv` | Holdfast server: PostgreSQL 16 (AppStream module), database and user `holdfast`; `holdfast-server`, `holdfast`, `holdfast-freshness` in /usr/bin; Authelia 4.39.28, the OIDC provider for login | AlmaLinux 9.8 | 2 | 2048 | 20 | 10.79.20.20 |
+| `hfsrv` | Holdfast server: PostgreSQL 16 (AppStream module), database and user `holdfast`; `holdfast-server` and `holdfast` in /usr/bin; Authelia 4.39.28, the OIDC provider for login | AlmaLinux 9.8 | 2 | 2048 | 20 | 10.79.20.20 |
 | `ub24` | agent | Ubuntu 24.04 | 1 | 1024 | 12 | 10.79.20.31 |
 | `el9` | agent (the RHEL stand-in) | AlmaLinux 9.8 | 1 | 1024 | 12 | 10.79.20.32 |
 | `ol9` | agent | Oracle Linux 9.8 (KVM template, UEK) | 1 | 1024 | 37 (the image's own size) | 10.79.20.33 |
@@ -15,8 +15,7 @@ one command. One lab ships, `m1`.
 hfsrv and the agents have restic 0.19.1 at `/usr/libexec/holdfast/restic`. Each agent has `/usr/bin/holdfast-agent`,
 `holdfast-agent.service` (installed; `lab/lab test` enrolls and starts it) and the lab's fidelity tool
 `/usr/local/bin/hf-fidelity`. On hfsrv, `holdfast-server` runs, configured as an admin would (below), with the UI and
-`/api/v1` for people on port 443 and login through Authelia on port 9091 (below), and `holdfast-freshness` is
-installed but not configured. Every VM has the others' names in `/etc/hosts`
+`/api/v1` for people on port 443 and login through Authelia on port 9091 (below); it is the storage witness too (plan-m10 item 1). Every VM has the others' names in `/etc/hosts`
 (`<vm>.m1.holdfast.test` and `<vm>`). SELinux is enforcing on the EL VMs. The network is `hf-m1` (10.79.20.0/24, bridge
 `hfbr-m1`), and every libvirt object the lab makes is named `hf-m1-*`.
 

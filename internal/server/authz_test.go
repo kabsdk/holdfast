@@ -93,7 +93,7 @@ func TestPermissions(t *testing.T) {
 		{"an editor cannot see the bindings", editor, "GET", "/api/v1/access", nil, 403},
 		{"an admin can", admin, "GET", "/api/v1/access", nil, 200},
 		{"nor the sessions", editor, "GET", "/api/v1/sessions", nil, 403},
-		{"escrow is not on this listener", admin, "POST", "/api/v1/escrow/export", nil, 404},
+		{"ui-login is not on this listener", admin, "POST", "/api/v1/ui-login", nil, 404},
 	} {
 		if code, body := apiAs(t, h, tc.a, tc.method, tc.path, tc.body); code != tc.want {
 			t.Errorf("%s: %s %s as %s: %d, want %d: %s", tc.name, tc.method, tc.path, tc.a.Name, code, tc.want, body)

@@ -91,8 +91,11 @@ export function Exports({ me }) {
     <p class="muted">Same: <code>holdfast export list</code>, <code>holdfast export now</code>.</p>`;
 }
 
-export function Settings({ settings }) {
+export function Settings({ settings, me }) {
   const s = settings;
+  const test = useAction();
+  const n = s.notify || {};
+  const alerts = [n.mail_to?.length && `mail to ${n.mail_to.join(', ')} through ${n.relay}`, n.webhook && 'a webhook', n.heartbeat && 'a heartbeat for a dead man\'s switch'].filter(Boolean);
   return html`<h1>Settings</h1>
     <p class="muted">What <code>server.yaml</code> says, without secrets. Changing it needs root on the server (spec §3.3).</p>
     <div class="panel"><dl class="facts">
@@ -104,7 +107,12 @@ export function Settings({ settings }) {
       <dt>Storage</dt><dd>${s.storage.endpoint} · bucket ${s.storage.bucket}${s.storage.region ? ' · ' + s.storage.region : ''}</dd>
       <dt>Repository check</dt><dd>${s.maintenance.check}, reading 1/${s.maintenance.check_cycle_days} of the data each day</dd>
       <dt>Retention</dt><dd>${s.maintenance.retention}</dd>
-      <dt>Login</dt><dd>${s.login.issuer || 'not set up: only root on the server can use Holdfast'} · groups from the ${s.login.groups_claim} claim, usernames from ${s.login.username_claim}</dd>
+      <dt>Login</dt><dd>${s.login.issuer ? `${s.login.issuer} · groups from the ${s.login.groups_claim} claim, usernames from ${s.login.username_claim}` : 'no identity provider: root logs in with holdfast ui-login on the server'}</dd>
       ${s.login.bootstrap_admins && html`<dt>Bootstrap admins</dt><dd>${s.login.bootstrap_admins.join(', ') || 'none'}</dd>`}
-    </dl></div>`;
+      ${s.role !== 'vault' && html`<dt>Alerts</dt><dd>${alerts.length ? `${alerts.join('; ')}, once a problem has lasted ${n.after}` : 'none: set notify: in server.yaml, or use the Prometheus rules'}</dd>`}
+    </dl>
+    ${s.role !== 'vault' && me.admin_everywhere && alerts.length > 0 && html`<p><button disabled=${test.busy} onClick=${() => test.run(() => api.notifyTest())}>Send a test alert</button>
+      ${test.done && html` <span class="muted">${['mail', 'webhook', 'heartbeat'].filter((c) => test.done[c]).map((c) => `${c}: ${test.done[c]}`).join(' · ')}</span>`}</p>
+      <${ErrorBox} error=${test.error} />`}
+    </div>`;
 }

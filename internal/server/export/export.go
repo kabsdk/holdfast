@@ -3,9 +3,10 @@
 //
 //	age -d -i key.txt 2026-11-22.age | tar -xz
 //
-// The credentials inside stay sealed with the server's credentials key, so the export alone opens no repository.
-// server.yaml is not in it: it may hold the database's DSN with its password, and the admin keeps it, with the key
-// files it names (docs/runbooks/rebuild-holdfast.md).
+// The credentials inside stay sealed with the server's credentials key, so the export alone opens no repository. Since
+// plan-m10 it also holds the agent listener's certificate, key and CA, the UI's certificate and key, and server.yaml
+// without the database's DSN, so a rebuilt server shows agents the certificate they pinned. The S3 keys, the database's
+// password and the OIDC secret are not in it: the admin gives them again.
 package export
 
 import (
@@ -20,6 +21,7 @@ import (
 	"io"
 	"path"
 	"regexp"
+	"sort"
 	"time"
 
 	"filippo.io/age"
@@ -40,7 +42,18 @@ type Manifest struct {
 	CreatedAt       time.Time `json:"created_at"`
 	Node            string    `json:"node"`
 	Schemas         []Schema  `json:"schemas"`
+	Files           []File    `json:"files,omitempty"`
 }
+
+// File is one of the server's files in the export, named by the server.yaml setting that names its path, such as
+// tls.cert_file, so a restore writes it where the new server.yaml says (plan-m10 item 3).
+type File struct {
+	Name   string `json:"name"`
+	File   string `json:"file"` // in the tar: files/<name>
+	SHA256 string `json:"sha256"`
+}
+
+var fileName = regexp.MustCompile(`^[a-z_.]{1,64}$`)
 
 // Schema is one PostgreSQL schema: public, and offsite with off-site copies (decision 041).
 type Schema struct {
@@ -61,6 +74,7 @@ type Table struct {
 type Contents struct {
 	Manifest Manifest
 	Tables   map[string][]store.TableData // by schema name
+	Files    map[string][]byte            // by File.Name
 }
 
 var schemaName = regexp.MustCompile(`^[a-z_]{1,32}$`)
@@ -88,6 +102,22 @@ func Seal(c Contents, recipient string) ([]byte, error) {
 			files[f] = t.CSV
 			order = append(order, f)
 		}
+	}
+	m.Files = nil
+	names := make([]string, 0, len(c.Files))
+	for n := range c.Files {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		if !fileName.MatchString(n) {
+			return nil, fmt.Errorf("file %q is not a name Holdfast writes", n)
+		}
+		f := "files/" + n
+		sum := sha256.Sum256(c.Files[n])
+		m.Files = append(m.Files, File{Name: n, File: f, SHA256: hex.EncodeToString(sum[:])})
+		files[f] = c.Files[n]
+		order = append(order, f)
 	}
 	man, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
@@ -183,6 +213,18 @@ func Open(data []byte, ids ...age.Identity) (Contents, error) {
 			}
 			c.Tables[sc.Name] = append(c.Tables[sc.Name], store.TableData{Name: t.Name, CSV: b, Rows: t.Rows})
 		}
+	}
+	c.Files = map[string][]byte{}
+	for _, f := range m.Files {
+		b, ok := files[f.File]
+		if !fileName.MatchString(f.Name) || f.File != "files/"+f.Name || !ok {
+			return Contents{}, fmt.Errorf("the export lacks %s, which its manifest names", f.File)
+		}
+		sum := sha256.Sum256(b)
+		if hex.EncodeToString(sum[:]) != f.SHA256 {
+			return Contents{}, fmt.Errorf("%s in the export does not match its checksum", f.File)
+		}
+		c.Files[f.Name] = b
 	}
 	return c, nil
 }

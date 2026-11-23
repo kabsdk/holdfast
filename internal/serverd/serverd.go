@@ -40,6 +40,13 @@ func Main(name, defaultConfig string) {
 		fmt.Println("wrote a new credentials key to", os.Args[2], "(mode 0600); keep a copy offline with the escrow bundle")
 		return
 	}
+	if len(os.Args) >= 2 && os.Args[1] == "recovery-file" {
+		if err := recoveryFile(name, defaultConfig, os.Args[2:], os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, "recovery-file:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) >= 2 && os.Args[1] == "restore-export" {
 		if err := restoreExport(name, defaultConfig, os.Args[2:], os.Stdout); err != nil {
 			fmt.Fprintln(os.Stderr, "restore-export:", err)

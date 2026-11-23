@@ -5,7 +5,9 @@ Status: accepted, 2026-11-22 (plan-m7 Q9–Q12; you answered "Continue"). It dec
 writes each export to both buckets itself; and agents are known by pinned certificates, not tokens, which the export
 holds just the same. As built (plan-m9 Q1): the export is the tables as CSV, not a PostgreSQL dump, and "the config"
 is the config revisions in the database: `server.yaml` is not in it, as it may hold the database's password, so the
-admin keeps it offline with its key files (docs/runbooks/rebuild-holdfast.md).
+admin keeps it offline with its key files (docs/runbooks/rebuild-holdfast.md). **Amended by decision 047
+(2026-11-23):** the export now carries the TLS files and `server.yaml` without the database's address, and a rebuild
+needs only the recovery file and the install settings; hosts added after the export come back from `escrow/`.
 
 ## Decision
 

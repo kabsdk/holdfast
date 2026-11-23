@@ -199,6 +199,52 @@ func TestEventsAreStoredOnce(t *testing.T) {
 	}
 }
 
+// TestReportedInBucket is the storage witness's query (plan-m10 item 1): a reported snapshot is judged only by a read
+// of the repository that started after the report arrived; one that was there and went later counts as held (it is
+// disappeared instead).
+func TestReportedInBucket(t *testing.T) {
+	s, ctx := testStore(t), context.Background()
+	q := s.Q()
+	const fqdn = "web01.example.com"
+	now := time.Now()
+	r, _ := q.SaveRevision(ctx, SaveRevision{Base: 0, Actor: "local:root", Source: "cli", Message: "add", Config: docWith(fqdn)})
+	must(t, q.CreateHost(ctx, fqdn, r.Number, now))
+	snap := func(id string) Snapshot {
+		return Snapshot{FQDN: fqdn, ID: id, ShortID: id[:4], Time: now.Add(-time.Hour), JobID: "home"}
+	}
+	_, _, err := q.SyncSnapshots(ctx, fqdn, []Snapshot{snap("aaaa1")}, now.Add(-time.Minute))
+	must(t, err)
+	_, err = q.InsertEvent(ctx, Event{FQDN: fqdn, ID: "e1", Kind: "backup", JobID: "home", Status: "success", Started: now, Finished: now, SnapshotID: "bbbb2"})
+	must(t, err)
+	got := func() []ReportedSnapshot {
+		t.Helper()
+		out, err := q.ReportedInBucket(ctx)
+		must(t, err)
+		return out
+	}
+	// The last read started before the report: nothing is judged yet.
+	if out := got(); len(out) != 0 {
+		t.Fatalf("judged by a read from before the report: %+v", out)
+	}
+	// A read after the report, without the snapshot: not in the bucket.
+	_, _, err = q.SyncSnapshots(ctx, fqdn, []Snapshot{snap("aaaa1")}, now.Add(time.Minute))
+	must(t, err)
+	if out := got(); len(out) != 1 || out[0].JobID != "home" || out[0].SnapshotID != "bbbb2" || out[0].InBucket {
+		t.Fatalf("a reported snapshot the read did not find: %+v", out)
+	}
+	// Found by the next read, and still held after it goes: that is a disappearance, not this.
+	_, _, err = q.SyncSnapshots(ctx, fqdn, []Snapshot{snap("aaaa1"), snap("bbbb2")}, now.Add(2*time.Minute))
+	must(t, err)
+	if out := got(); len(out) != 1 || !out[0].InBucket {
+		t.Fatalf("a reported snapshot the read found: %+v", out)
+	}
+	_, gone, err := q.SyncSnapshots(ctx, fqdn, []Snapshot{snap("aaaa1")}, now.Add(3*time.Minute))
+	must(t, err)
+	if out := got(); gone != 1 || len(out) != 1 || !out[0].InBucket {
+		t.Fatalf("a reported snapshot that went later: gone %d, %+v", gone, out)
+	}
+}
+
 // TestRepositoryKeys (decision 032): the keys of a repository Holdfast made are known; a later one is
 // foreign until acknowledged; a repository made again after the old one was lost starts over, so its new
 // key is not flagged.

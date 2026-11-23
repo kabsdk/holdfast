@@ -29,7 +29,11 @@ func TestStorageContract(t *testing.T) {
 	e.setGatewayPolicy(broad(e.bucket))
 	const fqdn = "app05.example.com"
 	add := func() ([]byte, error) {
-		return e.cliErr("host", "add", fqdn, "--job", "data", "--path", src, "--every", "1m", testAccept)
+		out, err := e.cliErr("host", "add", fqdn)
+		if err == nil {
+			_, err = e.cliErr("job", "set", fqdn, "data", "--path", src, "--every", "1m", testAccept)
+		}
+		return out, err
 	}
 	out, err := add()
 	if err == nil {

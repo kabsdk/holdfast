@@ -32,6 +32,9 @@ type Settings struct {
 	// DownloadURL is where hosts fetch install.sh and the packages of this server's release, for a mirror; empty: the
 	// release on GitHub (decision 044). It goes into the one-line install that host add prints.
 	DownloadURL string `yaml:"download_url"`
+	// RecoveryFile is where the installer wrote the recovery file (plan-m10 item 3). While a file is there, the server
+	// shows the problem recovery_file: it belongs offline.
+	RecoveryFile string `yaml:"recovery_file"`
 
 	Storage     StorageSettings     `yaml:"storage"`
 	Maintenance MaintenanceSettings `yaml:"maintenance"`
@@ -44,9 +47,15 @@ type Settings struct {
 	// (decision 041). Without it Holdfast keeps one bucket, and shows nothing about off-site copies.
 	Offsite *OffsiteSettings `yaml:"offsite"`
 
+	// Notify is where the server sends its own alerts (plan-m10 item 2): mail, a webhook, and a heartbeat for a dead
+	// man's switch. Without it, the Problems page and Prometheus's rules are all there is.
+	Notify NotifySettings `yaml:"notify"`
+
 	// Role is RoleServer, or RoleVault for the off-site instance the server runs beside itself when Offsite is set.
 	// It is not a setting.
 	Role string `yaml:"-"`
+	// Path is the file the settings were read from. It is not a setting.
+	Path string `yaml:"-"`
 }
 
 // Roles of a server instance. M7's holdfast-vault was the vault role in a program of its own; since decision 041 it
@@ -96,11 +105,37 @@ type OIDCSettings struct {
 	CAFile           string   `yaml:"ca_file"`            // a CA to trust for the issuer, if not the system's
 }
 
+// NotifySettings are where the server sends its alerts: when a problem has lasted After, and when it ends.
+type NotifySettings struct {
+	Mail         *MailSettings `yaml:"mail,omitempty"`
+	WebhookURL   string        `yaml:"webhook_url,omitempty"`   // a JSON POST, with "text" for Slack, Mattermost and the like
+	HeartbeatURL string        `yaml:"heartbeat_url,omitempty"` // called after each check, for a dead man's switch outside the site
+	After        time.Duration `yaml:"after,omitempty"`         // how long a problem lasts before it is sent; default 10m
+}
+
+// MailSettings are an SMTP relay and who gets the mail.
+type MailSettings struct {
+	SMTP         string   `yaml:"smtp"`                    // host:port, such as relay.example.com:587
+	TLS          string   `yaml:"tls,omitempty"`           // starttls (the default), tls (port 465), or none
+	Username     string   `yaml:"username,omitempty"`      // with password_file, to log in to the relay
+	PasswordFile string   `yaml:"password_file,omitempty"` // the password alone, in a root-only file
+	From         string   `yaml:"from"`
+	To           []string `yaml:"to"`
+}
+
+// on says whether any way to send is set.
+func (n NotifySettings) on() bool { return n.Mail != nil || n.WebhookURL != "" }
+
 // TLS is a listener's certificate. The agent listener always needs one (decision 041); the UI listener without
 // one is plain HTTP, for tests only.
 type TLS struct {
 	CertFile string `yaml:"cert_file"`
 	KeyFile  string `yaml:"key_file"`
+	// CAFile and CAKeyFile are the CA that signed the agent listener's certificate and that agents pin, when the
+	// installer made it (plan-m10 item 3): the nightly export carries them, so a rebuilt server can sign a new
+	// certificate that agents still trust.
+	CAFile    string `yaml:"ca_file,omitempty"`
+	CAKeyFile string `yaml:"ca_key_file,omitempty"`
 }
 
 // StorageSettings locate the bucket and the two keys the server uses on it (decision 041): the maintenance key, and
@@ -174,6 +209,7 @@ func LoadSettings(path string) (Settings, error) {
 		}
 		s.DatabaseDSN = strings.TrimSpace(string(dsn))
 	}
+	s.Path = path
 	s.defaults()
 	return s, s.validate()
 }
@@ -205,6 +241,12 @@ func (s *Settings) defaults() {
 	}
 	if s.Offsite != nil && s.Offsite.Poll <= 0 {
 		s.Offsite.Poll = 5 * time.Minute
+	}
+	if s.Notify.After == 0 {
+		s.Notify.After = 10 * time.Minute
+	}
+	if m := s.Notify.Mail; m != nil && m.TLS == "" {
+		m.TLS = "starttls"
 	}
 	o := &s.Auth.OIDC
 	if len(o.Scopes) == 0 {
@@ -267,11 +309,33 @@ func (s Settings) validate() error {
 			errs = append(errs, fmt.Errorf("escrow.age_recipient: %w (it is an age public key, age1…, made with age-keygen)", err))
 		}
 	}
+	if m := s.Notify.Mail; m != nil {
+		need(m.SMTP, "notify.mail.smtp (host:port of the relay)")
+		need(m.From, "notify.mail.from")
+		if len(m.To) == 0 {
+			errs = append(errs, errors.New("notify.mail.to is required: who gets the mail"))
+		}
+		if m.TLS != "starttls" && m.TLS != "tls" && m.TLS != "none" {
+			errs = append(errs, fmt.Errorf("notify.mail.tls is %q; it must be starttls, tls or none", m.TLS))
+		}
+		if (m.Username == "") != (m.PasswordFile == "") {
+			errs = append(errs, errors.New("notify.mail.username and notify.mail.password_file go together"))
+		}
+	}
+	for name, u := range map[string]string{"notify.webhook_url": s.Notify.WebhookURL, "notify.heartbeat_url": s.Notify.HeartbeatURL} {
+		if u != "" && !strings.HasPrefix(u, "https://") && !strings.HasPrefix(u, "http://") {
+			errs = append(errs, fmt.Errorf("%s is %q: it is an http(s) URL", name, u))
+		}
+	}
+	// The UI works without an identity provider: root logs in with holdfast ui-login's link (plan-m10 item 6). With
+	// one, all three settings are needed.
 	if s.UI.Listen != "" {
 		need(s.UI.PublicURL, "ui.public_url (ui.listen is set)")
-		need(s.Auth.OIDC.Issuer, "auth.oidc.issuer (ui.listen is set)")
-		need(s.Auth.OIDC.ClientID, "auth.oidc.client_id (ui.listen is set)")
-		need(s.Auth.OIDC.ClientSecretFile, "auth.oidc.client_secret_file (ui.listen is set)")
+	}
+	if o := s.Auth.OIDC; o.Issuer != "" || o.ClientID != "" || o.ClientSecretFile != "" {
+		need(o.Issuer, "auth.oidc.issuer (auth.oidc is set)")
+		need(o.ClientID, "auth.oidc.client_id (auth.oidc is set)")
+		need(o.ClientSecretFile, "auth.oidc.client_secret_file (auth.oidc is set)")
 	}
 	return errors.Join(errs...)
 }

@@ -71,5 +71,6 @@ Every step above is in the host's history and in the audit log, with who did it 
 `repository.key_removed`, the new escrow file `escrow.written`, the new enrollment `agent.enrolled`, and anything
 the gateway refused the host `gateway.refused`.
 
-If the escrow bundle from `holdfast escrow export` is stored offline, export a new one: the old one holds
-the old password.
+There is no offline bundle of passwords to renew (decision 047): the escrow file in the bucket holds the new password,
+and the recovery file, which only opens it, stays as it is. The old escrow file's versions, with the old password,
+remain until the lifecycle rule expires them.

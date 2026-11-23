@@ -40,7 +40,7 @@ func main() {
 	root.PersistentFlags().StringVar(&serverURL, "server", os.Getenv("HOLDFAST_SERVER"), "the server's URL, for holdfast login; later commands use the saved login")
 	root.PersistentFlags().BoolVar(&asJSON, "json", false, "print the API's JSON answer")
 	root.PersistentFlags().BoolVar(&useOffsite, "offsite", false, "act on the off-site copies: their hosts, retention, history and audit log")
-	root.AddCommand(statusCmd(), hostCmd(), jobCmd(), snapshotCmd(), restoreCmd(), restoresCmd(), searchCmd(), revisionCmd(), auditCmd(), checkCmd(), escrowCmd(),
+	root.AddCommand(statusCmd(), hostCmd(), jobCmd(), snapshotCmd(), restoreCmd(), restoresCmd(), searchCmd(), revisionCmd(), auditCmd(), checkCmd(), uiLoginCmd(), notifyCmd(),
 		pendingCmd(), prunesCmd(), retentionCmd(), pruneNowCmd(), loginCmd(), logoutCmd(), whoamiCmd(), accessCmd(), settingsCmd(), offsiteCmd(), exportCmd())
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
@@ -322,45 +322,30 @@ func hostCmd() *cobra.Command {
 		}
 		return w.Flush()
 	}})
-	var add jobFlags
 	var msg string
-	addCmd := &cobra.Command{Use: "add <fqdn>", Short: "Add a host (a new revision), and get its 15-minute enrollment code", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, a []string) error {
-		in := map[string]any{"fqdn": a[0], "message": msg}
-		if add.id != "" {
-			job, err := add.job()
+	addCmd := &cobra.Command{Use: "add <fqdn>", Short: "Add a host (a new revision), and get the line that installs and enrolls its agent; then give it jobs with holdfast job set",
+		Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, a []string) error {
+			var res struct {
+				Revision   int64      `json:"revision"`
+				Warning    string     `json:"warning"`
+				Enrollment enrollment `json:"enrollment"`
+			}
+			raw, err := call("POST", "/api/v1/hosts", map[string]any{"fqdn": a[0], "message": msg}, &res)
 			if err != nil {
 				return err
 			}
-			in["job_id"], in["job"], in["accept"] = add.id, job, add.accept
-		}
-		var res struct {
-			Revision   int64      `json:"revision"`
-			Warning    string     `json:"warning"`
-			Findings   []finding  `json:"findings"`
-			Accepted   []string   `json:"accepted_codes"`
-			Enrollment enrollment `json:"enrollment"`
-		}
-		raw, err := call("POST", "/api/v1/hosts", in, &res)
-		if err != nil {
-			return err
-		}
-		if asJSON {
-			printJSON(raw)
+			if asJSON {
+				printJSON(raw)
+				return nil
+			}
+			fmt.Printf("added %s in revision %d; its storage passed every check\n%s", a[0], res.Revision, res.Enrollment.howTo())
+			fmt.Printf("\nthen give it a job, such as:\n  holdfast job set %s system --path /etc --path /home\n", a[0])
+			if res.Warning != "" {
+				fmt.Println("\nwarning:", res.Warning)
+			}
 			return nil
-		}
-		fmt.Printf("added %s in revision %d; its storage passed every check\n%s", a[0], res.Revision, res.Enrollment.howTo())
-		if len(res.Findings) > 0 {
-			fmt.Println("\nchecks on job " + add.id + ":")
-			printFindings(res.Findings, res.Accepted)
-		}
-		if res.Warning != "" {
-			fmt.Println("\nwarning:", res.Warning)
-		}
-		return nil
-	}}
+		}}
 	addCmd.Flags().StringVarP(&msg, "message", "m", "", "revision message")
-	addCmd.Flags().StringVar(&add.id, "job", "", "also add this job (then the job flags apply)")
-	add.register(addCmd)
 	c.AddCommand(addCmd)
 	c.AddCommand(&cobra.Command{Use: "acknowledge <fqdn>", Short: "Clear the red alerts for changes made outside Holdfast, after looking into them", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, a []string) error {
 		var res struct{ Snapshots, Keys int }
@@ -506,12 +491,38 @@ func window(s string) (map[string]any, error) {
 	return nil, fmt.Errorf("retention window %q: use a number and h, d, w, mo or y, such as 14d or 12mo", s)
 }
 
-func (f *jobFlags) job() (map[string]any, error) {
-	sch := map[string]any{"spread": map[string]any{"enabled": f.spread > 0 && !f.noSpread, "minutes": f.spread}}
-	switch {
-	case len(f.daily) > 0:
+// job is the part of a job the flags give: the server takes the rest from the job as it is, or from the default job for
+// a new one (plan-m10 item 4). A schedule form (--daily, --every, --weekly) replaces the schedule's form; --spread,
+// --no-spread and --zone change only themselves; any --keep-* flag replaces the whole retention.
+func (f *jobFlags) job(c *cobra.Command) (map[string]any, error) {
+	changed := func(names ...string) bool {
+		for _, n := range names {
+			if c.Flags().Changed(n) {
+				return true
+			}
+		}
+		return false
+	}
+	j := map[string]any{}
+	if changed("path") {
+		j["paths"] = f.paths
+	}
+	if changed("exclude") {
+		j["excludes"] = f.excludes
+	}
+	if changed("dump") {
+		j["dump"] = f.dump
+	}
+	if changed("limit-upload") {
+		j["limit_upload_kib"] = f.limitUpload
+	}
+	sch := map[string]any{}
+	forms := 0
+	if len(f.daily) > 0 {
 		sch["daily"] = map[string]any{"times": f.daily}
-	case f.every != "":
+		forms++
+	}
+	if f.every != "" {
 		unit := "hours"
 		num := strings.TrimSuffix(f.every, "h")
 		if strings.HasSuffix(f.every, "m") {
@@ -522,27 +533,36 @@ func (f *jobFlags) job() (map[string]any, error) {
 			return nil, fmt.Errorf("--every %q: use a number and m or h, such as 30m or 4h", f.every)
 		}
 		sch["every"] = map[string]any{"n": n, "unit": unit, "from": f.from}
-	case len(f.weekly) > 0:
+		forms++
+	}
+	if len(f.weekly) > 0 {
 		sch["weekly"] = map[string]any{"days": f.weekly, "at": f.at}
-	default:
-		return nil, errors.New("give a schedule: --daily, --every or --weekly")
+		forms++
+	}
+	if forms > 1 {
+		return nil, errors.New("give one schedule: --daily, --every or --weekly")
+	}
+	if changed("spread", "no-spread") {
+		sch["spread"] = map[string]any{"enabled": f.spread > 0 && !f.noSpread, "minutes": f.spread}
 	}
 	if f.zone != "" {
 		sch["zone"] = f.zone
 	}
-	ret := map[string]any{"keep_last": f.keepLast}
-	for name, v := range map[string]string{"within": f.within, "hourly": f.hourly, "daily": f.dly, "weekly": f.wkly, "monthly": f.monthly, "yearly": f.yearly} {
-		w, err := window(v)
-		if err != nil {
-			return nil, err
-		}
-		if w != nil {
-			ret[name] = w
-		}
+	if len(sch) > 0 {
+		j["schedule"] = sch
 	}
-	j := map[string]any{"engine": "restic", "paths": f.paths, "excludes": f.excludes, "schedule": sch, "retention": ret, "limit_upload_kib": f.limitUpload}
-	if f.dump != "" {
-		j["dump"] = f.dump
+	if changed("keep-within", "keep-hourly", "keep-daily", "keep-weekly", "keep-monthly", "keep-yearly", "keep-last") {
+		ret := map[string]any{"keep_last": f.keepLast}
+		for name, v := range map[string]string{"within": f.within, "hourly": f.hourly, "daily": f.dly, "weekly": f.wkly, "monthly": f.monthly, "yearly": f.yearly} {
+			w, err := window(v)
+			if err != nil {
+				return nil, err
+			}
+			if w != nil {
+				ret[name] = w
+			}
+		}
+		j["retention"] = ret
 	}
 	return j, nil
 }
@@ -552,39 +572,44 @@ func jobCmd() *cobra.Command {
 	var f jobFlags
 	var msg string
 	var base int64
-	set := &cobra.Command{Use: "set <fqdn> <job>", Short: "Create or replace a job (a new revision)", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, a []string) error {
-		job, err := f.job()
-		if err != nil {
-			return err
-		}
-		in := map[string]any{"message": msg, "job": job, "accept": f.accept}
-		if cmd.Flags().Changed("base") {
-			in["base_revision"] = base
-		}
-		var res struct {
-			Revision int64     `json:"revision"`
-			Findings []finding `json:"findings"`
-			Accepted []string  `json:"accepted_codes"`
-		}
-		raw, err := call("PUT", "/api/v1/hosts/"+url.PathEscape(a[0])+"/jobs/"+url.PathEscape(a[1]), in, &res)
-		if err != nil {
-			return err
-		}
-		if asJSON {
-			printJSON(raw)
+	set := &cobra.Command{Use: "set <fqdn> <job>", Short: "Create or change a job (a new revision): a new job takes what you do not give from the default job, an existing one keeps its own",
+		Long: "Create or change a job, as a new revision.\n\nA new job needs --path (or --dump); the rest comes from the default job unless you give it: daily at\n" +
+			"02:00 with a 20-minute spread; one backup per day for 14 days, per week for 8 weeks, per month for 12 months\n" +
+			"and per year for 3 years; always the newest 3. An existing job keeps what you do not give: --daily, --every or\n" +
+			"--weekly replace its schedule, any --keep-* flag replaces its whole retention.",
+		Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, a []string) error {
+			job, err := f.job(cmd)
+			if err != nil {
+				return err
+			}
+			in := map[string]any{"message": msg, "job": job, "accept": f.accept}
+			if cmd.Flags().Changed("base") {
+				in["base_revision"] = base
+			}
+			var res struct {
+				Revision int64     `json:"revision"`
+				Findings []finding `json:"findings"`
+				Accepted []string  `json:"accepted_codes"`
+			}
+			raw, err := call("PUT", "/api/v1/hosts/"+url.PathEscape(a[0])+"/jobs/"+url.PathEscape(a[1]), in, &res)
+			if err != nil {
+				return err
+			}
+			if asJSON {
+				printJSON(raw)
+				return nil
+			}
+			fmt.Printf("saved as revision %d\n", res.Revision)
+			printFindings(res.Findings, res.Accepted)
 			return nil
-		}
-		fmt.Printf("saved as revision %d\n", res.Revision)
-		printFindings(res.Findings, res.Accepted)
-		return nil
-	}}
+		}}
 	set.Flags().StringVarP(&msg, "message", "m", "", "revision message")
 	set.Flags().Int64Var(&base, "base", 0, "refuse the save if the newest revision is not this one")
 	f.register(set)
 	c.AddCommand(set)
 	var cf jobFlags
-	check := &cobra.Command{Use: "check <fqdn> <job>", Short: "Run the checks on a job without saving it; the flags are those of job set", Args: cobra.ExactArgs(2), RunE: func(_ *cobra.Command, a []string) error {
-		job, err := cf.job()
+	check := &cobra.Command{Use: "check <fqdn> <job>", Short: "Run the checks on a job without saving it; the flags are those of job set", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, a []string) error {
+		job, err := cf.job(cmd)
 		if err != nil {
 			return err
 		}
@@ -804,35 +829,4 @@ func checkCmd() *cobra.Command {
 		fmt.Println("\neach agent runs the repository check next; its result appears in holdfast host events <fqdn>")
 		return nil
 	}}
-}
-
-func escrowCmd() *cobra.Command {
-	c := &cobra.Command{Use: "escrow", Short: "Escrow bundle (root on the server only)"}
-	var to string
-	export := &cobra.Command{Use: "export", Short: "Write every host's credentials to a 0600 file, to store offline", RunE: func(*cobra.Command, []string) error {
-		if to == "" {
-			return errors.New("--to is required")
-		}
-		f, err := os.OpenFile(to, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-		if err != nil {
-			return err
-		}
-		defer f.Close()
-		raw, err := call("POST", "/api/v1/escrow/export", nil, nil)
-		if err != nil {
-			_ = os.Remove(to)
-			return err
-		}
-		var v any
-		_ = json.Unmarshal(raw, &v)
-		b, _ := json.MarshalIndent(v, "", "  ")
-		if _, err := f.Write(append(b, '\n')); err != nil {
-			return err
-		}
-		fmt.Printf("wrote %s (mode 0600). It holds every repository password in the clear: store it offline and delete this copy.\n", to)
-		return nil
-	}}
-	export.Flags().StringVar(&to, "to", "", "file to create (it must not exist)")
-	c.AddCommand(export)
-	return c
 }

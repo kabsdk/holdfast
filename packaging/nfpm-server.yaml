@@ -18,6 +18,11 @@ description: |-
 depends:
   - holdfast-restic (= ${HOLDFAST_VERSION}-1)
   - holdfast-cli (= ${HOLDFAST_VERSION}-1)
+# The server is the storage witness since M10 (plan-m10 item 1): installing it removes the old holdfast-freshness.
+conflicts:
+  - holdfast-freshness
+replaces:
+  - holdfast-freshness
 overrides:
   rpm:
     depends:

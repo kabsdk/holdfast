@@ -1,6 +1,13 @@
 # Plan for M10: simpler to run
 
-Status: proposed, 2026-11-23. You found Holdfast "still a VERY complicated product" after reading the documentation, and
+Status: accepted and built, 2026-11-23. You answered "Go ahead with what you think is the best choice": every proposal
+in §6, and section 2 as it stands. The decisions are 045 (witness), 046 (alerts), 047 (recovery file, items 3 and 5),
+048 (host add and job defaults) and 049 (the UI without a provider). Two changes while building: the witness compares
+the snapshot the agent reported with the bucket by ID (problem `not_in_bucket`, rule `HoldfastBackupNotInBucket`),
+not by time, as a snapshot's time is when the backup started and a long backup would have paged; and a new job that
+names a schedule takes it whole, without the default's 20-minute spread, which would fail S001 on short intervals.
+
+You found Holdfast "still a VERY complicated product" after reading the documentation, and
 asked for an independent review of what could be simpler without giving up security, safety or restore. The reviewer
 read the docs, the spec, the decisions and the code, and answered yes: roughly a third less to install and to recover a
 lost server, a little less day to day. This plan takes its proposals 1 to 6, which I agree with, and leaves out 7.

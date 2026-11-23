@@ -20,7 +20,7 @@ export function Fleet({ me, hosts }) {
   return html`
     <div class="spread">
       <div><h1>Fleet</h1>
-        <p class="muted">${hosts.length} hosts · ${jobs.length} jobs. Problems are the server's own view; the storage witness is judged in Prometheus.</p></div>
+        <p class="muted">${hosts.length} hosts · ${jobs.length} jobs. Problems are what the server sees, the bucket's side included; it sends them as alerts if notify: is set.</p></div>
       <div class="row">
         ${canCheck && html`<button disabled=${check.busy} onClick=${() => check.run(() => api.checkAll())}>Check all repositories now</button>`}
         ${me.add_hosts && html`<a class="button primary" href="#/add-host">Add host</a>`}
@@ -59,7 +59,7 @@ export function Problems({ hosts }) {
   const order = { error: 0, warning: 1 };
   all.sort((a, b) => order[a.severity] - order[b.severity] || a.fqdn.localeCompare(b.fqdn));
   return html`<h1>Problems</h1>
-    <p class="muted">What the server knows is wrong, on the hosts you can see. Paging is Prometheus's job: its alert rules ship with Holdfast.</p>
+    <p class="muted">What the server knows is wrong, on the hosts you can see. With notify: in server.yaml it sends each one as an alert, once when it starts and once when it ends; Prometheus's rules ship with Holdfast too.</p>
     ${all.length === 0 ? html`<div class="banner ok">No problems.</div>` : html`<table>
       <thead><tr><th>Severity</th><th>Host</th><th>Job</th><th>Problem</th><th></th></tr></thead>
       <tbody>${all.map((p) => html`<tr>

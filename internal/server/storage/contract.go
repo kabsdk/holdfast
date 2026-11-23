@@ -31,7 +31,7 @@ const (
 	CodeMaintVersionDel   = "B009" // the maintenance key can delete an object version for good
 	CodeMaintSettings     = "B010" // the maintenance key can change the bucket's settings
 	CodeLifecycle         = "B011" // no lifecycle rule expires noncurrent versions under repos/
-	CodeEscrowWrite       = "B012" // the maintenance key cannot write and delete under escrow/ (decision 036)
+	CodeEscrowWrite       = "B012" // the maintenance key cannot write, read back and delete under escrow/ (decision 036, plan-m10)
 	// B014 and B015 tested the read-only keys of M6 and M7, which decision 041 removed. They are not used again.
 	CodeMetaWrite = "B016" // the maintenance key cannot write, read back and delete under meta/ (decision 040)
 )
@@ -157,9 +157,14 @@ func (p S3Prober) ProbeMaintenance(ctx context.Context) Report {
 	if p.Escrow {
 		esc := "escrow/holdfast-probe-" + randHex(6)
 		if _, err := put(ctx, mc, b, esc); err != nil {
-			add(CodeEscrowWrite, "the maintenance key cannot write %s: %s; it needs s3:PutObject and s3:DeleteObject on escrow/* (docs/storage.md)", esc, s3err(err))
-		} else if err := mc.RemoveObject(ctx, b, esc, minio.RemoveObjectOptions{}); err != nil {
-			add(CodeEscrowWrite, "the maintenance key cannot delete %s: %s", esc, s3err(err))
+			add(CodeEscrowWrite, "the maintenance key cannot write %s: %s; it needs s3:GetObject, s3:PutObject and s3:DeleteObject on escrow/* (docs/storage.md)", esc, s3err(err))
+		} else {
+			if err := get(ctx, mc, b, esc); err != nil {
+				add(CodeEscrowWrite, "the maintenance key cannot read back %s: %s; a rebuilt server brings hosts back from escrow/ (plan-m10)", esc, s3err(err))
+			}
+			if err := mc.RemoveObject(ctx, b, esc, minio.RemoveObjectOptions{}); err != nil {
+				add(CodeEscrowWrite, "the maintenance key cannot delete %s: %s", esc, s3err(err))
+			}
 		}
 		probeMeta(ctx, mc, nil, b, "holdfast-probe-"+randHex(6), add)
 	}
@@ -308,8 +313,11 @@ func (p S3Prober) Probe(ctx context.Context, fqdn string, gateway Key) Report {
 	}
 	if p.Escrow {
 		if _, err := put(ctx, mc, b, esc); err != nil {
-			add(CodeEscrowWrite, "the maintenance key cannot write %s: %s; it needs s3:PutObject and s3:DeleteObject on escrow/* (docs/storage.md)", esc, s3err(err))
+			add(CodeEscrowWrite, "the maintenance key cannot write %s: %s; it needs s3:GetObject, s3:PutObject and s3:DeleteObject on escrow/* (docs/storage.md)", esc, s3err(err))
 		} else {
+			if err := get(ctx, mc, b, esc); err != nil {
+				add(CodeEscrowWrite, "the maintenance key cannot read back %s: %s; a rebuilt server brings hosts back from escrow/ (plan-m10)", esc, s3err(err))
+			}
 			if err := get(ctx, gc, b, esc); err == nil {
 				add(CodeHostOtherPrefix, "the gateway key read %s, outside repos/", esc)
 			}

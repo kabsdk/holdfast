@@ -24,7 +24,9 @@ import (
 //     refuses to do twice, or with another key;
 //   - the agent enrolled before the export reconnects with its certificate, without a new code; it runs a change made
 //     after the export, which the server holds back and shows until the host is changed again (Q6);
-//   - a host added after the export comes back with holdfast host import, from its escrow file, with its snapshots.
+//   - plan-m10: restore-export takes the recovery file, and writes the credentials key from it; the export carries the
+//     server's files; a host added after the export comes back by itself from its escrow file, with its snapshots,
+//     and enrolls again with a new code.
 func TestRebuildFromExport(t *testing.T) {
 	src := smallSource(t)
 	e := newEnvWith(t, envOpts{Offsite: true})
@@ -68,12 +70,26 @@ func TestRebuildFromExport(t *testing.T) {
 	waitFor(t, "db01's escrow file", time.Minute, func() bool { return e.host(db).Escrow.Current })
 	dbSnaps := e.snapshotIDs(db)
 
-	// The server is lost, with its database. A new, empty one is made.
+	// The recovery file of this server, which was set up with its own age key: the credentials key, and the age key
+	// added below it, as the admin does (plan-m10 item 3).
+	key := filepath.Join(e.dir, "holdfast-recovery.txt")
+	cmd := exec.Command(filepath.Join(binDir, "holdfast-server"), "recovery-file", "-config", e.cfgPath, key)
+	cmd.Env = e.srvEnv
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("recovery-file: %v %s", err, out)
+	}
+	rf, err := os.OpenFile(key, os.O_APPEND|os.O_WRONLY, 0)
+	must(t, err)
+	_, err = rf.WriteString(e.escrowKey.String() + "\n")
+	must(t, err)
+	must(t, rf.Close())
+
+	// The server is lost, with its database and its credentials key. A new, empty database is made.
 	e.srv.kill(syscall.SIGTERM)
 	e.loseDatabase()
+	credKey := filepath.Join(filepath.Dir(e.cfgPath), "credentials.key")
+	must(t, os.Remove(credKey))
 
-	key := filepath.Join(e.dir, "escrow-age.key")
-	must(t, os.WriteFile(key, []byte(e.escrowKey.String()+"\n"), 0o600))
 	other, _ := age.GenerateX25519Identity()
 	otherKey := filepath.Join(e.dir, "other-age.key")
 	must(t, os.WriteFile(otherKey, []byte(other.String()+"\n"), 0o600))
@@ -81,8 +97,13 @@ func TestRebuildFromExport(t *testing.T) {
 		t.Fatalf("restore-export with another age key: %v\n%s", err, out)
 	}
 	out, err := e.restoreExport(key)
-	if err != nil || !strings.Contains(out, "restored: head revision") || !strings.Contains(out, "loaded the offsite tables") {
+	if err != nil || !strings.Contains(out, "restored: head revision") || !strings.Contains(out, "loaded the offsite tables") ||
+		!strings.Contains(out, "wrote the credentials key from the recovery file") || !strings.Contains(out, "server.yaml.from-export") ||
+		!strings.Contains(out, db+" came back from escrow/") {
 		t.Fatalf("restore-export: %v\n%s", err, out)
+	}
+	if st, err := os.Stat(credKey); err != nil || st.Mode().Perm() != 0o600 {
+		t.Fatalf("the credentials key written from the recovery file: %v %v", st, err)
 	}
 	if out, err := e.restoreExport(key); err == nil || !strings.Contains(out, "new, empty database") {
 		t.Fatalf("restore-export into a database that is not empty: %v\n%s", err, out)
@@ -126,10 +147,12 @@ func TestRebuildFromExport(t *testing.T) {
 	e.cli("job", "run", web, "data")
 	waitStatus(t, e, web, "data", "success", n+1)
 
-	// db01 was added after the export: the server does not know it. It comes back from its escrow file.
-	if _, err := e.cliErr("host", "show", db); err == nil {
-		t.Fatal("db01 is known after a restore from an export made before it")
+	// db01 was added after the export: restore-export brought it back from its escrow file, with its repository and
+	// password and no job, and it enrolls again with a new code (plan-m10 item 5).
+	if h := e.host(db); h.State != "awaiting_enrollment" || len(h.Jobs) != 0 {
+		t.Fatalf("db01 after the restore: %+v", h)
 	}
+	// host import still checks what it is given: db01's file is not web01's.
 	f := e.escrowFile(db)
 	plain, _ := json.Marshal(f)
 	file := filepath.Join(e.dir, "db01-escrow.json")
@@ -137,19 +160,12 @@ func TestRebuildFromExport(t *testing.T) {
 	if out, err := e.cliErr("host", "import", web, "--escrow-file", file); err == nil || !strings.Contains(string(out), "db01") {
 		t.Fatalf("importing db01's file as web01: %v %s", err, out)
 	}
-	var imp struct {
-		Enrollment struct {
-			Code string `json:"code"`
-		} `json:"enrollment"`
-		CredentialsVersion int `json:"credentials_version"`
+	var code struct {
+		Code string `json:"code"`
 	}
-	impOut := e.cli("host", "import", db, "--escrow-file", file)
-	must(t, json.Unmarshal(impOut, &imp))
-	if imp.Enrollment.Code == "" || imp.CredentialsVersion != f.CredentialsVersion || strings.Contains(string(impOut), f.RepoPassword) {
-		t.Fatalf("host import: %s", impOut)
-	}
+	must(t, json.Unmarshal(e.cli("host", "enroll-code", db), &code))
 	dbAgent.kill(syscall.SIGTERM)
-	e.startAgent(db, imp.Enrollment.Code)
+	e.startAgent(db, code.Code)
 	waitFor(t, "db01 back", time.Minute, func() bool { return e.host(db).Online })
 	if ids := e.snapshotIDs(db); !containsAll(ids, dbSnaps) {
 		t.Fatalf("db01's snapshots after the import: %v, want %v", ids, dbSnaps)

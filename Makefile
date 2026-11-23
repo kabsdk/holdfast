@@ -37,7 +37,7 @@ BROWSER_IMAGE  ?= chromedp/headless-shell@sha256:381353d3530ab9d579d2fe8b9c0f451
 BROWSER_NAME   ?= holdfast-test-browser
 BROWSER_PORT   ?= 59222
 
-.PHONY: build test unit vet fmt pg-up pg-down minio-up minio-down tools e2e e2e-image rules-test authelia-up authelia-down browser-up browser-down packages install-test
+.PHONY: build test unit vet fmt pg-up pg-down minio-up minio-down tools e2e e2e-image rules-test authelia-up authelia-down browser-up browser-down packages install-test screenshots
 
 # promtool: the alert rules parse, and their unit tests pass.
 rules-test:
@@ -124,4 +124,12 @@ e2e: tools pg-up minio-up authelia-up browser-up e2e-image
 		-e HOLDFAST_S3_ROOT_USER=$(S3_USER) -e HOLDFAST_S3_ROOT_PASSWORD=$(S3_PASS) \
 		-e HOLDFAST_RESTIC=/tools/restic-$(RESTIC_VERSION) -e HOLDFAST_MC=/tools/mc \
 		-e HOLDFAST_OIDC_DIR=/tools/authelia-e2e -e HOLDFAST_BROWSER=http://127.0.0.1:$(BROWSER_PORT) \
+		-e "HOLDFAST_SCREENSHOTS=$(HOLDFAST_SCREENSHOTS)" \
 		$(E2E_IMAGE) go test ./test/e2e/ -count=1 -v -timeout 60m $(E2E_ARGS)
+
+# The documentation's pictures of the UI, website/img/*.png, taken by TestScreenshots against a real server, real
+# agents, restic and S3. The container writes them as root; they are handed back to you.
+HOLDFAST_SCREENSHOTS ?=
+screenshots:
+	$(MAKE) e2e E2E_ARGS='-run TestScreenshots' HOLDFAST_SCREENSHOTS=/src/website/img
+	docker run --rm -v $(CURDIR)/website/img:/img $(E2E_IMAGE) chown -R $$(id -u):$$(id -g) /img

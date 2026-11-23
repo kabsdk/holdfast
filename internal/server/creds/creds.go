@@ -23,6 +23,16 @@ const KeySize = 32
 
 // LoadKeyFile reads a hex-encoded 32-byte key. The file must not be readable by group or others.
 func LoadKeyFile(path string) (*Sealer, error) {
+	key, err := ReadKeyFile(path)
+	if err != nil {
+		return nil, err
+	}
+	return NewSealer(key)
+}
+
+// ReadKeyFile reads the key's bytes, for the recovery file (plan-m10 item 3). The file must not be readable by group
+// or others.
+func ReadKeyFile(path string) ([]byte, error) {
 	fi, err := os.Stat(path)
 	if err != nil {
 		return nil, err
@@ -38,17 +48,28 @@ func LoadKeyFile(path string) (*Sealer, error) {
 	if err != nil {
 		return nil, fmt.Errorf("credentials key %s: not hex: %w", path, err)
 	}
-	return NewSealer(key)
+	if len(key) != KeySize {
+		return nil, fmt.Errorf("credentials key %s must be %d bytes, got %d", path, KeySize, len(key))
+	}
+	return key, nil
 }
 
 // WriteNewKeyFile creates a new random key at path with mode 0600. It refuses to overwrite.
 func WriteNewKeyFile(path string) error {
+	return WriteKeyFile(path, Random(KeySize))
+}
+
+// WriteKeyFile writes a key at path with mode 0600, as LoadKeyFile reads it. It refuses to overwrite.
+func WriteKeyFile(path string, key []byte) error {
+	if len(key) != KeySize {
+		return fmt.Errorf("credentials key must be %d bytes, got %d", KeySize, len(key))
+	}
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
-	_, err = f.WriteString(hex.EncodeToString(Random(KeySize)) + "\n")
+	_, err = f.WriteString(hex.EncodeToString(key) + "\n")
 	return err
 }
 

@@ -18,7 +18,8 @@ This path is walked in the lab (`lab/README.md`, the rebuild test).
    retention keeps the old ones.
 4. **Get an enrollment code.** The host is still in Holdfast: `holdfast host enroll-code web01.example.com`. If it
    was removed, add it again (`holdfast host add web01.example.com`): it comes back with its
-   repository and its password (spec §3.5). A decommissioned host starts over, with nothing to restore.
+   repository and its password (spec §3.5), and no job; set its jobs again with `holdfast job set` after step 6, so
+   its first backup is not of the empty new host. A decommissioned host starts over, with nothing to restore.
 5. **Enroll it**, as root on the host, with the command Holdfast printed: the new agent makes its own key and
    certificate, and the server pins them in place of the lost host's. Before starting the agent, set what it
    may do in `/etc/holdfast/agent.yaml`, which is the host's own (`deploy/examples/agent.yaml`): `restore.allow_in_place:
@@ -38,18 +39,19 @@ This path is walked in the lab (`lab/README.md`, the rebuild test).
 
 ## Path 2: Holdfast is gone too
 
-Everything needed is outside Holdfast: the offline age key, the escrow file in the bucket, and a key from the
-storage admin.
+Everything needed is outside Holdfast: the recovery file, kept offline, the escrow file in the bucket, and a key from
+the storage admin.
 
-1. **Get the repository's password.** The storage admin reads `escrow/web01.example.com.age` from the bucket with
-   their own key (the maintenance key cannot read it), and you decrypt it with the offline key (decision 036):
+1. **Get the repository's password.** Read `escrow/web01.example.com.age` from the bucket, with the maintenance key
+   or the storage admin's own, and decrypt it with the recovery file's age key (decisions 036, 047). age refuses the
+   recovery file's credentials-key line, so give it the age key alone:
 
    ```
-   age -d -i escrow-key.txt web01.example.com.age > escrow.json
+   grep '^AGE-SECRET-KEY-' holdfast-recovery.txt > age.key
+   age -d -i age.key web01.example.com.age > escrow.json
    ```
 
-   It holds `repository` and `repo_password`. Keep it root-only, and delete it when you are done. A manual escrow
-   bundle (`holdfast escrow export`) holds the same.
+   It holds `repository` and `repo_password`. Keep both files root-only, and delete them when you are done.
 2. **Get a key**: the storage admin makes a read-only key for `repos/web01.example.com/`: `s3:ListBucket` on the
    bucket and `s3:GetObject` on that prefix. Hosts hold no S3 key (decision 041), so this one is made for the
    occasion, and deleted afterwards.

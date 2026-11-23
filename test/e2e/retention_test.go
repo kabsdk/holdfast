@@ -233,8 +233,9 @@ func TestRetentionCutWaitsSevenDays(t *testing.T) {
 		t.Fatalf("the cut must leave snapshots waiting and none to forget: %+v", p)
 	}
 	for _, x := range p.Pending {
-		if x.Reason != "retention_cut" || x.KeptBy != 1 || time.Until(x.PrunableAt) < 7*24*time.Hour-time.Hour || time.Until(x.PrunableAt) > 7*24*time.Hour+time.Hour {
-			t.Fatalf("a pending snapshot is kept by revision 1 for 7 days: %+v", x)
+		// Revision 1 added the host, revision 2 its job (plan-m10 item 4).
+		if x.Reason != "retention_cut" || x.KeptBy != 2 || time.Until(x.PrunableAt) < 7*24*time.Hour-time.Hour || time.Until(x.PrunableAt) > 7*24*time.Hour+time.Hour {
+			t.Fatalf("a pending snapshot is kept by revision 2 for 7 days: %+v", x)
 		}
 	}
 	if run := e.run("retention", "run", fqdn); run.Status != "success" || len(run.Forgotten) != 0 {
@@ -249,8 +250,8 @@ func TestRetentionCutWaitsSevenDays(t *testing.T) {
 	if out, err := set(short, "--accept=R104"); err != nil {
 		t.Fatalf("%v %s", err, out)
 	}
-	if p := e.pending(fqdn); !slices.Equal(p.ids(), cut) || p.Pending[0].KeptBy != 3 {
-		t.Fatalf("after the second cut, revision 3 keeps the same snapshots: %+v", p)
+	if p := e.pending(fqdn); !slices.Equal(p.ids(), cut) || p.Pending[0].KeptBy != 4 {
+		t.Fatalf("after the second cut, revision 4 keeps the same snapshots: %+v", p)
 	}
 
 	// The test clock needs -test.

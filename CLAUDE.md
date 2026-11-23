@@ -77,6 +77,7 @@ These also follow from the spec:
 | M7 | Off-site copies (plan-m7): holdfast-vault with `restic copy` (decisions 027, 039), its own retention, "Delete here too" (decision 031), holdfast-server's read-only view and its hold, restores from the other site. No standby failover (decision 030). | |
 | M8 | Two programs (plan-m8, decision 041): agents identified by a pinned certificate, a gateway in holdfast-server in place of per-host S3 keys, off-site copies made by the server, holdfast-vault removed. | The e2e suite passes with no S3 key on any host and no vault, and the lab's fidelity, recovery and off-site tests pass on the Ubuntu, RHEL and Oracle Linux VMs. |
 | M9 | Rebuilding Holdfast (plan-m9, decisions 040, 042): the nightly export, `holdfast host import`, the rebuild runbook, the sizing measurement. A new server on the same bucket picks up; no standby. | |
+| M10 | Simpler to run (plan-m10, decisions 045–049): the server is the storage witness (`holdfast-freshness` removed), it sends its own alerts (mail, webhook, heartbeat), one recovery file, `host add` without a job and job defaults, the web UI without an identity provider (`holdfast ui-login`). | The e2e suite and `make install-test` pass. |
 
 ## Repository
 

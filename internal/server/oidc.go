@@ -180,6 +180,10 @@ func safeNext(next string) string {
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
+	if !s.oidcOn() {
+		s.noProviderPage(w)
+		return
+	}
 	_, _, cfg, err := s.oauth(r.Context())
 	if err != nil {
 		s.log.Error("login", "err", err)
@@ -279,6 +283,11 @@ type DeviceToken struct {
 }
 
 func (s *Server) handleDeviceStart(w http.ResponseWriter, r *http.Request) {
+	if !s.oidcOn() {
+		writeErr(w, http.StatusServiceUnavailable, "this server has no identity provider, so holdfast login cannot work: use holdfast as root on the server, "+
+			"or holdfast ui-login there for the web UI; or set up OIDC (auth.oidc in server.yaml)")
+		return
+	}
 	ctx, p, cfg, err := s.oauth(context.WithoutCancel(r.Context()))
 	if err != nil {
 		writeErr(w, http.StatusServiceUnavailable, "login is not available: "+err.Error())

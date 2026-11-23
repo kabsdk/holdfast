@@ -63,7 +63,8 @@ func (s *Server) actorOfSession(sess store.Session) Actor {
 	if sess.Kind == "browser" {
 		source = "ui"
 	}
-	return Actor{Name: sess.Username, Subject: sess.Subject, Source: source, Groups: sess.Groups, Everywhere: s.bootstrapAdmin(sess.Username)}
+	return Actor{Name: sess.Username, Subject: sess.Subject, Source: source, Groups: sess.Groups,
+		Everywhere: s.bootstrapAdmin(sess.Username) || sess.Subject == rootSubject && sess.Username == rootUsername}
 }
 
 // sessionToken finds a request's session token: a bearer token (the CLI), or the cookie (a browser).

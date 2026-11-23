@@ -1,15 +1,18 @@
-# Holdfast alert rules (plan-m1 §11). Two witnesses: the server (what agents reported) and the storage
-# witness (what is actually in the bucket). When they disagree, storage wins. Tested by
+# Holdfast alert rules (plan-m1 §11), for teams with Prometheus; the server also sends its own alerts (plan-m10 item 2).
+# The server reports two things: what the agents said, and what the bucket holds, as restic reads the repositories with
+# the maintenance key straight from S3 (plan-m10 item 1). When they disagree, the bucket wins. Tested by
 # holdfast-alerts.test.yml (make rules-test).
 groups:
   - name: holdfast
     rules:
       - alert: HoldfastServerDown
+        # Every backup goes through the server (decision 041): while it is down none runs. Agents keep their schedule and
+        # back up as soon as it answers.
         expr: up{job="holdfast-server"} == 0
         for: 5m
         labels: {severity: page}
         annotations:
-          summary: "Holdfast control plane unreachable. Agents keep backing up; watch the storage freshness alerts."
+          summary: "The Holdfast server is unreachable: no backup runs until it is back, as every backup goes through it"
 
       - alert: HoldfastBackupStale
         # Catches every way backups stop: agent dead, network, bug, disabled job. A job with no
@@ -63,48 +66,23 @@ groups:
         annotations:
           summary: "The clock on {{ $labels.host }} is {{ $value }}s off the server's: schedules and snapshot times are skewed"
 
-      - alert: HoldfastStorageStale
-        # Read straight from the bucket. The threshold is twice the gap of the host's most frequent job,
-        # from the server. When the server's series are missing (the server or PostgreSQL is down), it
-        # falls back to the witness's own -stale-after, so this still fires (decision 030).
-        expr: |
-          (time() - max by (host) (holdfast_storage_newest_snapshot_timestamp_seconds))
-            > on(host) (
-                2 * min by (host) (holdfast_job_longest_gap_seconds)
-                or max by (host) (holdfast_storage_stale_after_seconds)
-              )
-          and on(host) max by (host) (holdfast_storage_newest_snapshot_timestamp_seconds) > 0
+      - alert: HoldfastBackupNotInBucket
+        # The storage witness (plan-m10 item 1): an agent reported a backup, and restic, reading the repository from the
+        # bucket with the maintenance key after the report, did not find its snapshot. The server reads the repository
+        # after every backup; a snapshot that was there and went later is HoldfastSnapshotsDisappeared.
+        expr: holdfast_job_snapshot_in_bucket == 0
         for: 15m
         labels: {severity: page}
         annotations:
-          summary: "Storage shows no new snapshot for {{ $labels.host }} in {{ $value | humanizeDuration }}"
+          summary: "{{ $labels.host }}/{{ $labels.job_id }}: the agent reported a backup that the bucket does not hold"
 
-      - alert: HoldfastStorageMissing
-        # The server knows the host has backed up, but storage has no snapshot for it at all.
-        expr: |
-          max by (host) (holdfast_host_first_backup_timestamp_seconds) > 0
-          unless on(host) max by (host) (holdfast_storage_newest_snapshot_timestamp_seconds) > 0
-        for: 15m
-        labels: {severity: page}
+      - alert: HoldfastCatalogueFailing
+        # The server cannot read the host's repository from the bucket, so it cannot tell what the bucket holds.
+        expr: holdfast_catalogue_read_failed == 1
+        for: 2h
+        labels: {severity: ticket}
         annotations:
-          summary: "{{ $labels.host }} has backed up, but storage holds no snapshot for it"
-
-      - alert: HoldfastWitnessDisagreement
-        # The server reports a success that storage does not contain.
-        expr: |
-          max by (host) (holdfast_job_last_success_timestamp_seconds)
-            - on(host) max by (host) (holdfast_storage_newest_snapshot_timestamp_seconds) > 3600
-        for: 15m
-        labels: {severity: page}
-        annotations:
-          summary: "{{ $labels.host }}: the server reports a backup {{ $value | humanizeDuration }} newer than anything in storage"
-
-      - alert: HoldfastStorageScrapeFailed
-        expr: holdfast_storage_scrape_success == 0 or absent(holdfast_storage_scrape_success)
-        for: 10m
-        labels: {severity: page}
-        annotations:
-          summary: "The storage witness cannot list the bucket"
+          summary: "{{ $labels.host }}: the server cannot read its repository from the bucket (holdfast host show {{ $labels.host }})"
 
       - alert: HoldfastMaintenanceStale
         expr: time() - holdfast_maintenance_last_success_timestamp_seconds{kind="check"} > 3 * 86400
@@ -170,13 +148,6 @@ groups:
         annotations:
           summary: "{{ $labels.host }}: storage check {{ $labels.code }} fails (holdfast host show {{ $labels.host }})"
 
-      - alert: HoldfastEscrowOutdated
-        expr: holdfast_escrow_missing_hosts > 0
-        for: 24h
-        labels: {severity: ticket}
-        annotations:
-          summary: "{{ $value }} hosts' credentials are in no escrow bundle: export one and store it offline"
-
       - alert: HoldfastEscrowNotWritten
         # The bucket's escrow file does not hold the host's current repository password (decision 036): the
         # write failed, or the maintenance key may not write escrow/ (B012). The server tries every 15 minutes.
@@ -187,8 +158,8 @@ groups:
           summary: "{{ $labels.host }}: the escrow file in the bucket does not hold its current repository password (holdfast host show {{ $labels.host }})"
 
       - alert: HoldfastEscrowNotConfigured
-        # server.yaml names no escrow.age_recipient: repository passwords are only in PostgreSQL and in
-        # manual escrow exports.
+        # server.yaml names no escrow.age_recipient: repository passwords are only in PostgreSQL, and no nightly export
+        # is written. The installer always sets one; a server set up by hand may lack it.
         expr: holdfast_escrow_configured == 0
         for: 24h
         labels: {severity: ticket}
@@ -239,8 +210,8 @@ groups:
           summary: "{{ $labels.host }}: its copies to off-site keep failing (holdfast --offsite host show {{ $labels.host }})"
 
       - alert: Watchdog
-        # Always firing. Something outside both sites must notice when it stops arriving: that is the dead
-        # man's switch (docs/alerting.md).
+        # Always firing. Something outside the site must notice when it stops arriving: that is Prometheus's dead man's
+        # switch (docs/alerting.md). The server's own alerts have theirs: notify.heartbeat_url.
         expr: vector(1)
         labels: {severity: none}
         annotations:

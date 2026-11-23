@@ -171,8 +171,10 @@ func (s *Server) Routes() []Route {
 		r("DELETE", "/api/v1/sessions/{user}", "", s.apiEndSessions), // admin everywhere
 		r("GET", "/api/v1/hosts/{fqdn}/offsite", access.View, s.apiOffsiteCopies),
 		r("GET", "/api/v1/exports", "", s.apiExports),
-		r("POST", "/api/v1/exports", "", s.apiExportNow), // admin everywhere, in ExportNow
-		{Method: "POST", Path: "/api/v1/escrow/export", Local: true, h: s.apiEscrow},
+		r("POST", "/api/v1/exports", "", s.apiExportNow),      // admin everywhere, in ExportNow
+		r("POST", "/api/v1/notify/test", "", s.apiNotifyTest), // admin everywhere, in NotifyTest
+		// Root's one-time link into the UI (plan-m10 item 6): on the root socket only.
+		{Method: "POST", Path: "/api/v1/ui-login", Local: true, h: s.apiUILogin},
 	}
 }
 

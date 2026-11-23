@@ -90,32 +90,33 @@ supports.
     it prunes it.
   - A backup or a check that runs past its timeout is stopped and reported as failed, so the host's other
     jobs can run. The timeout is the schedule's longest gap, and at least an hour.
+- The storage witness (decision 045, in place of M1's `holdfast-freshness`): after every backup, and at least once a
+  day, it reads the host's repository with restic and the maintenance key, straight from S3, not through the gateway.
+  So "the agent says the backup is done" and "the bucket holds it" are judged apart: a snapshot an agent reported that
+  the bucket does not hold is the `not_in_bucket` error, and one that was there and went later is `disappeared`
+  (§3.6, §5.5a).
+- It sends its own alerts, by mail, a webhook or both, and calls a heartbeat URL (decision 046, §5.5a).
 - Keeps its state in PostgreSQL.
 - Optionally, with `offsite:` in its settings, copies every host's snapshots with `restic copy` into a second bucket,
   under their own retention and the same 7-day protection (§3.7, decision 041). M7's holdfast-vault, a program of its
   own, did this until M8.
 
-There are two programs: holdfast-agent and holdfast-server (decision 041).
+There are two programs: holdfast-agent and holdfast-server (decision 041), and the CLI, `holdfast`.
 
-**Storage witness** (`holdfast-freshness`)
-- Lists the bucket without going through any agent.
-- This means "the agent says the backup is OK" and "the bucket has a fresh snapshot" are judged
-  separately.
-
-**Prometheus**
-- Scrapes the server and the witness. It never scrapes individual agents.
-- Alert rules ship with the product. The starting set is
-  [poc/deploy/prometheus/holdfast-alerts.yml](../poc/deploy/prometheus/holdfast-alerts.yml).
+**Prometheus**, optional
+- Scrapes the server only, never the agents (decision 009). The server's `/metrics` holds both what the agents
+  reported and what the bucket holds.
+- Alert rules ship with the product: [deploy/prometheus/holdfast-alerts.yml](../deploy/prometheus/holdfast-alerts.yml).
 
 ### 2.2 One server, replaced when lost
 
 - There is one server and no high availability: no standby, no cluster, no second gateway (decisions 030, 042).
 - Backups go through the server's gateway (decision 041), so while the server is down no backup is made: agents keep
   their schedule, restic waits and retries, and a failed backup is retried as soon as the server answers. Nothing is
-  lost, as the backups are in the bucket. The storage witness lists the bucket directly and alerts when snapshots go
-  stale.
-- A lost server is replaced, not failed over: a new one, given the same bucket, the credentials key from escrow and the
-  nightly export, picks up where the old one was (M9, decision 040), following a tested runbook.
+  lost, as the backups are in the bucket. A stopped server sends no alert, so it stops calling `notify.heartbeat_url`,
+  and a heartbeat service outside the site raises the alarm; with Prometheus, `HoldfastServerDown` pages (§5.5a).
+- A lost server is replaced, not failed over: a new one, given the same bucket, its two keys, the recovery file and
+  the nightly export, picks up where the old one was (M9, decisions 040 and 047), following a tested runbook.
 
 ### 2.3 Credentials and storage protection
 
@@ -143,18 +144,32 @@ There are two programs: holdfast-agent and holdfast-server (decision 041).
   bucket's lifecycle rule expires its old versions. That holds against a compromised host, a compromised
   server and Prune now. The 7-day protection (§3.4) is Holdfast's own rule on top of it.
 - **Repository passwords are escrowed in the bucket** (decision 036). `escrow.age_recipient` in
-  `server.yaml` names an age public key whose private key the admin keeps offline. At host add, and whenever
-  a host's password changes, the server writes `escrow/<fqdn>.age`: the FQDN, the repository URL and the
+  `server.yaml` names an age public key whose private key is kept offline, in the recovery file (below). At host add,
+  and whenever a host's password changes, the server writes `escrow/<fqdn>.age`: the FQDN, the repository URL and the
   password, encrypted to that key. A write that fails is shown on the host and tried
   again every 15 minutes; a host added before the recipient was set is written at the next pass. Without a
-  recipient nothing is written, and every host and `holdfast_escrow_configured` say so.
-- `holdfast escrow export` still writes every host's repository and password to an offline bundle.
+  recipient (a server set up by hand without one) nothing is written, and every host and `holdfast_escrow_configured`
+  say so. There is no plaintext bundle of the passwords (decision 047): the escrow files and the recovery file open
+  any repository without Holdfast.
+- **The recovery file** (decision 047). Unless given an age public key of the admin's own
+  (`HOLDFAST_ESCROW_RECIPIENT`), the installer makes the age key pair and writes `/root/holdfast-recovery.txt`, mode
+  0600: the age private key (`AGE-SECRET-KEY-…`) and the server's credentials key (`HOLDFAST-CREDENTIALS-KEY-…`). With
+  the bucket's two keys it rebuilds a lost server, and with the escrow files it opens every repository. It belongs
+  offline: while a file is at `recovery_file` in `server.yaml`, the server shows the problem `recovery_file` (§5.5a).
+  - `holdfast-server recovery-file -config server.yaml <path>` writes a running server's file: its credentials key,
+    to which an admin with an age key of their own adds that key's `AGE-SECRET-KEY-…` line. `-recipient <path>`
+    prints a file's age public key; `-new` is the installer's.
+  - The credentials key never goes into the bucket. age encrypts but does not authenticate, so the maintenance key
+    could write an export of its own to `meta/`; that the credentials key opens the export's passwords is what proves
+    the export is the server's.
 - **The nightly export** (decision 040, plan-m9), what a new server is restored from (§2.2,
   [runbooks/rebuild-holdfast.md](runbooks/rebuild-holdfast.md)). Every night at 00:30 in the default zone, the server
   writes `meta/<UTC date>.age` to its bucket with the maintenance key: every table of its database, the off-site
   instance's too, as CSV in a gzipped tar with a manifest, encrypted to `escrow.age_recipient`. It leaves out the
   sessions and the gateway's grants. The passwords inside stay sealed with the credentials key, so the export alone
-  opens no repository; `server.yaml` is not in it.
+  opens no repository. It also holds the server's files (decision 047): the agent listener's certificate and key, the
+  CA and its key, the UI's certificate and key, and the settings in force without the database's DSN. The S3 keys,
+  the database's password and the OIDC client secret are not in it: the admin gives them again.
   - A server that missed 00:30 exports at its next start; a failed export is tried again every hour.
   - With `offsite:` each export is written to the off-site bucket too, with the off-site key. A failed off-site write
     leaves the export counted, and is a problem and an alert of its own.
@@ -164,8 +179,17 @@ There are two programs: holdfast-agent and holdfast-server (decision 041).
     Exports page with both. Each export is audited (`export.written`, `export.failed`, `export.offsite_failed`).
   - Without an age recipient no export is written, and the server says so. `holdfast status`, the UI and
     `holdfast_export_last_success_timestamp_seconds` show the server's own problems: `export` and `export_offsite`.
-  - `holdfast-server restore-export -identity <age key> (<file> | -latest)`, as root on a rebuilt server, loads one
-    into a new, empty database, and refuses any other. It is not an API: there is no server yet (spec §3.3).
+  - `holdfast-server restore-export -identity <recovery file> (<file> | -latest)`, as root on a rebuilt server, loads
+    one into a new, empty database, and refuses any other. It is not an API: there is no server yet (§3.3). It also:
+    - writes the recovery file's credentials key where `server.yaml` says, and refuses another key that is there;
+    - writes each of the export's files that is missing where the new `server.yaml` says, never over one that is
+      there, and the exported settings beside it as `server.yaml.from-export`, to compare;
+    - brings back every host that has an escrow file in the bucket but is not in the export, one added after it, as
+      `holdfast host import` does (§5.7): with its repository and password, no job, and waiting for a new enrollment
+      code.
+
+    An age key file alone works as the identity too, with the credentials key already in place. The installer's
+    server line with `HOLDFAST_RECOVERY_FILE` does all of it and starts the server (§2.4).
   - After a restore, an agent that runs a revision newer than the restored head keeps it: the server sends it no
     config, and the host shows `ahead`, until a new revision changes the host (plan-m9 Q6).
 - Credentials are never shown in the UI.
@@ -174,17 +198,23 @@ There are two programs: holdfast-agent and holdfast-server (decision 041).
 ### 2.4 Packages and upgrades
 
 - Holdfast ships `.deb` and `.rpm` packages for amd64 (plan-m5 item 1): `holdfast-agent`, `holdfast-server`,
-  `holdfast-cli`, `holdfast-freshness`, and `holdfast-restic`, which holds the pinned restic at
+  `holdfast-cli`, and `holdfast-restic`, which holds the pinned restic at
   `/usr/libexec/holdfast/restic` and which the agent and the server need at their own version. The binaries
   are static, so one package runs on every supported distribution. The packages are unsigned for now, with
-  `SHA256SUMS` (plan-m5 Q2). [install.md](install.md) is the guide.
+  `SHA256SUMS` (plan-m5 Q2). [install.md](install.md) is the guide. `holdfast-freshness`, M1's storage witness, left
+  in M10 (decision 045); `holdfast-server` replaces it.
 - Installing enables no service: each needs its config first. Upgrading restarts a service that runs.
   Removing stops and disables it, and never deletes `/etc/holdfast`, state or backups.
 - **`install.sh`** (decision 044), released beside the packages, installs them and sets the machine up in one line run
-  as root, by role: `server`, `agent` (the default), `cli` or `witness`, with `HOLDFAST_*` settings in the environment.
+  as root, by role: `server`, `agent` (the default) or `cli`, with `HOLDFAST_*` settings in the environment.
   It checks every setting before it changes anything and stops with the list of what is missing or wrong; it never
-  prompts. Run again, it only upgrades. On a new machine with `/etc/holdfast` put back, the server's line prepares a
-  rebuild and leaves the server stopped for `restore-export` (§2.2).
+  prompts. Run again, it only upgrades.
+  - The server's line needs the bucket and its two keys. It writes the recovery file unless given an age public key
+    (§2.3), and turns the web UI on at `https://<fqdn>/` with a certificate from Holdfast's own CA, unless given one or
+    `HOLDFAST_UI_URL=off` (decision 049). OIDC, alerts (`notify:`) and off-site copies are optional settings.
+  - On a new machine, the server's line with `HOLDFAST_RECOVERY_FILE` and the settings of the first install rebuilds
+    a lost server from the bucket's newest export, and starts it (§2.3). With `/etc/holdfast` put back instead, it
+    prepares a rebuild and leaves the server stopped for `restore-export`.
 - **The agent and the server agree on a protocol version.** The agent sends its own with every poll (an agent
   before M5 sends none and speaks 1), and the server answers with the range it accepts. The server accepts
   every agent from its minimum on, so it is upgraded first, and agents after it, one by one. Protocol 2 (M6)
@@ -223,12 +253,13 @@ retention. See [decision 013](decisions/013-no-rollback.md).
 
 - The options in the UI, the API and the CLI are the same, with very few exceptions. Any exception is listed
   here:
-  - **Escrow export** exists only on the server's root socket (`holdfast escrow export` as root), never over
-    the network.
+  - **Root's link into the UI**, `holdfast ui-login` (`POST /api/v1/ui-login`), exists only on the server's root
+    socket, never over the network (§6.1, decision 049). M9's `holdfast escrow export`, the one before it, is gone
+    (decision 047).
   - **Settings in `server.yaml`** are changed by editing the file as root. The UI and the API only show them,
     without secrets.
-  - **Login** differs by client: a browser is redirected to the provider, the CLI shows a device code
-    (decision 034). Both end in the same kind of session.
+  - **Login** differs by client: a browser is redirected to the provider or opens root's link, the CLI shows a device
+    code (decisions 034, 049). Both end in the same kind of session.
   - **Off-site copies** (§3.7) are the same UI, API and CLI on the off-site repositories: the pages under
     `#/offsite/`, the API under `/api/v1/offsite/`, the CLI with `--offsite`. UI = API = CLI holds there too.
   - **Restoring an export** is `holdfast-server restore-export`, as root on a rebuilt server, before it starts
@@ -495,6 +526,20 @@ Retention is expressed only as time windows, which map to restic as follows.
 
 A protection item is a schedule and a retention bundled together, and they are validated as a unit.
 
+**The default job** (decision 048). `holdfast job set <fqdn> <job> --path …` (`PUT /api/v1/hosts/{fqdn}/jobs/{job}`)
+makes a job, and the request may leave things out:
+- a new job takes what it does not give from the default job: daily at 02:00 with 20 minutes' spread; one per day
+  for 14 days, per week for 8 weeks, per month for 12 months, per year for 3 years; the newest 3. A new job that
+  names a schedule form takes the schedule as given, with no spread unless it gives one: the default's spread suits
+  the default's form only, and over `--every 1m` it would fail S001;
+- an existing job keeps its own values for what is not given. A schedule that names a form (daily, every, weekly)
+  replaces the form and keeps the spread and zone unless it gives them; a spread or a zone alone changes only that. A
+  retention, when given, is replaced whole. Giving paths drops a dump, and giving a dump drops the paths (§4.6).
+
+So `holdfast job set web01 system --path /etc` is a whole job, and `holdfast job set web01 system --daily 03:00`
+moves its time and keeps the rest; any `--keep-*` flag gives the whole retention. The checks (§4.5) run on the job as
+merged.
+
 ### 4.4 Library (cut)
 
 The library, profiles and "Jobs with the old values" were cut (decision 030). The section number is kept
@@ -558,7 +603,7 @@ errors that cannot be accepted. A host whose storage fails one cannot be added o
 | B009 | The maintenance key can delete an object version for good. |
 | B010 | The maintenance key can change the bucket's settings: versioning, the lifecycle rule or the bucket policy. |
 | B011 | No enabled lifecycle rule expires noncurrent versions under `repos/`. |
-| B012 | The maintenance key cannot write and delete under `escrow/`. Tested only when `escrow.age_recipient` is set (decision 036). |
+| B012 | The maintenance key cannot write, read back and delete under `escrow/`. Tested only when `escrow.age_recipient` is set (decisions 036, 047: `restore-export` reads the escrow files of hosts added after the export). |
 | B016 | The maintenance key cannot write, read back and delete under `meta/`, where the nightly exports go. Tested only when `escrow.age_recipient` is set (decision 040). |
 
 B014 and B015 tested the read-only keys of M6 and M7; no such key exists since decision 041, and the codes are not
@@ -700,18 +745,29 @@ original's (`holdfast offsite copies <fqdn>` lists them):
 
 The UI's Problems page, and the Fleet's "Needs attention", list what the server knows is wrong, host by
 host, each with a code:
-- errors: `stale`, `failed`, `storage`, `disappeared`, `foreign_keys`, `rotation` (an old password still
-  opens the repository), and `decommission` when a due decommission could not delete;
+- errors: `stale`, `failed`, `not_in_bucket` (the agent reported a backup whose snapshot the server, reading the
+  repository from the bucket after the report, did not find: decision 045), `storage`, `disappeared`, `foreign_keys`,
+  `rotation` (an old password still opens the repository), and `decommission` when a due decommission could not
+  delete;
 - warnings: `incomplete`, `offline`, `drift`, `restic`, `not_made_by_holdfast`, `catalogue`, `retention`,
   `removing`, `enroll` (waiting to enroll again), `escrow` (no recipient, or the write failed), `size`,
   `agent_too_old` (§2.4), `decommission` while one waits, `rollback` while one runs (§3.5b), and `ahead` (the
   agent runs a change a restored server lost, §2.3).
 
 The server's own problems, which belong to no host, are on every page of the UI and in `holdfast status`: `export`
-(no recipient, a failed export, or none for 2 days) and `export_offsite` (§2.3).
+(no recipient, a failed export, or none for 2 days), `export_offsite` (§2.3), `recovery_file` (the recovery file is
+still on the server, §2.3) and `notify` (an alert or the heartbeat could not be sent).
 
-Paging stays with Prometheus and the alert rules that ship with Holdfast. The storage witness is judged
-there too, apart from the server (decisions 008 and 009).
+**Alerts** (decision 046). With `notify:` in `server.yaml`, the server sends these problems itself, errors and
+warnings, by mail through an SMTP relay, to a webhook (a JSON POST whose `text` Slack and Mattermost show), or both:
+- once when a problem has lasted `notify.after` (10 minutes by default), and once when it ends. A problem that ends
+  sooner is never sent. A send that fails is the `notify` problem, and is tried again at the next pass, a minute later;
+- after each pass that sent what it had to, it calls `notify.heartbeat_url` (GET), so a heartbeat service outside the
+  site notices when the server, or its alerts, stop;
+- `holdfast notify test` (`POST /api/v1/notify/test`, and a button on the UI's Settings page), an admin's, sends a
+  test by every channel that is set, and is audited (`notify.test`).
+
+Prometheus and the rules that ship with Holdfast are optional, for teams that have them ([alerting.md](alerting.md)).
 
 ### 5.6 Search
 
@@ -722,10 +778,12 @@ Search finds:
 
 ### 5.7 Add host
 
-1. Enter the FQDN. It is validated, and a duplicate FQDN is refused.
-2. Optionally give its first job. No S3 key: the host's storage is tested with the gateway key (decision 041,
+1. Enter the FQDN: `holdfast host add <fqdn>`, `POST /api/v1/hosts` with the FQDN alone. It is validated, and a
+   duplicate FQDN is refused. No S3 key: the host's storage is tested with the gateway key (decision 041,
    [storage.md](storage.md)).
-3. Saving creates a revision.
+2. Saving creates a revision. The host has no job: jobs are added with `holdfast job set` (decision 048, §4.3). The
+   UI's form asks for the paths of a first job too, and saves it with that second call, with the default job's
+   schedule and retention.
 4. Holdfast shows a single-use enrollment code, valid for 15 minutes, and the one line to run on the host as root
    (decision 044), `install_script`: `curl -sfL <release>/install.sh | HOLDFAST_SERVER=<url> HOLDFAST_FQDN=<fqdn>
    HOLDFAST_CODE=<code> HOLDFAST_CA_SHA256=<pin> HOLDFAST_VERSION=<the server's version> sh -`, which installs the
@@ -744,7 +802,8 @@ server does not know, as the export it was restored from was made before the hos
 file goes to the server once and is never shown back. The server checks that the file is that host's and names this
 server's repository for it, tests the storage contract, and proves the password opens the repository; it then adds the
 host with that repository and password, its keys as Holdfast's own, no job, and an enrollment code. It refuses a host
-it knows: `holdfast host enroll-code` is for that.
+it knows: `holdfast host enroll-code` is for that. `restore-export` does the same by itself for every host whose
+escrow file is in the bucket (§2.3), so an import is needed only for a file from elsewhere.
 
 ---
 
@@ -752,16 +811,25 @@ it knows: `holdfast host enroll-code` is for that.
 
 ### 6.1 Login
 
-- Login is through OIDC (Authelia, or any provider with the code flow and the device flow). The server is
-  the only OIDC client (decision 034):
+- **Through OIDC**, optional (decision 034): Authelia, Dex, Keycloak or any provider with the code flow and the
+  device flow. The server is the only OIDC client:
   - a browser logs in with the code flow and gets a session cookie;
   - `holdfast login --server <url>` shows a device code to enter at the provider, and gets a session token.
-- Groups come from the groups claim. This works with or without LDAP. They are read at login.
+
+  Groups come from the groups claim, read at login. An LDAP or Active Directory goes behind the provider; Holdfast
+  has no LDAP of its own. `auth.oidc` takes the issuer, the client ID and the client secret, all three or none.
+- **Root's link** (decision 049): `holdfast ui-login`, as root on the server, prints a link that works once, within
+  5 minutes, and opens a browser session as `local:root`, admin on every host. It is the UI's login on a server with
+  no provider, and the way in when the provider is down. Each link is audited (`auth.link_issued`), with the sudo user
+  who asked for it. Links live in the server's memory, so a restart voids them. It needs `ui.listen` and
+  `ui.public_url`.
+- There are no local passwords. Break glass is root on the server: the root-only socket for the CLI, where root is
+  admin on every host, and `holdfast ui-login` for the browser. Without a provider, the CLI is used there.
 - A browser session lasts 12 hours and ends after an hour without use; a CLI session lasts 7 days. An admin
   can end a user's sessions (`holdfast access end-sessions <user>`).
-- People use the UI and the API on their own listener, `ui.listen`, with a certificate browsers trust. Agents
-  use the agent listener.
-- Root on the server uses the root-only socket, and is admin on every host.
+- People use the UI and the API on their own listener, `ui.listen`. The installer gives it a certificate from
+  Holdfast's own CA, which browsers warn about until they trust `/etc/holdfast/tls/ca.crt`, unless it is given one
+  browsers trust. Agents use the agent listener.
 - The second factor is the OIDC provider's job, not Holdfast's.
 - There are no sudo checks on the hosts.
 
@@ -818,11 +886,17 @@ refuses to set its own.
 Editing this file needs root on the server. Holdfast reloads it, and the reload is audited.
 
 ```yaml
-ui:
+tls:                     # the agent listener's; the export carries these files (decision 047)
+  cert_file: /etc/holdfast/tls/server.crt
+  key_file: /etc/holdfast/tls/server.key
+  ca_file: /etc/holdfast/tls/ca.crt        # Holdfast's own CA, when the installer made it; agents pin it
+  ca_key_file: /etc/holdfast/tls/ca.key
+recovery_file: /root/holdfast-recovery.txt   # decision 047: a problem while the file is here; it belongs offline
+ui:                      # on unless the installer was given HOLDFAST_UI_URL=off (decision 049)
   listen: ":443"
   public_url: https://holdfast.example.internal
-  tls: {cert_file: /etc/holdfast/ui.crt, key_file: /etc/holdfast/ui.key}
-auth:
+  tls: {cert_file: /etc/holdfast/tls/ui.crt, key_file: /etc/holdfast/tls/ui.key}
+auth:                    # optional: without it, root logs in with holdfast ui-login
   oidc:
     issuer: https://auth.example.internal
     client_id: holdfast
@@ -830,10 +904,15 @@ auth:
     groups_claim: groups
   bootstrap_admins: []   # usernames that are admin everywhere, for the first login; each use is audited
 escrow:
-  age_recipient: age1…   # decision 036: an age public key; its private key is kept offline
+  age_recipient: age1…   # decision 036: an age public key; its private key is in the recovery file, offline
 storage:                 # decision 041: two keys for the bucket; hosts hold none
   maintenance_credentials_file: /etc/holdfast/maintenance.env
   gateway_credentials_file: /etc/holdfast/gateway.env
+notify:                  # optional (decision 046): the server's own alerts
+  mail: {smtp: "relay.example.internal:587", tls: starttls, from: holdfast@example.internal, to: [backup-team@example.internal]}
+  webhook_url: https://chat.example.internal/hooks/…
+  heartbeat_url: https://hc.example.org/ping/…
+  after: 10m
 offsite:                 # optional (§3.7): a second bucket, and its key
   endpoint: https://rgw.site-b.example.internal
   bucket: holdfast-offsite

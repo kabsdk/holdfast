@@ -132,47 +132,39 @@ tests:
             exp_annotations:
               summary: "web01 runs another restic than the one Holdfast is tested with (holdfast host show web01)"
 
-  # The server is down, so its schedule series are missing. The witness alone still raises staleness,
-  # with its own -stale-after of 48h (decision 030).
+  # The server is down: no backup runs, and the summary says so (decision 041).
   - interval: 1m
     input_series:
-      - series: 'holdfast_storage_newest_snapshot_timestamp_seconds{host="web01",instance="witness",job="holdfast-freshness"}'
-        values: '600x3000'
-      - series: 'holdfast_storage_stale_after_seconds{host="web01",instance="witness",job="holdfast-freshness"}'
-        values: '172800x3000'
+      - series: 'up{job="holdfast-server",instance="srv"}'
+        values: '0x20'
     alert_rule_test:
-      - eval_time: 47h
-        alertname: HoldfastStorageStale
+      - eval_time: 3m
+        alertname: HoldfastServerDown
         exp_alerts: []
-      - eval_time: 49h
-        alertname: HoldfastStorageStale
+      - eval_time: 10m
+        alertname: HoldfastServerDown
         exp_alerts:
-          - exp_labels: {severity: page, host: web01}
+          - exp_labels: {severity: page, job: holdfast-server, instance: srv}
             exp_annotations:
-              summary: "Storage shows no new snapshot for web01 in 2d 0h 50m 0s"
+              summary: "The Holdfast server is unreachable: no backup runs until it is back, as every backup goes through it"
 
-  # With the server up, the host's most frequent job decides: hourly next to daily means stale after 2h,
-  # not 48h.
+  # The server cannot read a host's repository for two hours: a ticket; for one hour: nothing yet.
   - interval: 1m
     input_series:
-      - series: 'holdfast_storage_newest_snapshot_timestamp_seconds{host="db01",instance="witness",job="holdfast-freshness"}'
-        values: '600x300'
-      - series: 'holdfast_storage_stale_after_seconds{host="db01",instance="witness",job="holdfast-freshness"}'
-        values: '172800x300'
-      - series: 'holdfast_job_longest_gap_seconds{host="db01",job_id="wal",instance="srv",job="holdfast-server"}'
-        values: '3600x300'
-      - series: 'holdfast_job_longest_gap_seconds{host="db01",job_id="system",instance="srv",job="holdfast-server"}'
-        values: '86400x300'
+      - series: 'holdfast_catalogue_read_failed{host="web01",instance="srv",job="holdfast-server"}'
+        values: '1x200'
+      - series: 'holdfast_catalogue_read_failed{host="db01",instance="srv",job="holdfast-server"}'
+        values: '0x200'
     alert_rule_test:
-      - eval_time: 2h
-        alertname: HoldfastStorageStale
+      - eval_time: 1h
+        alertname: HoldfastCatalogueFailing
         exp_alerts: []
       - eval_time: 3h
-        alertname: HoldfastStorageStale
+        alertname: HoldfastCatalogueFailing
         exp_alerts:
-          - exp_labels: {severity: page, host: db01}
+          - exp_labels: {severity: ticket, host: web01, instance: srv, job: holdfast-server}
             exp_annotations:
-              summary: "Storage shows no new snapshot for db01 in 2h 50m 0s"
+              summary: "web01: the server cannot read its repository from the bucket (holdfast host show web01)"
 
   # A storage check that fails pages at once, naming the host and the check's code (decision 029). A host
   # whose storage passes does not.
@@ -230,36 +222,25 @@ tests:
             exp_annotations:
               summary: "new01 is enrolled but has no successful backup yet"
 
-  # The server says t=10000; storage's newest is t=5000: more than an hour apart.
+  # The storage witness: the server read file01's repository after the agent reported its home backup, and the
+  # snapshot was not there. The host's other job, whose snapshot is there, does not alert.
   - interval: 1m
     input_series:
       # As Prometheus stores it: the scrape adds job and instance, and Holdfast's own label is job_id.
-      - series: 'holdfast_job_last_success_timestamp_seconds{host="file01",job_id="home",instance="srv",job="holdfast-server"}'
-        values: '10000x60'
-      - series: 'holdfast_storage_newest_snapshot_timestamp_seconds{host="file01",instance="witness"}'
-        values: '5000x60'
+      - series: 'holdfast_job_snapshot_in_bucket{host="file01",job_id="home",instance="srv",job="holdfast-server"}'
+        values: '0x60'
+      - series: 'holdfast_job_snapshot_in_bucket{host="file01",job_id="etc",instance="srv",job="holdfast-server"}'
+        values: '1x60'
     alert_rule_test:
+      - eval_time: 10m
+        alertname: HoldfastBackupNotInBucket
+        exp_alerts: []
       - eval_time: 20m
-        alertname: HoldfastWitnessDisagreement
+        alertname: HoldfastBackupNotInBucket
         exp_alerts:
-          - exp_labels: {severity: page, host: file01}
+          - exp_labels: {severity: page, host: file01, job_id: home, instance: srv, job: holdfast-server}
             exp_annotations:
-              summary: "file01: the server reports a backup 1h 23m 20s newer than anything in storage"
-
-  # The host has backed up, but the witness sees no snapshot for it.
-  - interval: 1m
-    input_series:
-      - series: 'holdfast_host_first_backup_timestamp_seconds{host="db01"}'
-        values: '100x60'
-      - series: 'holdfast_storage_newest_snapshot_timestamp_seconds{host="other"}'
-        values: '100x60'
-    alert_rule_test:
-      - eval_time: 20m
-        alertname: HoldfastStorageMissing
-        exp_alerts:
-          - exp_labels: {severity: page, host: db01}
-            exp_annotations:
-              summary: "db01 has backed up, but storage holds no snapshot for it"
+              summary: "file01/home: the agent reported a backup that the bucket does not hold"
 
   # The Watchdog always fires: the dead man's switch expects it (docs/alerting.md).
   - interval: 1m

@@ -1,6 +1,7 @@
 # 008: An independent storage witness
 
-Status: accepted, 2026-11-21
+Status: accepted, 2026-11-21. **Superseded by decision 045 (2026-11-23): the server is the witness, and compares
+snapshot IDs per job.**
 
 ## Decision
 

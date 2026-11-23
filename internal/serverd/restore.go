@@ -12,12 +12,14 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
 
 	"filippo.io/age"
 
+	"github.com/kabsdk/holdfast/internal/recovery"
 	"github.com/kabsdk/holdfast/internal/server"
 	"github.com/kabsdk/holdfast/internal/server/creds"
 	"github.com/kabsdk/holdfast/internal/server/export"
@@ -32,10 +34,10 @@ func restoreExport(name, defaultConfig string, args []string, out io.Writer) err
 	fs := flag.NewFlagSet(name+" restore-export", flag.ContinueOnError)
 	fs.SetOutput(out)
 	cfgPath := fs.String("config", defaultConfig, "settings file")
-	identity := fs.String("identity", "", "the escrow's age key file, which the export is encrypted to; read once and never kept")
+	identity := fs.String("identity", "", "the recovery file, or the escrow's age key file, which the export is encrypted to; read once and never kept")
 	latest := fs.Bool("latest", false, "restore the newest export in the bucket, read with the maintenance key")
 	fs.Usage = func() {
-		fmt.Fprintf(out, "usage: %s restore-export [-config server.yaml] -identity <age key file> (<export file> | -latest)\n", name)
+		fmt.Fprintf(out, "usage: %s restore-export [-config server.yaml] -identity <recovery file> (<export file> | -latest)\n", name)
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
@@ -44,7 +46,7 @@ func restoreExport(name, defaultConfig string, args []string, out io.Writer) err
 	file := fs.Arg(0)
 	switch {
 	case *identity == "":
-		return errors.New("restore-export needs -identity, the escrow's age key file")
+		return errors.New("restore-export needs -identity, the recovery file (or the escrow's age key file)")
 	case fs.NArg() > 1, file == "" && !*latest, file != "" && *latest:
 		fs.Usage()
 		return errors.New("give the export's file, or -latest")
@@ -53,25 +55,26 @@ func restoreExport(name, defaultConfig string, args []string, out io.Writer) err
 	if err != nil {
 		return err
 	}
-	sealer, err := creds.LoadKeyFile(set.CredentialsKeyFile)
-	if err != nil {
-		return fmt.Errorf("the credentials key (credentials_key_file): %w", err)
-	}
-	ids, err := readIdentities(*identity)
+	rec, err := recovery.ReadFile(*identity)
 	if err != nil {
 		return err
 	}
+	if len(rec.Identities) == 0 {
+		return fmt.Errorf("%s holds no age key (AGE-SECRET-KEY-…): add the escrow's age key to it", *identity)
+	}
+	ids := rec.Identities
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	maint, err := storage.ReadKeyFile(set.Storage.MaintenanceCredentialsFile)
+	if err != nil {
+		return err
+	}
+	bucket := storage.S3Bucket{Location: storage.Location{Endpoint: set.Storage.Endpoint, Bucket: set.Storage.Bucket, Region: set.Storage.Region}, Maint: maint}
 	var data []byte
 	exportName := filepath.Base(file)
 	if *latest {
-		maint, err := storage.ReadKeyFile(set.Storage.MaintenanceCredentialsFile)
-		if err != nil {
-			return err
-		}
-		b := storage.S3Bucket{Location: storage.Location{Endpoint: set.Storage.Endpoint, Bucket: set.Storage.Bucket, Region: set.Storage.Region}, Maint: maint}
+		b := bucket
 		names, err := b.ListMeta(ctx)
 		if err != nil {
 			return err
@@ -93,6 +96,25 @@ func restoreExport(name, defaultConfig string, args []string, out io.Writer) err
 	}
 	m := c.Manifest
 	fmt.Fprintf(out, "export %s: written %s by Holdfast %s on %s\n", exportName, m.CreatedAt.UTC().Format(time.RFC3339), m.HoldfastVersion, m.Node)
+
+	// The credentials key: the recovery file's, or the one where server.yaml says (plan-m10 item 3). The recovery
+	// file's is written there only once the export has been checked with it, below.
+	key, err := creds.ReadKeyFile(set.CredentialsKeyFile)
+	writeKey := false
+	switch {
+	case errors.Is(err, os.ErrNotExist) && rec.CredentialsKey != nil:
+		key, writeKey = rec.CredentialsKey, true
+	case errors.Is(err, os.ErrNotExist):
+		return fmt.Errorf("%s holds no credentials key (HOLDFAST-CREDENTIALS-KEY-…), and %s does not exist: give the recovery file this server's installer wrote", *identity, set.CredentialsKeyFile)
+	case err != nil:
+		return fmt.Errorf("the credentials key (credentials_key_file): %w", err)
+	case rec.CredentialsKey != nil && !bytes.Equal(key, rec.CredentialsKey):
+		return fmt.Errorf("%s holds another credentials key than the recovery file: remove it, or give the matching recovery file", set.CredentialsKeyFile)
+	}
+	sealer, err := creds.NewSealer(key)
+	if err != nil {
+		return fmt.Errorf("the credentials key: %w", err)
+	}
 
 	// Everything is checked before the database is touched.
 	latestVersion := store.LatestVersion()
@@ -141,6 +163,13 @@ func restoreExport(name, defaultConfig string, args []string, out io.Writer) err
 	case set.Offsite == nil && hasOffsite:
 		fmt.Fprintln(out, "note: the export has off-site tables, but server.yaml has no offsite:; they are restored all the same")
 	}
+	// Everything is checked: the recovery file's credentials key opened the export's passwords, so it is this server's.
+	if writeKey {
+		if err := creds.WriteKeyFile(set.CredentialsKeyFile, key); err != nil {
+			return fmt.Errorf("writing the credentials key: %w", err)
+		}
+		fmt.Fprintf(out, "wrote the credentials key from the recovery file to %s\n", set.CredentialsKeyFile)
+	}
 
 	for _, sc := range m.Schemas {
 		st := stores[sc.Name]
@@ -181,22 +210,109 @@ func restoreExport(name, defaultConfig string, args []string, out io.Writer) err
 	}
 	hosts, _ := q.ListHosts(ctx)
 	fmt.Fprintf(out, "restored: head revision %d, %d hosts. What changed after %s is not here.\n", head, len(hosts), m.CreatedAt.UTC().Format("2006-01-02 15:04 UTC"))
+
+	restoreFiles(out, set, *cfgPath, c.Files)
+	back := hostsFromEscrow(ctx, out, set, bucket, stores["public"], sealer, maint, ids, hosts)
 	fmt.Fprintln(out, "now start holdfast-server: agents enrolled before the export reconnect by themselves (docs/runbooks/rebuild-holdfast.md)")
+	for _, fqdn := range back {
+		fmt.Fprintf(out, "  %s came back from escrow/: enroll it again (holdfast host enroll-code %s, and the line it prints), and set its jobs\n", fqdn, fqdn)
+	}
 	return nil
 }
 
-// readIdentities reads the age key file once.
-func readIdentities(path string) ([]age.Identity, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, err
+// restoreFiles writes the server's files the export holds (plan-m10 item 3) where server.yaml says, and never over a
+// file that is there. The exported settings go beside server.yaml, to compare.
+func restoreFiles(out io.Writer, set server.Settings, cfgPath string, files map[string][]byte) {
+	paths := server.ServerFiles(set)
+	names := make([]string, 0, len(files))
+	for n := range files {
+		names = append(names, n)
 	}
-	defer f.Close()
-	ids, err := age.ParseIdentities(f)
-	if err != nil {
-		return nil, fmt.Errorf("%s is not an age key file: %w", path, err)
+	sort.Strings(names)
+	for _, name := range names {
+		p, mode := paths[name], os.FileMode(0o644)
+		switch {
+		case name == "server.yaml":
+			p, mode = cfgPath+".from-export", 0o600
+		case strings.HasSuffix(name, "key_file"):
+			mode = 0o600
+		}
+		if p == "" {
+			fmt.Fprintf(out, "the export holds %s, but server.yaml names no path for it: not written\n", name)
+			continue
+		}
+		if _, err := os.Stat(p); err == nil {
+			fmt.Fprintf(out, "kept %s, which is there already (the export's %s is not written)\n", p, name)
+			continue
+		}
+		err := os.MkdirAll(filepath.Dir(p), 0o700)
+		if err == nil {
+			err = os.WriteFile(p, files[name], mode)
+		}
+		if err != nil {
+			fmt.Fprintf(out, "could not write %s: %v\n", p, err)
+			continue
+		}
+		fmt.Fprintf(out, "wrote %s from the export (%s)\n", p, name)
 	}
-	return ids, nil
+}
+
+// hostsFromEscrow brings back each host that has an escrow file in the bucket but is not in the export: one added after
+// it (plan-m10 item 5). It is what holdfast host import does, for each: the escrow file decrypted with the recovery
+// file's age key, checked, and the host added with its repository and password, and no job.
+func hostsFromEscrow(ctx context.Context, out io.Writer, set server.Settings, bucket storage.S3Bucket, st *store.Store, sealer *creds.Sealer,
+	maint storage.Key, ids []age.Identity, known []store.Host) []string {
+	names, err := bucket.ListEscrow(ctx)
+	if err != nil {
+		fmt.Fprintf(out, "could not list escrow/ for hosts added after the export: %v; holdfast host import brings each back\n", err)
+		return nil
+	}
+	have := map[string]bool{}
+	for _, h := range known {
+		have[h.FQDN] = true
+	}
+	var missing []string
+	for _, n := range names {
+		if !have[n] {
+			missing = append(missing, n)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	gw, err := storage.ReadKeyFile(set.Storage.GatewayCredentialsFile)
+	if err != nil {
+		fmt.Fprintf(out, "the gateway key: %v; hosts added after the export are not brought back\n", err)
+		return nil
+	}
+	srv, err := server.New(set, server.Deps{Store: st, Sealer: sealer, Maintenance: maint, Gateway: gw})
+	if err != nil {
+		fmt.Fprintf(out, "hosts added after the export are not brought back: %v\n", err)
+		return nil
+	}
+	// Root at the command line; the revision's message says it was restore-export.
+	root := server.Actor{Name: "local:root", Source: "cli", Everywhere: true}
+	var back []string
+	for _, fqdn := range missing {
+		enc, err := bucket.GetEscrow(ctx, fqdn)
+		var plain []byte
+		if err == nil {
+			var r io.Reader
+			if r, err = age.Decrypt(bytes.NewReader(enc), ids...); err == nil {
+				plain, err = io.ReadAll(r)
+			}
+		}
+		if err == nil {
+			_, err = srv.ImportHost(ctx, root, server.ImportHostInput{FQDN: fqdn, EscrowFile: string(plain),
+				Message: "Brought back from escrow/ by restore-export: added after the export (plan-m10)"})
+		}
+		if err != nil {
+			fmt.Fprintf(out, "%s has an escrow file but could not be brought back: %v; holdfast host import, once the server runs\n", fqdn, err)
+			continue
+		}
+		back = append(back, fqdn)
+	}
+	return back
 }
 
 // checkCredentialsKey opens one sealed repository password of the export with the credentials key, so a wrong key is

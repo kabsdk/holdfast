@@ -76,6 +76,9 @@ func (s *Server) RefreshCatalogue(ctx context.Context, fqdn string) error {
 		return err
 	}
 	defer cleanup()
+	// The read counts from when the listing started: a backup reported while restic lists is not in this read, and the
+	// storage witness (store.ReportedInBucket) must not take it for missing.
+	at := s.now()
 	list, err := r.Snapshots(ctx)
 	if err != nil {
 		_ = s.st.Q().RecordCatalogueError(ctx, fqdn, err.Error())
@@ -88,7 +91,7 @@ func (s *Server) RefreshCatalogue(ctx context.Context, fqdn string) error {
 	var added, gone int
 	if err := s.st.InTx(ctx, func(q *store.Q) error {
 		var err error
-		added, gone, err = q.SyncSnapshots(ctx, fqdn, rows, s.now())
+		added, gone, err = q.SyncSnapshots(ctx, fqdn, rows, at)
 		if err != nil || gone == 0 {
 			return err
 		}

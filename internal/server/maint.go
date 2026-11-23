@@ -146,6 +146,7 @@ func (s *Server) maintenanceLoop(ctx context.Context) {
 			s.measureDue(ctx)
 			s.decommissionDue(ctx)
 			_ = s.st.Q().PurgeSessions(ctx, s.now())
+			s.notifyDue(ctx) // last: it reports on the pass above, and its heartbeat says the pass ran
 		}
 	}
 }
