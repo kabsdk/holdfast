@@ -327,7 +327,7 @@ func (s *Server) RotateHost(ctx context.Context, a Actor, fqdn string, in Rotate
 	if err != nil {
 		return RotateResult{}, fmt.Errorf("storing the new password (key %s was added to the repository and may be removed): %w", newKey, err)
 	}
-	res.Enrollment = Enrollment{FQDN: fqdn, Code: code, ExpiresAt: expires, InstallCommand: s.installCommand(fqdn, code)}
+	res.Enrollment = s.enrollment(fqdn, code, expires)
 
 	// The old key goes, with the new password: restic refuses to remove the key that opened the repository.
 	var warnings []string

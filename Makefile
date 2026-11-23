@@ -37,7 +37,7 @@ BROWSER_IMAGE  ?= chromedp/headless-shell@sha256:381353d3530ab9d579d2fe8b9c0f451
 BROWSER_NAME   ?= holdfast-test-browser
 BROWSER_PORT   ?= 59222
 
-.PHONY: build test unit vet fmt pg-up pg-down minio-up minio-down tools e2e e2e-image rules-test authelia-up authelia-down browser-up browser-down packages
+.PHONY: build test unit vet fmt pg-up pg-down minio-up minio-down tools e2e e2e-image rules-test authelia-up authelia-down browser-up browser-down packages install-test
 
 # promtool: the alert rules parse, and their unit tests pass.
 rules-test:
@@ -102,6 +102,11 @@ browser-down:
 tools:
 	@scripts/fetch-restic.sh $(RESTIC_VERSION) >/dev/null
 	@test -x $(TOOLS)/mc || { id=$$(docker create $(MC_IMAGE)); docker cp $$id:/usr/bin/mc $(TOOLS)/mc; docker rm $$id >/dev/null; }
+
+# The installer's test (decision 044): dist/install.sh as people run it, in containers with systemd (Ubuntu,
+# AlmaLinux, Oracle Linux), against MinIO. Needs the packages: make packages first.
+install-test:
+	MINIO_IMAGE=$(MINIO_IMAGE) MC_IMAGE=$(MC_IMAGE) bash test/install/run.sh
 
 # The end-to-end suite, as root in a privileged container (the metadata tests need root), on an ext4
 # volume so ACLs, trusted.* xattrs and SELinux labels behave as on a host. --init gives the container

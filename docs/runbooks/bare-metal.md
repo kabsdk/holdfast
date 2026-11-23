@@ -71,7 +71,8 @@ storage admin.
    reinstall the bootloader and the initramfs (`grub2-install` and `dracut -f` on EL; `grub-install`,
    `update-initramfs -u` and `update-grub` on Ubuntu). On EL, `touch /.autorelabel`, so SELinux labels are set
    again at the first boot.
-7. **Reboot**, and once Holdfast is back (M7 rebuilds it), bring the host back under it with path 1, steps 4 to 7.
+7. **Reboot**, and once Holdfast is back ([rebuild-holdfast.md](rebuild-holdfast.md)), bring the host back under it
+   with path 1, steps 4 to 7.
 
 **Rolling back to a time before a password rotation** works the same way: the escrow file of that time is an old
 version of `escrow/web01.example.com.age`, which S3 keeps as long as the lifecycle rule keeps old versions.

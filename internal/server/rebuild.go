@@ -417,7 +417,7 @@ func (s *Server) ImportHost(ctx context.Context, a Actor, in ImportHostInput) (I
 			return err
 		}
 		res = ImportHostResult{Revision: rev.Number, Storage: rep, CredentialsVersion: f.CredentialsVersion, RepositoryKeys: len(ids),
-			Enrollment: Enrollment{FQDN: in.FQDN, Code: code, ExpiresAt: expires, InstallCommand: s.installCommand(in.FQDN, code)}}
+			Enrollment: s.enrollment(in.FQDN, code, expires)}
 		return nil
 	})
 	if err != nil {

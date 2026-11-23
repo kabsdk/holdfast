@@ -203,6 +203,15 @@ export function CopyButton({ text }) {
   }}>${copied ? 'Copied' : 'Copy'}</button>`;
 }
 
+// What to run on a host to enroll it: the one-line install (decision 044), or the enrollment alone where the agent's
+// packages are installed already, such as by configuration management.
+export function EnrollLines({ e }) {
+  return html`<pre>${e.install_script}</pre><${CopyButton} text=${e.install_script} />
+    <details><summary class="muted">The agent's packages are installed already?</summary>
+      <pre>${e.install_command}</pre><${CopyButton} text=${e.install_command} />
+    </details>`;
+}
+
 export function Paged({ items, size = 25, render }) {
   const [page, setPage] = useState(0);
   const pages = Math.max(1, Math.ceil(items.length / size));

@@ -326,11 +326,15 @@ func TestTLSPinning(t *testing.T) {
 		Enrollment struct {
 			Code           string `json:"code"`
 			InstallCommand string `json:"install_command"`
+			InstallScript  string `json:"install_script"`
 		} `json:"enrollment"`
 	}
 	must(t, json.Unmarshal(e.cli("host", "add", fqdn, "--job", "system", "--path", src, "--daily", "02:00", testAccept), &res))
 	if !strings.Contains(res.Enrollment.InstallCommand, "--ca-sha256 "+cert.pin) {
 		t.Fatalf("the install command does not pin the server: %s", res.Enrollment.InstallCommand)
+	}
+	if !strings.Contains(res.Enrollment.InstallScript, "HOLDFAST_CA_SHA256="+cert.pin) {
+		t.Fatalf("the one-line install does not pin the server: %s", res.Enrollment.InstallScript)
 	}
 	if _, out, err := e.enrollAgentWith(fqdn, res.Enrollment.Code, e.url, "--ca-sha256", strings.Repeat("ab", 32)); err == nil || !strings.Contains(string(out), "pinned fingerprint") {
 		t.Fatalf("an agent with the wrong pin must refuse the server: %v %s", err, out)

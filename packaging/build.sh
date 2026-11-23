@@ -47,7 +47,9 @@ for pkg in holdfast-restic holdfast-agent holdfast-server holdfast-cli holdfast-
   done
 done
 
-# SHA256SUMS lists this build's packages only; VERSION is their version, for the lab.
-( cd dist && sha256sum ./*_"${HOLDFAST_VERSION}"-1_amd64.deb ./*-"${HOLDFAST_VERSION}"-1.x86_64.rpm | sed 's# \./# #' >SHA256SUMS )
+# A release is what dist/ holds: the packages, install.sh (decision 044), SHA256SUMS of this build's packages and
+# install.sh, and VERSION, which install.sh reads to name the packages.
+install -m 0755 scripts/install.sh dist/install.sh
+( cd dist && sha256sum ./*_"${HOLDFAST_VERSION}"-1_amd64.deb ./*-"${HOLDFAST_VERSION}"-1.x86_64.rpm ./install.sh | sed 's# \./# #' >SHA256SUMS )
 echo "$HOLDFAST_VERSION-1" >dist/VERSION
 cat dist/SHA256SUMS

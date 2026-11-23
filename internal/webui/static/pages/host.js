@@ -1,4 +1,4 @@
-import { html, useState, usePoll, useAction, link, offsiteLink, go, ago, fmtTime, fmtDay, dur, bytes, scheduleText, retentionText, Pill, Snap, can, ErrorBox, Loading, CopyButton } from '../lib.js';
+import { html, useState, usePoll, useAction, link, offsiteLink, go, ago, fmtTime, fmtDay, dur, bytes, scheduleText, retentionText, Pill, Snap, can, ErrorBox, Loading, EnrollLines } from '../lib.js';
 import { api } from '../api.js';
 import { jobState } from './fleet.js';
 
@@ -21,7 +21,7 @@ function EnrollPanel({ host, done }) {
     <button disabled=${act.busy} onClick=${() => act.run(() => api.enrollmentCode(host.fqdn))}>Issue a code</button>
     <${ErrorBox} error=${act.error} />
     ${act.done && html`<p>Code <strong class="mono">${act.done.code}</strong>, valid until ${fmtTime(act.done.expires_at)}. Run on ${host.fqdn}, as root:</p>
-      <pre>${act.done.install_command}</pre><${CopyButton} text=${act.done.install_command} />`}
+      <${EnrollLines} e=${act.done} />`}
     <p><button class="small" onClick=${done}>Close</button></p>
   </div>`;
 }
@@ -43,7 +43,7 @@ function RotatePanel({ host, done }) {
     ${r && html`<div class="banner ok">New password: key <code>${r.new_key}</code>, credentials version ${r.credentials_version}; removed key ${r.removed_keys.join(', ') || '—'}. ${r.escrowed ? 'The escrow file holds the new password.' : ''}</div>
       ${r.warning && html`<div class="banner warning">${r.warning}</div>`}
       <p>Once the host is clean or rebuilt, enroll it with code <strong class="mono">${r.enrollment.code}</strong>, valid until ${fmtTime(r.enrollment.expires_at)}. As root on the host:</p>
-      <pre>${r.enrollment.install_command}</pre><${CopyButton} text=${r.enrollment.install_command} />
+      <${EnrollLines} e=${r.enrollment} />
       <p class="muted">Enrolling makes the host a new key of its own; the old certificate no longer works.</p>`}
   </div>`;
 }

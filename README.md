@@ -4,10 +4,11 @@ A free, open-source control plane for restic backups of Linux hosts (Ubuntu, RHE
 configures, schedules, monitors and restores restic backups, and it proves they happened: the server
 knows what the agents report, and an independent storage witness checks the bucket.
 
+- The documentation for people who run it: [website/index.html](website/index.html), the website's page
 - What it does: [docs/spec.md](docs/spec.md)
 - Why, decision by decision: [docs/decisions/](docs/decisions/)
 - What is not decided yet: [docs/open-questions.md](docs/open-questions.md)
-- The current milestone: [docs/plan-m1.md](docs/plan-m1.md)
+- The latest milestone: [docs/plan-m9.md](docs/plan-m9.md)
 - Working rules for contributors and agents: [CLAUDE.md](CLAUDE.md)
 
 ## Layout
@@ -33,6 +34,8 @@ make build          # bin/holdfast-server, bin/holdfast-agent, bin/holdfast, bin
 make pg-up test     # unit and integration tests (a throwaway PostgreSQL in Docker)
 make e2e            # the end-to-end suite: restic 0.19.1, MinIO, PostgreSQL; runs as root in a container
 make rules-test     # promtool unit tests for the alert rules
+make packages       # the .deb and .rpm packages, install.sh and SHA256SUMS in dist/: one release
+make install-test   # install.sh as people run it, on systemd containers of each distribution, against MinIO
 ```
 
 ## Licence

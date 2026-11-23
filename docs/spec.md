@@ -180,6 +180,11 @@ There are two programs: holdfast-agent and holdfast-server (decision 041).
   `SHA256SUMS` (plan-m5 Q2). [install.md](install.md) is the guide.
 - Installing enables no service: each needs its config first. Upgrading restarts a service that runs.
   Removing stops and disables it, and never deletes `/etc/holdfast`, state or backups.
+- **`install.sh`** (decision 044), released beside the packages, installs them and sets the machine up in one line run
+  as root, by role: `server`, `agent` (the default), `cli` or `witness`, with `HOLDFAST_*` settings in the environment.
+  It checks every setting before it changes anything and stops with the list of what is missing or wrong; it never
+  prompts. Run again, it only upgrades. On a new machine with `/etc/holdfast` put back, the server's line prepares a
+  rebuild and leaves the server stopped for `restore-export` (§2.2).
 - **The agent and the server agree on a protocol version.** The agent sends its own with every poll (an agent
   before M5 sends none and speaks 1), and the server answers with the range it accepts. The server accepts
   every agent from its minimum on, so it is upgraded first, and agents after it, one by one. Protocol 2 (M6)
@@ -721,8 +726,12 @@ Search finds:
 2. Optionally give its first job. No S3 key: the host's storage is tested with the gateway key (decision 041,
    [storage.md](storage.md)).
 3. Saving creates a revision.
-4. Holdfast shows a single-use enrollment code, valid for 15 minutes, and the install command:
-   `holdfast-agent enroll --server <url> --fqdn <fqdn> --code <code> --ca-sha256 <pin>`.
+4. Holdfast shows a single-use enrollment code, valid for 15 minutes, and the one line to run on the host as root
+   (decision 044), `install_script`: `curl -sfL <release>/install.sh | HOLDFAST_SERVER=<url> HOLDFAST_FQDN=<fqdn>
+   HOLDFAST_CODE=<code> HOLDFAST_CA_SHA256=<pin> HOLDFAST_VERSION=<the server's version> sh -`, which installs the
+   agent's packages, checked against the release's `SHA256SUMS`, and enrolls. With `download_url` in `server.yaml`
+   the line fetches from that mirror instead. For a host whose packages are installed already, `install_command` is
+   the enrollment alone: `holdfast-agent enroll --server <url> --fqdn <fqdn> --code <code> --ca-sha256 <pin>`.
 5. Enrolling makes the agent an ECDSA key and a self-signed certificate on the host, in a root-only file; the
    key never leaves the host. The agent pins the server (`--ca-sha256`), and the server pins the certificate the
    enrollment came with: from then on that certificate is the host, on every connection (mutual TLS). A new
@@ -829,9 +838,10 @@ offsite:                 # optional (§3.7): a second bucket, and its key
   endpoint: https://rgw.site-b.example.internal
   bucket: holdfast-offsite
   maintenance_credentials_file: /etc/holdfast/offsite.env
+download_url: https://mirror.example.internal/holdfast/1.0.0   # optional (decision 044): where hosts fetch install.sh
 ```
 
-The full example is `deploy/examples/server.yaml`.
+The full example is `deploy/examples/server.yaml`. `install.sh server` writes a first `server.yaml` (decision 044).
 
 ### 6.5 File contents
 

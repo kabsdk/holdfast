@@ -121,15 +121,11 @@ func hostImportCmd() *cobra.Command {
 				return err
 			}
 			var res struct {
-				Revision           int64  `json:"revision"`
-				CredentialsVersion int    `json:"credentials_version"`
-				RepositoryKeys     int    `json:"repository_keys"`
-				Warning            string `json:"warning"`
-				Enrollment         struct {
-					Code           string    `json:"code"`
-					ExpiresAt      time.Time `json:"expires_at"`
-					InstallCommand string    `json:"install_command"`
-				} `json:"enrollment"`
+				Revision           int64      `json:"revision"`
+				CredentialsVersion int        `json:"credentials_version"`
+				RepositoryKeys     int        `json:"repository_keys"`
+				Warning            string     `json:"warning"`
+				Enrollment         enrollment `json:"enrollment"`
 			}
 			raw, err := call("POST", "/api/v1/hosts/import", map[string]any{"fqdn": a[0], "escrow_file": string(data), "message": msg}, &res)
 			if err != nil {
@@ -140,8 +136,8 @@ func hostImportCmd() *cobra.Command {
 				return nil
 			}
 			fmt.Printf("imported %s in revision %d: its repository opens with the escrowed password (credentials version %d, %d repository keys)\n"+
-				"it has no job yet: set them again (holdfast job set)\nenrollment code %s, valid until %s\n\nrun on the host, as root:\n  %s\n",
-				a[0], res.Revision, res.CredentialsVersion, res.RepositoryKeys, res.Enrollment.Code, res.Enrollment.ExpiresAt.Local().Format("15:04"), res.Enrollment.InstallCommand)
+				"it has no job yet: set them again (holdfast job set)\n%s",
+				a[0], res.Revision, res.CredentialsVersion, res.RepositoryKeys, res.Enrollment.howTo())
 			if res.Warning != "" {
 				fmt.Println("\nwarning:", res.Warning)
 			}

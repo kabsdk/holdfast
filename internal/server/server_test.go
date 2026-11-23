@@ -87,6 +87,10 @@ func TestHostLifecycle(t *testing.T) {
 	if !strings.Contains(res.Enrollment.InstallCommand, "--fqdn web01.example.com --code "+res.Enrollment.Code) {
 		t.Fatalf("install command: %s", res.Enrollment.InstallCommand)
 	}
+	if sc := res.Enrollment.InstallScript; !strings.HasPrefix(sc, "curl -sfL ") || !strings.HasSuffix(sc, " sh -") ||
+		!strings.Contains(sc, "HOLDFAST_FQDN=web01.example.com HOLDFAST_CODE="+res.Enrollment.Code) {
+		t.Fatalf("install script: %s", sc)
+	}
 	if _, err := s.AddHost(ctx, root, AddHostInput{FQDN: "web01.example.com"}); !errors.Is(err, ErrConflict) {
 		t.Fatalf("duplicate host: %v", err)
 	}

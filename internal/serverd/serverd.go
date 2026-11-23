@@ -14,6 +14,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -26,7 +27,12 @@ import (
 // Main runs the program called name, whose settings are at defaultConfig unless -config says otherwise.
 func Main(name, defaultConfig string) {
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	if len(os.Args) == 3 && os.Args[1] == "keygen" {
+	if len(os.Args) >= 2 && os.Args[1] == "keygen" {
+		// A path that starts with "-", such as -h, is a flag someone meant, not a file to write the key to.
+		if len(os.Args) != 3 || strings.HasPrefix(os.Args[2], "-") {
+			fmt.Fprintln(os.Stderr, "usage: "+name+" keygen <path>: write a new credentials key to path (mode 0600); keep a copy offline")
+			os.Exit(2)
+		}
 		if err := creds.WriteNewKeyFile(os.Args[2]); err != nil {
 			fmt.Fprintln(os.Stderr, "keygen:", err)
 			os.Exit(1)

@@ -14,6 +14,10 @@ credentials_key_file: /etc/holdfast/credentials.key   # holdfast-server keygen <
 state_dir: /var/lib/holdfast-server
 restic_bin: /usr/libexec/holdfast/restic
 default_zone: Europe/Copenhagen      # for schedules without their own zone
+# Where hosts fetch install.sh and the packages of this server's release, for the one line host add prints
+# (decision 044). Leave it out to use the release on GitHub; set it for a mirror that holds install.sh, VERSION,
+# SHA256SUMS and the packages, for hosts that cannot reach GitHub.
+# download_url: https://mirror.example.internal/holdfast/1.0.0
 
 storage:
   endpoint: https://rgw.example.internal

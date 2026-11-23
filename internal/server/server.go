@@ -341,12 +341,41 @@ type AddHostInput struct {
 	Accept []string `json:"accept,omitempty"`
 }
 
-// Enrollment is what a person needs to enroll a host.
+// Enrollment is what a person needs to enroll a host: the one-line install, which installs the agent's packages and
+// enrolls (decision 044), and the enrollment command alone, for a host that has the packages already.
 type Enrollment struct {
 	FQDN           string    `json:"fqdn"`
 	Code           string    `json:"code"`
 	ExpiresAt      time.Time `json:"expires_at"`
+	InstallScript  string    `json:"install_script"`
 	InstallCommand string    `json:"install_command"`
+}
+
+// Releases is where Holdfast's releases are published: install.sh, VERSION, SHA256SUMS and the packages.
+const Releases = "https://github.com/kabsdk/holdfast/releases"
+
+func (s *Server) enrollment(fqdn, code string, expires time.Time) Enrollment {
+	return Enrollment{FQDN: fqdn, Code: code, ExpiresAt: expires, InstallScript: s.installScript(fqdn, code), InstallCommand: s.installCommand(fqdn, code)}
+}
+
+// installScript is the one line to run on the host, as k3s's (decision 044): it installs the packages of this server's
+// release, from download_url or GitHub, and enrolls with the code.
+func (s *Server) installScript(fqdn, code string) string {
+	vars := []string{"HOLDFAST_SERVER=" + shellWord(s.set.PublicURL), "HOLDFAST_FQDN=" + shellWord(fqdn), "HOLDFAST_CODE=" + shellWord(code)}
+	if s.set.CASHA256 != "" {
+		vars = append(vars, "HOLDFAST_CA_SHA256="+shellWord(s.set.CASHA256))
+	}
+	base := strings.TrimSuffix(s.set.DownloadURL, "/")
+	switch {
+	case base != "":
+		vars = append(vars, "HOLDFAST_DOWNLOAD_URL="+shellWord(base))
+	case Version != "" && Version != "dev":
+		base = Releases + "/download/v" + Version
+		vars = append(vars, "HOLDFAST_VERSION="+shellWord(Version))
+	default:
+		base = Releases + "/latest/download"
+	}
+	return "curl -sfL " + shellWord(base+"/install.sh") + " | " + strings.Join(vars, " ") + " sh -"
 }
 
 // AddHostResult is the outcome of AddHost.
@@ -495,7 +524,7 @@ func (s *Server) AddHost(ctx context.Context, a Actor, in AddHostInput) (AddHost
 			Detail: map[string]any{"expires_at": expires}}); err != nil {
 			return err
 		}
-		res = AddHostResult{Revision: rev.Number, Enrollment: Enrollment{FQDN: in.FQDN, Code: code, ExpiresAt: expires, InstallCommand: s.installCommand(in.FQDN, code)},
+		res = AddHostResult{Revision: rev.Number, Enrollment: s.enrollment(in.FQDN, code, expires),
 			Storage: rep, Findings: fs, Accepted: accepted}
 		return nil
 	})
@@ -577,7 +606,7 @@ func (s *Server) IssueEnrollmentCode(ctx context.Context, a Actor, fqdn string) 
 	if err != nil {
 		return Enrollment{}, err
 	}
-	return Enrollment{FQDN: fqdn, Code: code, ExpiresAt: expires, InstallCommand: s.installCommand(fqdn, code)}, nil
+	return s.enrollment(fqdn, code, expires), nil
 }
 
 // SetJobInput creates or replaces one job. Accept lists the warning codes the person accepts (spec §4.5).

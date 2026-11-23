@@ -1,4 +1,4 @@
-import { html, useState, usePoll, useAction, link, fmtTime, ErrorBox, CopyButton, Findings } from '../lib.js';
+import { html, useState, usePoll, useAction, link, fmtTime, ErrorBox, Findings, EnrollLines } from '../lib.js';
 import { api } from '../api.js';
 
 function Progress({ fqdn }) {
@@ -50,8 +50,8 @@ export function AddHost({ me, settings }) {
 function Enroll({ fqdn, done }) {
   return html`<div class="panel">
     <h2>Run this on ${fqdn} as root</h2>
-    <pre>${done.enrollment.install_command}</pre><${CopyButton} text=${done.enrollment.install_command} />
-    <p class="muted">The code ${done.enrollment.code} is valid until ${fmtTime(done.enrollment.expires_at)}, once. The agent never downloads anything; install its package first.</p>
+    <${EnrollLines} e=${done.enrollment} />
+    <p class="muted">The code ${done.enrollment.code} is valid until ${fmtTime(done.enrollment.expires_at)}, once. The line installs the agent's packages of this server's release, checked against their SHA256SUMS, and enrolls the host.</p>
     ${done.warning && html`<div class="banner warning">${done.warning}</div>`}
     <${Progress} fqdn=${fqdn} />
   </div>`;

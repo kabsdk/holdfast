@@ -17,7 +17,49 @@ relatives. The lab installs them on Ubuntu, RHEL and Oracle Linux (`lab/README.m
 Holdfast is under Apache-2.0, and restic under BSD-2-Clause (decision 043). Each package keeps its licence, and the
 licences of the software it contains, in `/usr/share/doc/<package>/`.
 
-## Installing
+## Installing with one line
+
+`install.sh` (decision 044) installs a release's packages, checked against its `SHA256SUMS`, and sets the machine up.
+Run it as root. It checks every setting before it changes anything, and stops with the list of what is missing or
+wrong. Run again, it upgrades. `sh install.sh help` lists every setting.
+
+**The server.** First make the bucket and its two keys ([storage.md](storage.md)), and an age key pair offline
+(`age-keygen -o escrow-key.txt`; keep that file offline). Put the settings in a root-only file, so the secrets stay
+out of the shell's history:
+
+```
+# holdfast.env
+HOLDFAST_S3_ENDPOINT=https://s3.example.internal
+HOLDFAST_S3_BUCKET=holdfast
+HOLDFAST_GATEWAY_ACCESS_KEY_ID=…
+HOLDFAST_GATEWAY_SECRET_ACCESS_KEY=…
+HOLDFAST_MAINTENANCE_ACCESS_KEY_ID=…
+HOLDFAST_MAINTENANCE_SECRET_ACCESS_KEY=…
+HOLDFAST_ESCROW_RECIPIENT=age1…
+```
+
+```
+set -a; . ./holdfast.env; set +a
+curl -sfL https://github.com/kabsdk/holdfast/releases/latest/download/install.sh | sh -s - server
+```
+
+It installs PostgreSQL from the distribution (or uses `HOLDFAST_DATABASE_DSN`), makes the credentials key and a CA for
+the agent listener, writes `server.yaml`, starts the server and prints the pin agents use. The web UI's settings
+(`HOLDFAST_UI_URL`, its certificate, and the OIDC provider) are optional; without them, use the CLI as root on the
+server.
+
+**An agent.** `holdfast host add` prints the line to run on the host, as root:
+
+```
+curl -sfL …/install.sh | HOLDFAST_SERVER=https://holdfast.example.internal:8443 HOLDFAST_FQDN=web01.example.com HOLDFAST_CODE=… HOLDFAST_CA_SHA256=… HOLDFAST_VERSION=… sh -
+```
+
+**A workstation's CLI**: `… | sh -s - cli`. **The witness**: `… | sh -s - witness`, with `HOLDFAST_S3_ENDPOINT`,
+`HOLDFAST_S3_BUCKET` and its list-only key.
+
+To read the script before running it: `curl -sfLO …/install.sh`, read it, then `sh install.sh server`.
+
+## Installing by hand
 
 ```
 sha256sum -c --ignore-missing SHA256SUMS

@@ -29,6 +29,9 @@ type Settings struct {
 	ResticBin          string `yaml:"restic_bin"`
 	DefaultZone        string `yaml:"default_zone"` // IANA zone for schedules without one (plan-m1 Q6)
 	NodeName           string `yaml:"node_name"`
+	// DownloadURL is where hosts fetch install.sh and the packages of this server's release, for a mirror; empty: the
+	// release on GitHub (decision 044). It goes into the one-line install that host add prints.
+	DownloadURL string `yaml:"download_url"`
 
 	Storage     StorageSettings     `yaml:"storage"`
 	Maintenance MaintenanceSettings `yaml:"maintenance"`
@@ -245,6 +248,10 @@ func (s Settings) validate() error {
 		if o.MaintenanceCredentialsFile == s.Storage.MaintenanceCredentialsFile || o.MaintenanceCredentialsFile == s.Storage.GatewayCredentialsFile {
 			errs = append(errs, errors.New("offsite.maintenance_credentials_file is a primary key's file: the off-site bucket needs a key of its own"))
 		}
+	}
+	if u := s.DownloadURL; u != "" && !strings.HasPrefix(u, "https://") && !strings.HasPrefix(u, "http://") && !strings.HasPrefix(u, "file:///") ||
+		strings.ContainsAny(s.DownloadURL, " \t\n'\"") {
+		errs = append(errs, fmt.Errorf("download_url is %q: it is the URL of the directory that holds install.sh and the packages: https://, http://, or file:/// for a directory every host has", s.DownloadURL))
 	}
 	if _, err := time.LoadLocation(s.DefaultZone); err != nil {
 		errs = append(errs, fmt.Errorf("default_zone: %w", err))

@@ -19,16 +19,12 @@ func hostOperatingCmds() []*cobra.Command {
 	rotate := &cobra.Command{Use: "rotate <fqdn>", Short: "After a compromise: a new repository password, the agent's certificate unpinned, and a new enrollment code (docs/runbooks/compromised-host.md)",
 		Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, a []string) error {
 			var res struct {
-				CredentialsVersion int      `json:"credentials_version"`
-				NewKey             string   `json:"new_key"`
-				RemovedKeys        []string `json:"removed_keys"`
-				Escrowed           bool     `json:"escrowed"`
-				Warning            string   `json:"warning"`
-				Enrollment         struct {
-					Code           string    `json:"code"`
-					ExpiresAt      time.Time `json:"expires_at"`
-					InstallCommand string    `json:"install_command"`
-				} `json:"enrollment"`
+				CredentialsVersion int        `json:"credentials_version"`
+				NewKey             string     `json:"new_key"`
+				RemovedKeys        []string   `json:"removed_keys"`
+				Escrowed           bool       `json:"escrowed"`
+				Warning            string     `json:"warning"`
+				Enrollment         enrollment `json:"enrollment"`
 			}
 			raw, err := call("POST", "/api/v1/hosts/"+url.PathEscape(a[0])+"/rotate", map[string]any{"message": rotateMsg}, &res)
 			if err != nil {
@@ -44,8 +40,7 @@ func hostOperatingCmds() []*cobra.Command {
 			if res.Escrowed {
 				fmt.Println("The escrow file in the bucket holds the new password.")
 			}
-			fmt.Printf("\nOnce the host is clean or rebuilt, enroll it with code %s (valid until %s), as root on the host:\n  %s\n",
-				res.Enrollment.Code, res.Enrollment.ExpiresAt.Local().Format("15:04"), res.Enrollment.InstallCommand)
+			fmt.Printf("\nOnce the host is clean or rebuilt, enroll it again.\n%s", res.Enrollment.howTo())
 			fmt.Println("\nEnrolling makes the host a new key of its own; the old certificate no longer works.")
 			if res.Warning != "" {
 				fmt.Println("\nwarning:", res.Warning)

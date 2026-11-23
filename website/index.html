@@ -1,0 +1,1775 @@
+<title>Holdfast documentation</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<style>
+/* Layout: a contents rail beside one reading column on wide screens, one column on phones. Tables, code and diagrams
+   scroll inside their own boxes. Same tokens as "How Holdfast works". */
+:root {
+  --bg: #f3f6f6; --surface: #ffffff; --ink: #13232a; --muted: #536a72; --line: #d3dee0; --line-strong: #7d949b;
+  --accent: #0e7c74; --accent-soft: #d5eeeb; --cross: #b85a0b; --cross-soft: #fbe5d0;
+  --ok: #1d7540; --ok-soft: #dbf0e1; --plan: #855600; --plan-soft: #fbeecf; --code: #eef3f3;
+  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0d171b; --surface: #13222a; --ink: #dce8eb; --muted: #94aab1; --line: #243840; --line-strong: #6f878e;
+  --accent: #4fc4b7; --accent-soft: #143c39; --cross: #f09a52; --cross-soft: #3b2615;
+  --ok: #63d18a; --ok-soft: #133020; --plan: #e8bb5a; --plan-soft: #352a10; --code: #0f1d23; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0d171b; --surface: #13222a; --ink: #dce8eb; --muted: #94aab1; --line: #243840; --line-strong: #6f878e;
+  --accent: #4fc4b7; --accent-soft: #143c39; --cross: #f09a52; --cross-soft: #3b2615;
+  --ok: #63d18a; --ok-soft: #133020; --plan: #e8bb5a; --plan-soft: #352a10; --code: #0f1d23; color-scheme: dark }
+
+* { box-sizing: border-box }
+html { scroll-behavior: smooth }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto } }
+body { background: var(--bg); color: var(--ink); font-family: var(--sans); font-size: 16px; line-height: 1.6;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 2.5rem 4rem }
+.layout { max-width: 1180px; margin: 0 auto; display: grid; grid-template-columns: minmax(0, 1fr); gap: 2.5rem }
+main { display: grid; gap: 3.5rem; min-width: 0; max-width: 880px }
+h1, h2, h3, h4 { line-height: 1.2; text-wrap: balance; margin: 0 }
+h1 { font-size: clamp(1.9rem, 4vw, 2.6rem); font-weight: 700; letter-spacing: -0.01em }
+h2 { font-size: 1.6rem; font-weight: 700 }
+h3 { font-size: 1.15rem; font-weight: 600; padding-top: 0.6rem }
+h4 { font-size: 1rem; font-weight: 600 }
+p { margin: 0; max-width: 70ch }
+section { display: grid; gap: 1rem; scroll-margin-top: 1rem; min-width: 0 }
+section.chapter { gap: 1.25rem; border-top: 2px solid var(--line); padding-top: 1.75rem }
+.sub { display: grid; gap: 0.9rem; scroll-margin-top: 1rem; min-width: 0 }
+.eyebrow { font-family: var(--mono); font-size: 0.78rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted) }
+.lede { font-size: 1.12rem }
+code, .mono { font-family: var(--mono); font-size: 0.88em }
+code { background: var(--accent-soft); padding: 0.05em 0.35em; border-radius: 4px; overflow-wrap: anywhere }
+a { color: var(--accent) }
+a:focus-visible, button:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px }
+.muted { color: var(--muted) }
+strong { font-weight: 600 }
+
+/* The contents rail */
+aside.toc { font-size: 0.9rem; min-width: 0 }
+aside.toc .toc-title { font-family: var(--mono); font-size: 0.75rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); margin-bottom: 0.5rem }
+aside.toc ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.15rem }
+aside.toc > nav > ol > li { margin-top: 0.45rem }
+aside.toc > nav > ol > li > a { font-weight: 600; color: var(--ink) }
+aside.toc ol ol { padding-left: 0.8rem; margin-top: 0.15rem; border-left: 1px solid var(--line) }
+aside.toc a { text-decoration: none; color: var(--muted); display: block; padding: 0.05rem 0 }
+aside.toc a:hover { color: var(--accent) }
+@media (max-width: 1099px) {
+  aside.toc { border: 1px solid var(--line); border-radius: 10px; background: var(--surface); padding: 0.9rem 1rem }
+  aside.toc ol ol { display: none }
+  aside.toc > nav > ol { grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 0.1rem 1rem }
+  aside.toc > nav > ol > li { margin-top: 0.1rem }
+}
+@media (min-width: 1100px) {
+  .layout { grid-template-columns: 230px minmax(0, 880px) }
+  aside.toc { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 1rem); align-self: start; max-height: calc(100vh - 2rem); overflow-y: auto; padding-right: 0.5rem }
+}
+
+header { display: grid; gap: 1rem }
+.status { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0.75rem }
+.status div { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 0.75rem 0.9rem; display: grid; gap: 0.15rem; min-width: 0 }
+.status b { font-size: 0.75rem; font-family: var(--mono); letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); font-weight: 500 }
+
+/* Call-outs */
+.note, .warn, .danger { padding: 0.65rem 0.95rem; border-radius: 0 6px 6px 0; max-width: 72ch; display: grid; gap: 0.4rem }
+.note { border-left: 3px solid var(--accent); background: var(--accent-soft) }
+.warn { border-left: 3px solid var(--plan); background: var(--plan-soft) }
+.danger { border-left: 3px solid var(--cross); background: var(--cross-soft) }
+
+/* Code */
+.cmd { position: relative; min-width: 0 }
+pre { font-family: var(--mono); font-size: 0.84rem; line-height: 1.55; background: var(--code); border: 1px solid var(--line); border-radius: 8px;
+  padding: 0.75rem 0.95rem; margin: 0; overflow-x: auto; white-space: pre; tab-size: 2 }
+.cmd pre { padding-right: 4.5rem }
+pre code { background: none; padding: 0; font-size: inherit; overflow-wrap: normal }
+pre .c { color: var(--muted) }
+button.copy { position: absolute; top: 0.45rem; right: 0.45rem; font: 500 0.72rem var(--mono); color: var(--muted); background: var(--surface);
+  border: 1px solid var(--line); border-radius: 5px; padding: 0.2rem 0.5rem; cursor: pointer }
+button.copy:hover { color: var(--accent); border-color: var(--accent) }
+
+/* Diagrams */
+figure { margin: 0; display: grid; gap: 0.6rem; min-width: 0 }
+.scroll { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 0.75rem }
+svg { display: block; width: 100%; height: auto; min-width: 640px; color: var(--ink) }
+figcaption { font-size: 0.92rem; color: var(--muted); max-width: 72ch }
+svg text { font-family: var(--sans) }
+.site { fill: none; stroke: var(--line-strong); stroke-dasharray: 5 5; stroke-width: 1 }
+.sitelabel { fill: var(--muted); font-size: 11px; letter-spacing: 0.08em; font-weight: 600 }
+.box { fill: var(--surface); stroke: var(--line-strong); stroke-width: 1.2 }
+.box.key { fill: var(--accent-soft); stroke: var(--accent) }
+.box.store { fill: var(--bg) }
+.t { fill: var(--ink); font-size: 13px; font-weight: 600 }
+.s { fill: var(--muted); font-size: 11.5px }
+.gw { fill: var(--ink); font-size: 11.5px; font-weight: 600 }
+.ln { fill: none; stroke: var(--ink); stroke-opacity: 0.7; stroke-width: 1.4 }
+.lnx { fill: none; stroke: var(--cross); stroke-width: 2 }
+.lane { stroke: var(--line-strong); stroke-dasharray: 3 4; stroke-width: 1 }
+.mk { fill: var(--ink); fill-opacity: 0.8 }
+.mkx { fill: var(--cross) }
+.lbl { fill: var(--muted); font-size: 11px }
+.lbli { fill: var(--ink); font-size: 11.5px }
+.lblx { fill: var(--cross); font-size: 11px; font-weight: 600 }
+.num { fill: var(--accent); font-size: 11px; font-weight: 700; font-family: var(--mono) }
+.band1 { fill: var(--accent-soft); stroke: var(--accent) }
+.band2 { fill: var(--plan-soft); stroke: var(--plan) }
+.tick { stroke: var(--line-strong) }
+.bypass { fill: none; stroke: var(--cross); stroke-width: 1.6; stroke-dasharray: 5 4 }
+
+/* Lists and tables */
+dl.parts { margin: 0; display: grid; grid-template-columns: minmax(0, 13rem) minmax(0, 1fr); gap: 0.55rem 1.2rem }
+dl.parts dt { font-family: var(--mono); font-size: 0.86rem; font-weight: 500; padding-top: 0.12rem; overflow-wrap: anywhere }
+dl.parts dd { margin: 0; max-width: 64ch }
+@media (max-width: 560px) { dl.parts { grid-template-columns: 1fr } dl.parts dd { margin-bottom: 0.5rem } }
+ol.steps { margin: 0; padding-left: 1.5rem; display: grid; gap: 0.6rem; max-width: 72ch }
+ol.steps li::marker { font-family: var(--mono); color: var(--accent); font-weight: 500 }
+ol.steps li { padding-left: 0.2rem }
+ol.steps li > .cmd, ol.steps li > p { margin-top: 0.4rem }
+ul.plain { margin: 0; padding-left: 1.2rem; display: grid; gap: 0.35rem; max-width: 72ch }
+.tablebox { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); min-width: 0 }
+table { border-collapse: collapse; width: 100%; min-width: 620px; font-size: 0.92rem }
+th, td { text-align: left; vertical-align: top; padding: 0.55rem 0.8rem; border-bottom: 1px solid var(--line) }
+tr:last-child td { border-bottom: 0 }
+th { font-size: 0.74rem; font-family: var(--mono); letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); font-weight: 500 }
+td:first-child { font-weight: 600 }
+td.m, td .m { font-family: var(--mono); font-size: 0.85rem; font-weight: 500 }
+table.ref td:first-child { font-family: var(--mono); font-size: 0.84rem; font-weight: 500; white-space: nowrap }
+.pill { font-family: var(--mono); font-size: 0.72rem; padding: 0.1rem 0.5rem; border-radius: 999px; white-space: nowrap }
+.pill.ok { background: var(--ok-soft); color: var(--ok) }
+.pill.plan { background: var(--plan-soft); color: var(--plan) }
+.pill.x { background: var(--cross-soft); color: var(--cross) }
+.pill.n { background: var(--accent-soft); color: var(--accent) }
+.two { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1rem }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 1rem 1.1rem; display: grid; gap: 0.6rem; align-content: start; min-width: 0 }
+ul.choices { list-style: none; margin: 0; padding: 0; display: grid }
+ul.choices li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.2rem 1rem; padding-block: 0.65rem; border-top: 1px solid var(--line) }
+ul.choices li:last-child { border-bottom: 1px solid var(--line) }
+ul.choices .what { font-weight: 600 }
+ul.choices .why { grid-column: 1; color: var(--muted); max-width: 66ch }
+ul.choices .rec { grid-column: 2; grid-row: 1 / span 2; font-family: var(--mono); font-size: 0.75rem; color: var(--muted); white-space: nowrap; padding-top: 0.2rem }
+@media (max-width: 560px) { ul.choices li { grid-template-columns: 1fr } ul.choices .rec { grid-column: 1; grid-row: auto } }
+ol.track { list-style: none; margin: 0; padding: 0; display: grid }
+ol.track li { display: grid; grid-template-columns: 3.2rem minmax(0, 1fr) auto; gap: 0.2rem 0.9rem; align-items: baseline; padding-block: 0.5rem; border-top: 1px solid var(--line) }
+ol.track li:last-child { border-bottom: 1px solid var(--line) }
+ol.track .m { font-family: var(--mono); font-weight: 500; color: var(--muted) }
+@media (max-width: 480px) { ol.track li { grid-template-columns: 2.8rem minmax(0, 1fr) } ol.track .pill { grid-column: 2; justify-self: start } }
+dl.words { margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 0.9rem 1.4rem }
+dl.words div { display: grid; gap: 0.1rem }
+dl.words dt { font-weight: 600 }
+dl.words dd { margin: 0; color: var(--muted); font-size: 0.95rem }
+details.more { border: 1px solid var(--line); border-radius: 8px; background: var(--surface); padding: 0.55rem 0.9rem }
+details.more summary { cursor: pointer; font-weight: 600 }
+details.more[open] { display: grid; gap: 0.7rem }
+footer { font-size: 0.9rem; color: var(--muted); border-top: 1px solid var(--line); padding-top: 1rem; display: grid; gap: 0.4rem }
+</style>
+
+<div class="layout">
+
+<aside class="toc" aria-label="Contents">
+  <div class="toc-title">Contents</div>
+  <nav>
+  <ol>
+    <li><a href="#introduction">Introduction</a>
+      <ol><li><a href="#what">What Holdfast does</a></li><li><a href="#who">Who it is for</a></li><li><a href="#features">What you get</a></li><li><a href="#requirements">Requirements</a></li></ol></li>
+    <li><a href="#quickstart">Quick start</a></li>
+    <li><a href="#installation">Installation</a>
+      <ol><li><a href="#before">Before you start</a></li><li><a href="#storage">The bucket and its keys</a></li><li><a href="#escrow-key">The escrow key</a></li>
+      <li><a href="#install-server">The server</a></li><li><a href="#install-ui">The web UI and login</a></li><li><a href="#install-agents">Agents</a></li>
+      <li><a href="#install-cli">The CLI on a workstation</a></li><li><a href="#install-monitoring">Monitoring and alerts</a></li><li><a href="#install-offsite">Off-site copies</a></li>
+      <li><a href="#install-mirror">Mirrors and closed networks</a></li><li><a href="#install-manual">Without the script</a></li><li><a href="#installer-ref">Installer settings</a></li>
+      <li><a href="#upgrade">Upgrading</a></li><li><a href="#remove">Removing</a></li></ol></li>
+    <li><a href="#architecture">Architecture</a>
+      <ol><li><a href="#picture">The picture</a></li><li><a href="#life">Life of a backup</a></li><li><a href="#network">Who connects to whom</a></li>
+      <li><a href="#where">What is stored where</a></li><li><a href="#one-server">One server</a></li><li><a href="#sizing">Sizing</a></li></ol></li>
+    <li><a href="#usage">Using Holdfast</a>
+      <ol><li><a href="#ways">UI, CLI and API</a></li><li><a href="#hosts">Hosts</a></li><li><a href="#jobs">Jobs and schedules</a></li><li><a href="#retention">Retention</a></li>
+      <li><a href="#checks">Checks and their codes</a></li><li><a href="#snapshots">Snapshots</a></li><li><a href="#restore">Restoring</a></li><li><a href="#dumps">Database dumps</a></li>
+      <li><a href="#deleting">Deleting</a></li><li><a href="#offsite">Off-site copies</a></li><li><a href="#history">History and audit</a></li>
+      <li><a href="#problems">Problems</a></li><li><a href="#access">Access and roles</a></li><li><a href="#cli-ref">CLI reference</a></li></ol></li>
+    <li><a href="#operating">Operating Holdfast</a>
+      <ol><li><a href="#daily">What runs by itself</a></li><li><a href="#alerts">Alerts</a></li><li><a href="#offline">What to keep offline</a></li>
+      <li><a href="#lost-server">A lost server</a></li><li><a href="#lost-host">A lost host</a></li><li><a href="#compromised">A compromised host</a></li>
+      <li><a href="#rollback">Rolling a repository back</a></li><li><a href="#decommission">Decommissioning</a></li><li><a href="#outside">Changes outside Holdfast</a></li>
+      <li><a href="#certificate">The agents' certificate</a></li><li><a href="#troubleshooting">Troubleshooting</a></li></ol></li>
+    <li><a href="#security">Security</a>
+      <ol><li><a href="#sec-model">The model</a></li><li><a href="#sec-keys">Who holds which key</a></li><li><a href="#sec-windows">Undoing a deletion</a></li>
+      <li><a href="#sec-whatif">If something goes wrong</a></li><li><a href="#sec-rules">Rules that always hold</a></li><li><a href="#sec-crypto">Encryption and secrets</a></li>
+      <li><a href="#sec-hardening">Hardening checklist</a></li><li><a href="#sec-limits">Known limits</a></li></ol></li>
+    <li><a href="#reference">Reference</a>
+      <ol><li><a href="#ref-server-yaml">server.yaml</a></li><li><a href="#ref-agent-yaml">agent.yaml</a></li><li><a href="#ref-files">Files</a></li>
+      <li><a href="#ref-storage-codes">Storage checks</a></li><li><a href="#ref-metrics">Metrics</a></li><li><a href="#ref-api">API</a></li></ol></li>
+    <li><a href="#design">Design choices</a>
+      <ol><li><a href="#choices">Choices and why</a></li><li><a href="#left-out">Left out on purpose</a></li><li><a href="#status">Where it stands</a></li><li><a href="#glossary">Glossary</a></li></ol></li>
+  </ol>
+  </nav>
+</aside>
+
+<main>
+
+<header>
+  <div class="eyebrow">Holdfast · documentation · November 2026 · Apache-2.0</div>
+  <h1>Holdfast documentation</h1>
+  <p class="lede">Holdfast runs restic backups for a fleet of Linux servers from one place. You install one Holdfast server, put a small agent on every host, and say what to back up and how long to keep it. The agents make encrypted backups with restic and send them through the server to your own S3 storage. The server keeps the settings and the history, cleans up every day under a 7-day safety rule, and alerts you when something is wrong.</p>
+  <div class="status">
+    <div><b>Install</b><span>One line per machine: <code>curl … | sh</code>, as k3s does it.</span></div>
+    <div><b>No storage key on hosts</b><span>The server holds two S3 keys, whether you have 5 hosts or 500. Hosts hold none.</span></div>
+    <div><b>Free and open</b><span>Apache-2.0. No paid tier, no feature gating.</span></div>
+  </div>
+</header>
+
+<!-- ================================================================================================ INTRODUCTION -->
+<section class="chapter" id="introduction">
+  <h2>Introduction</h2>
+
+  <div class="sub" id="what">
+    <h3>What Holdfast does</h3>
+    <p>Holdfast is a control plane for <a href="https://restic.net">restic</a>, the open-source backup program. restic does the backing up: it encrypts on the host, deduplicates, and writes to S3. Holdfast manages it across many hosts. It sets up each host's repository and password, runs backups on a schedule you set centrally, shows every snapshot and every run in one place, restores files on the host they came from or onto another one, and deletes old backups by rules you can read, with a 7-day wait before anything is forgotten.</p>
+    <p>Holdfast manages restic with safe defaults. It does not replace restic, and it does not try to fix what restic itself cannot. Where restic can decide something, such as which snapshots a retention policy keeps, Holdfast asks restic instead of working it out again.</p>
+  </div>
+
+  <div class="sub" id="who">
+    <h3>Who it is for</h3>
+    <p>A small operations team, one person to a handful, looking after roughly ten to a few hundred Linux servers (Ubuntu, Debian, Red Hat Enterprise Linux, Oracle Linux and their relatives), with S3-compatible storage they already run or rent: Ceph RGW, MinIO, AWS S3 or another. They want one place to set restic backups up, see them, restore from them and be alerted, instead of cron jobs and scripts on each host.</p>
+    <p>It is not for Windows or macOS machines, Kubernetes volumes, service providers backing up many customers, fleets of thousands, or anyone who needs the backup server itself to stay up through a failure. Holdfast runs as <strong>one server with no high availability</strong>: while it is down, backups wait, and a lost server is replaced by a new one on the same bucket (<a href="#one-server">One server</a>).</p>
+  </div>
+
+  <div class="sub" id="features">
+    <h3>What you get</h3>
+    <ul class="plain">
+      <li><strong>Central jobs.</strong> Paths, excludes, a schedule and a retention per job, set in the UI, the CLI or the API. Each host can have several jobs, all in its one repository.</li>
+      <li><strong>Backups that need no storage key on the host.</strong> Agents send their backups through the server's gateway, which lets each host read and add to its own repository only.</li>
+      <li><strong>Schedules with numbers you can check.</strong> Every N minutes or hours, daily or weekly, with an optional random spread. Holdfast shows the next runs, the longest gap, the worst-case data loss and when the stale alert fires.</li>
+      <li><strong>Retention as time windows.</strong> "One per day for 14 days, one per month for a year", decided by restic's own <code>forget --dry-run</code>.</li>
+      <li><strong>Safe deletion.</strong> Every deletion waits 7 days and can be cancelled. Behind that, S3 versioning keeps deleted files until your lifecycle rule expires them, out of Holdfast's reach.</li>
+      <li><strong>Browsing and restoring.</strong> File names and metadata of every snapshot, what changed between two snapshots, a file's versions across all snapshots, and restores on the host: into a new folder, in place, into another folder, onto another host, or from the off-site copy.</li>
+      <li><strong>Database dumps</strong> from commands defined on the host, such as <code>pg_dumpall</code>.</li>
+      <li><strong>Optional off-site copies</strong> into a second bucket, with their own passwords and their own retention.</li>
+      <li><strong>Checks with stable codes</strong> that stop mistakes before they are saved, such as R104 for a change that cuts retention.</li>
+      <li><strong>Config history.</strong> Every change is a numbered revision with who, when and why, and any two can be compared.</li>
+      <li><strong>Audit.</strong> Every action is in the host's history and the audit log, with the person, the time and any warnings they accepted.</li>
+      <li><strong>Monitoring.</strong> Prometheus metrics, alert rules that ship with Holdfast, a storage witness that checks the bucket independently, and a mail script for teams without Alertmanager.</li>
+      <li><strong>Recovery of Holdfast itself.</strong> A nightly encrypted export of the server's database to the bucket, every repository password escrowed with <code>age</code>, and tested runbooks.</li>
+      <li><strong>Login through your identity provider</strong> (OIDC), with three roles: viewer, editor and admin, per host pattern.</li>
+    </ul>
+  </div>
+
+  <div class="sub" id="requirements">
+    <h3>Requirements</h3>
+    <div class="tablebox"><table>
+      <thead><tr><th>What</th><th>Needs</th></tr></thead>
+      <tbody>
+        <tr><td>Hosts and the server</td><td>Linux on x86_64 with systemd, and apt or dnf. Tested on Ubuntu 24.04, AlmaLinux 9 and Oracle Linux 9. Debian, RHEL and Rocky Linux of the same generation are expected to work, as the packages are static binaries, but are not tested.</td></tr>
+        <tr><td>Storage</td><td>An S3-compatible server that supports bucket versioning, lifecycle rules and per-key policies: Ceph RGW (tested with 19.2), MinIO, AWS S3 and others. Someone who can make a bucket and keys there: two for the server, and one more for the storage witness and for an off-site bucket if you use them.</td></tr>
+        <tr><td>Database</td><td>PostgreSQL for the server, tested with 16 and 17. The installer installs the distribution's own, or uses one you name.</td></tr>
+        <tr><td>restic</td><td>Shipped with Holdfast, at the version each release is tested with: restic 0.19.1 today. You install nothing else.</td></tr>
+        <tr><td>The CLI</td><td>Packaged for Linux on x86_64, like the rest. On other systems, use the web UI, or the CLI on the server.</td></tr>
+        <tr><td>The server's size</td><td>2 vCPUs, 2 GiB of memory and 20 GiB of disk carried 66 MiB/s of backups in the lab. Its network link to the hosts and to S3 is what limits it (<a href="#sizing">Sizing</a>).</td></tr>
+        <tr><td>Web UI login</td><td>An OIDC provider with the authorization code flow and the device flow, and a groups claim: Authelia, Keycloak, Authentik, Dex and others. Without one, the CLI works as root on the server.</td></tr>
+        <tr><td>Alerts</td><td>Prometheus, and Alertmanager or the mail script that ships with Holdfast. Optional, but without them nobody is told when backups stop.</td></tr>
+        <tr><td>Offline</td><td>A safe place, off the server, for a few small files: the escrow key and a copy of <code>/etc/holdfast</code> (<a href="#offline">What to keep offline</a>).</td></tr>
+      </tbody>
+    </table></div>
+  </div>
+</section>
+
+<!-- ================================================================================================ QUICK START -->
+<section class="chapter" id="quickstart">
+  <h2>Quick start</h2>
+  <p>From nothing to a first backup. Each step links to its full section.</p>
+  <ol class="steps">
+    <li><strong>Make the bucket and two keys</strong> at your S3 server: versioning on, a lifecycle rule for old versions, a gateway key and a maintenance key with the policies in <a href="#storage">The bucket and its keys</a>.</li>
+    <li><strong>Make an escrow key pair</strong> on your own machine, not the server, and keep the private key offline:
+      <div class="cmd"><pre><code>age-keygen -o escrow-key.txt      <span class="c"># prints: Public key: age1…</span></code></pre></div></li>
+    <li><strong>Install the server.</strong> Put the settings in a file only root can read, then run the installer as root on the server:
+      <div class="cmd"><pre><code>set -a; . ./holdfast.env; set +a
+curl -sfL https://github.com/kabsdk/holdfast/releases/latest/download/install.sh | sh -s - server</code></pre></div>
+      <p>It installs PostgreSQL and Holdfast, starts the server, and prints the pin agents use. Copy <code>/etc/holdfast</code> to a safe place offline now.</p></li>
+    <li><strong>Add a host</strong>, as root on the server:
+      <div class="cmd"><pre><code>holdfast host add web01.example.com --job system --path /etc --path /home --daily 02:00 \
+  --keep-daily 14d --keep-weekly 8w --keep-monthly 12mo --keep-yearly 3y</code></pre></div>
+      <p>Holdfast tests the storage for that host, saves the change, and prints one line with a code that works once, for 15 minutes.</p></li>
+    <li><strong>Run that line on the host</strong>, as root. It installs the agent, enrolls it with the server and starts it:
+      <div class="cmd"><pre><code>curl -sfL https://github.com/kabsdk/holdfast/releases/download/v1.0.0/install.sh | HOLDFAST_SERVER=https://holdfast.example.com:8443 HOLDFAST_FQDN=web01.example.com HOLDFAST_CODE=3DK5-TM2E-28V6 HOLDFAST_CA_SHA256=2315…d08c HOLDFAST_VERSION=1.0.0 sh -</code></pre></div></li>
+    <li><strong>Watch the first backup.</strong> It starts as soon as the agent has enrolled; after that the job follows its schedule. <code>holdfast job run</code> backs up at any other time.
+      <div class="cmd"><pre><code>holdfast host events web01.example.com
+holdfast snapshot list web01.example.com</code></pre></div></li>
+  </ol>
+  <p class="note">Next: the <a href="#install-ui">web UI</a>, <a href="#install-monitoring">alerts</a>, and the <a href="#offline">files to keep offline</a>. A backup nobody is alerted about is a backup nobody notices has stopped.</p>
+</section>
+
+<!-- ================================================================================================ INSTALLATION -->
+<section class="chapter" id="installation">
+  <h2>Installation</h2>
+  <p>Everything is installed by one script, <code>install.sh</code>, released with each version beside the packages. It works as k3s's installer does: you pipe it to <code>sh</code> as root, with its settings in environment variables, and name a role. It installs Holdfast's <code>.deb</code> or <code>.rpm</code> packages with apt or dnf, each checked against the release's <code>SHA256SUMS</code>, and sets the machine up.</p>
+  <div class="tablebox"><table>
+    <thead><tr><th>Role</th><th>Where</th><th>Command</th></tr></thead>
+    <tbody>
+      <tr><td>server</td><td>The one Holdfast server</td><td class="m">curl -sfL …/install.sh | sh -s - server</td></tr>
+      <tr><td>agent</td><td>Every host to back up (the default role)</td><td class="m">curl -sfL …/install.sh | HOLDFAST_SERVER=… HOLDFAST_CODE=… sh -</td></tr>
+      <tr><td>cli</td><td>An admin's workstation</td><td class="m">curl -sfL …/install.sh | sh -s - cli</td></tr>
+      <tr><td>witness</td><td>The Prometheus host, or any machine but the server</td><td class="m">curl -sfL …/install.sh | sh -s - witness</td></tr>
+    </tbody>
+  </table></div>
+  <p>Three things hold for every role:</p>
+  <ul class="plain">
+    <li><strong>It checks first and never asks.</strong> Before it changes anything, it checks every setting, and if one is missing or wrong it lists them all, each with a line saying what it is, and stops. Nothing has been changed then. It never prompts: <code>curl | sh</code> has no terminal to ask on.</li>
+    <li><strong>Run again, it upgrades.</strong> On a machine that is set up already, it only upgrades the packages, and says that the settings are ignored.</li>
+    <li><strong>You can read it first.</strong> <code>curl -sfLO …/install.sh</code>, read it, then <code>sh install.sh server</code>. <code>sh install.sh help</code> lists every setting.</li>
+  </ul>
+  <p>Here <code>…/install.sh</code> is <code>https://github.com/kabsdk/holdfast/releases/latest/download/install.sh</code>, the newest release. To pin a release, use <code>https://github.com/kabsdk/holdfast/releases/download/v1.0.0/install.sh</code> and <code>HOLDFAST_VERSION=1.0.0</code>.</p>
+
+  <div class="sub" id="before">
+    <h3>Before you start</h3>
+    <ol class="steps">
+      <li>A Linux machine for the server, with a DNS name the hosts can reach, such as <code>holdfast.example.com</code>. The installer uses <code>hostname -f</code> unless you set <code>HOLDFAST_PUBLIC_URL</code>.</li>
+      <li>The bucket and its two keys, from whoever runs your S3 (<a href="#storage">next section</a>).</li>
+      <li>An escrow key pair made with <code>age-keygen</code>, the private half kept offline (<a href="#escrow-key">The escrow key</a>).</li>
+      <li>For the web UI: a certificate browsers trust for its name, and Holdfast registered at your OIDC provider (<a href="#install-ui">The web UI and login</a>). This can come later.</li>
+      <li>Firewall openings: hosts to the server on 8443, people to the server on 443, the server to S3 (<a href="#network">Who connects to whom</a>). Hosts never accept connections; they only dial out.</li>
+    </ol>
+  </div>
+
+  <div class="sub" id="storage">
+    <h3>The bucket and its keys</h3>
+    <p>Holdfast works with any S3 server, and it never creates S3 users, keys or policies itself. Your storage admin makes <strong>one bucket and two keys</strong> with the S3 server's own tools. Hosts get no key at all.</p>
+    <ol class="steps">
+      <li><strong>Make the bucket with an identity of your own</strong>, not with either key. A bucket's owner can change its settings, and Holdfast's keys must not be able to.</li>
+      <li><strong>Turn versioning on.</strong> It is what makes a deleted or overwritten file recoverable.</li>
+      <li><strong>Add a lifecycle rule that expires noncurrent versions.</strong> Holdfast checks that one covers <code>repos/</code> (B011); let it cover the whole bucket, so the old versions of <code>escrow/</code> and <code>meta/</code> expire too. Its days are how long deleted data can still be brought back, and Holdfast uses them to tell you when deleted data is really gone. 30 days is a common choice; Holdfast checks no minimum. Without the rule, nothing a prune deletes is ever freed.</li>
+      <li><strong>Make the gateway key</strong> with the policy below. The server's gateway writes every host's backups with it. It may read and add under <code>repos/</code>, delete only lock files, and never delete an old version.</li>
+      <li><strong>Make the maintenance key</strong> with the policy below. The server forgets and prunes with it, writes the escrow files and the nightly export, and measures each repository. It may never delete an old version or change the bucket's settings.</li>
+    </ol>
+    <p>The policies use the standard S3 policy language, which AWS, MinIO and Ceph RGW all accept. Replace <code>holdfast</code> with your bucket's name.</p>
+    <div class="two">
+      <div class="cmd"><pre><code><span class="c">// The gateway key</span>
+{"Version": "2012-10-17", "Statement": [
+ {"Effect": "Allow",
+  "Action": ["s3:ListBucket", "s3:GetBucketLocation"],
+  "Resource": ["arn:aws:s3:::holdfast"]},
+ {"Effect": "Allow",
+  "Action": ["s3:GetObject", "s3:PutObject"],
+  "Resource": ["arn:aws:s3:::holdfast/repos/*"]},
+ {"Effect": "Allow",
+  "Action": ["s3:DeleteObject"],
+  "Resource": ["arn:aws:s3:::holdfast/repos/*/locks/*"]},
+ {"Effect": "Deny",
+  "Action": ["s3:DeleteObjectVersion"],
+  "Resource": ["arn:aws:s3:::holdfast/*"]}
+]}</code></pre></div>
+      <div class="cmd"><pre><code><span class="c">// The maintenance key</span>
+{"Version": "2012-10-17", "Statement": [
+ {"Effect": "Allow",
+  "Action": ["s3:ListBucket", "s3:ListBucketVersions",
+    "s3:GetBucketLocation", "s3:GetBucketVersioning",
+    "s3:GetLifecycleConfiguration"],
+  "Resource": ["arn:aws:s3:::holdfast"]},
+ {"Effect": "Allow",
+  "Action": ["s3:GetObject", "s3:GetObjectVersion",
+    "s3:PutObject", "s3:DeleteObject"],
+  "Resource": ["arn:aws:s3:::holdfast/repos/*"]},
+ {"Effect": "Allow",
+  "Action": ["s3:PutObject", "s3:DeleteObject"],
+  "Resource": ["arn:aws:s3:::holdfast/escrow/*"]},
+ {"Effect": "Allow",
+  "Action": ["s3:GetObject", "s3:PutObject",
+    "s3:DeleteObject"],
+  "Resource": ["arn:aws:s3:::holdfast/meta/*"]},
+ {"Effect": "Deny",
+  "Action": ["s3:DeleteObjectVersion"],
+  "Resource": ["arn:aws:s3:::holdfast/*"]}
+]}</code></pre></div>
+    </div>
+    <p class="warn"><span><strong>Keep the explicit denies.</strong> On MinIO, <code>s3:DeleteObject</code> on its own also deletes old versions for good, and only the deny stops that. Holdfast tests the keys instead of trusting the policy, so a key that can do too much is caught.</span></p>
+    <details class="more">
+      <summary>Making the bucket and keys on MinIO, Ceph RGW and AWS</summary>
+      <p><strong>MinIO</strong>, with <code>mc</code> and an alias <code>s3</code> for an admin identity (this is what Holdfast's own installer test does):</p>
+      <div class="cmd"><pre><code>mc mb s3/holdfast
+mc version enable s3/holdfast
+mc ilm rule add --noncurrent-expire-days 30 s3/holdfast
+mc admin user add s3 holdfast-gateway '&lt;a long random secret&gt;'
+mc admin policy create s3 holdfast-gateway gateway.json        <span class="c"># the gateway policy above</span>
+mc admin policy attach s3 holdfast-gateway --user holdfast-gateway
+mc admin user add s3 holdfast-maint '&lt;another secret&gt;'
+mc admin policy create s3 holdfast-maint maintenance.json      <span class="c"># the maintenance policy above</span>
+mc admin policy attach s3 holdfast-maint --user holdfast-maint</code></pre></div>
+      <p>The user name is the access key ID, and the secret its secret access key.</p>
+      <p><strong>Ceph RGW</strong>: make the bucket with a user of your own, turn on versioning and add the lifecycle rule with any S3 client as that user (<code>aws s3api put-bucket-versioning</code>, <code>put-bucket-lifecycle-configuration</code>). Make two users with <code>radosgw-admin user create --uid holdfast-gateway</code> and <code>--uid holdfast-maint</code>, which print their keys. Then grant the statements above, either as each user's IAM policy in an RGW account (Squid and later), or as one bucket policy, set by the bucket's owner, with each statement's <code>Principal</code> set to the user, such as <code>{"AWS": ["arn:aws:iam:::user/holdfast-gateway"]}</code>. The lab runs the second way on Ceph 19.2.</p>
+      <p><strong>AWS S3</strong>: make the bucket with versioning and the lifecycle rule, and two IAM users with an access key each and the policies above.</p>
+    </details>
+    <p><strong>Holdfast tests these rules itself</strong> with plain S3 calls: when a host is added, before an enrollment is accepted, and every day for every host. A rule that fails is reported with its code, B001 to B016 (<a href="#ref-storage-codes">Storage checks</a>), and a host cannot be added or enroll until it is fixed. Right after the install, the server writes its first nightly export, which uses the maintenance key under <code>meta/</code>: <code>holdfast export list</code> shows whether that worked. The gateway key is first tested by the first <code>holdfast host add</code>.</p>
+    <p><strong>If B003 fails</strong> ("the maintenance key cannot read what the gateway key wrote"): on some S3 servers an object belongs to the user who wrote it. On Ceph RGW, put both users in one RGW account (Squid and later), or add a bucket-policy statement that gives the maintenance user <code>s3:GetObject</code>, <code>s3:PutObject</code> and <code>s3:DeleteObject</code> on <code>repos/*</code>. Do not grant <code>s3:*</code>.</p>
+    <p><strong>Object Lock</strong> is not required. If your bucket has it, Holdfast reports it on each host's page, and never extends a lock.</p>
+  </div>
+
+  <div class="sub" id="escrow-key">
+    <h3>The escrow key</h3>
+    <p>Every host's repository password is written to the bucket as <code>escrow/&lt;fqdn&gt;.age</code>, encrypted to an <code>age</code> public key. The server's nightly export goes to <code>meta/&lt;date&gt;.age</code>, encrypted to the same key. The private key stays with you, offline. With it, and a key to read the bucket, you can open any repository with plain restic, and rebuild a lost Holdfast server.</p>
+    <div class="cmd"><pre><code>age-keygen -o escrow-key.txt    <span class="c"># on your own machine; age is packaged by most distributions</span>
+grep 'public key' escrow-key.txt  <span class="c"># age1…: this goes to the installer as HOLDFAST_ESCROW_RECIPIENT</span></code></pre></div>
+    <p>Store <code>escrow-key.txt</code> where you store other recovery secrets: a password manager, a safe, two USB sticks. Never on the Holdfast server. The installer refuses to install a server without the public key, because without it there is no nightly export to rebuild a lost server from.</p>
+  </div>
+
+  <div class="sub" id="install-server">
+    <h3>Installing the server</h3>
+    <p>Put the settings in a file only root can read, so the secrets stay out of the shell's history:</p>
+    <div class="cmd"><pre><code><span class="c"># /root/holdfast.env (chmod 600)</span>
+HOLDFAST_S3_ENDPOINT=https://s3.example.com
+HOLDFAST_S3_BUCKET=holdfast
+HOLDFAST_GATEWAY_ACCESS_KEY_ID=…
+HOLDFAST_GATEWAY_SECRET_ACCESS_KEY=…
+HOLDFAST_MAINTENANCE_ACCESS_KEY_ID=…
+HOLDFAST_MAINTENANCE_SECRET_ACCESS_KEY=…
+HOLDFAST_ESCROW_RECIPIENT=age1…
+<span class="c"># optional</span>
+HOLDFAST_PUBLIC_URL=https://holdfast.example.com:8443
+HOLDFAST_ZONE=Europe/Copenhagen</code></pre></div>
+    <p>Then, as root on the server:</p>
+    <div class="cmd"><pre><code>set -a; . /root/holdfast.env; set +a
+curl -sfL https://github.com/kabsdk/holdfast/releases/latest/download/install.sh | sh -s - server</code></pre></div>
+    <p>It does this, in order, and stops at the first thing that fails:</p>
+    <ol class="steps">
+      <li>Checks every setting, and that it runs as root on x86_64 with systemd and apt or dnf.</li>
+      <li>Installs PostgreSQL from the distribution and makes a database and user <code>holdfast</code> with a random password, unless <code>HOLDFAST_DATABASE_DSN</code> names a PostgreSQL to use. On RHEL 9 and its relatives it enables the module stream <code>postgresql:16</code>.</li>
+      <li>Downloads <code>holdfast-restic</code>, <code>holdfast-cli</code> and <code>holdfast-server</code>, checks each against <code>SHA256SUMS</code>, and installs them.</li>
+      <li>Makes the credentials key (<code>/etc/holdfast/credentials.key</code>), which seals every repository password in the database.</li>
+      <li>Makes a small CA of its own for the agent listener, and a certificate it signs for the public URL's name, valid 10 years. Agents pin the CA, not the certificate, so the certificate can be replaced without touching them. With <code>HOLDFAST_TLS_CERT</code> and <code>HOLDFAST_TLS_KEY</code> it uses yours instead, and agents pin the last certificate in your chain.</li>
+      <li>Writes the key files, root-only: <code>/etc/holdfast/gateway.env</code> and <code>maintenance.env</code>, each holding <code>AWS_ACCESS_KEY_ID=…</code> and <code>AWS_SECRET_ACCESS_KEY=…</code>. Then <code>/etc/holdfast/server.yaml</code>, with the machine's time zone as the default zone.</li>
+      <li>Opens the agent port, 8443, and the UI's, 443, if the UI is set, in firewalld or ufw if one of them runs. Starts <code>holdfast-server</code>, which runs as root, and waits until it answers. SELinux may stay enforcing: the tested servers had it on.</li>
+    </ol>
+    <p>It ends like this:</p>
+    <div class="cmd"><pre><code>[holdfast] The Holdfast server 1.0.0-1 runs.
+  Agents connect to   https://holdfast.example.com:8443
+  Agents pin          2315269dbd8dcb02b9b627167cd4db94c5a53a7448e10654d39eb45a0d8cd08c
+  On this host, as root, the CLI works now:  holdfast status
+  The web UI is off until you set ui: and auth: in /etc/holdfast/server.yaml (docs: Installation, the web UI).
+
+  Copy /etc/holdfast to a safe place offline now, and keep the escrow's age private key with it: a new server is
+  rebuilt from them if this one is lost. It holds the credentials key, the storage keys, the agents' CA and
+  server.yaml.
+
+  Next, add a host. It prints the one line to run on that host:
+    holdfast host add web01.example.com --job system --path /etc --daily 02:00 \
+      --keep-daily 14d --keep-weekly 8w --keep-monthly 12mo --keep-yearly 3y</code></pre></div>
+    <p class="danger"><span><strong>Copy <code>/etc/holdfast</code> offline now.</strong> The credentials key and the agents' CA cannot be made again. Without the credentials key, the nightly export cannot be restored; without the CA, every agent must enroll again.</span></p>
+    <p>As root on the server, the <code>holdfast</code> command talks to the server over a root-only socket, with no login, as an admin on every host. That is enough to run Holdfast without the web UI.</p>
+  </div>
+
+  <div class="sub" id="install-ui">
+    <h3>The web UI and login</h3>
+    <p>People log in through your OIDC provider. Holdfast has no passwords of its own. The UI has a listener of its own, on 443 by default, with a certificate browsers trust; agents use another one, on 8443.</p>
+    <p><strong>At your provider</strong>, register Holdfast as a confidential client:</p>
+    <ul class="plain">
+      <li>grant types: the authorization code flow (with PKCE) for browsers, and the device authorization flow for the CLI;</li>
+      <li>redirect URI: <code>https://holdfast.example.com/auth/callback</code> (the UI's URL plus <code>/auth/callback</code>);</li>
+      <li>scopes: <code>openid</code>, <code>profile</code>, <code>groups</code>; client authentication: <code>client_secret_post</code>;</li>
+      <li>a <code>groups</code> claim with the user's groups. Holdfast reads it at login, from the ID token or the userinfo endpoint.</li>
+    </ul>
+    <p><strong>At install time</strong>, add six settings to the server's file, all or none:</p>
+    <div class="cmd"><pre><code>HOLDFAST_UI_URL=https://holdfast.example.com
+HOLDFAST_UI_TLS_CERT=/root/holdfast-ui.crt       <span class="c"># a certificate browsers trust, and its key</span>
+HOLDFAST_UI_TLS_KEY=/root/holdfast-ui.key
+HOLDFAST_OIDC_ISSUER=https://auth.example.com
+HOLDFAST_OIDC_CLIENT_ID=holdfast
+HOLDFAST_OIDC_CLIENT_SECRET=…
+HOLDFAST_ADMINS=alice                             <span class="c"># optional: admin everywhere at first login</span>
+HOLDFAST_OIDC_CA_FILE=/root/internal-ca.crt       <span class="c"># optional: if the provider's certificate is from a private CA</span></code></pre></div>
+    <p><strong>Later</strong>, add the same to <code>/etc/holdfast/server.yaml</code> by hand and restart the server:</p>
+    <div class="cmd"><pre><code>ui:
+  listen: ":443"
+  public_url: https://holdfast.example.com
+  tls: {cert_file: /etc/holdfast/tls/ui.crt, key_file: /etc/holdfast/tls/ui.key}
+auth:
+  oidc:
+    issuer: https://auth.example.com
+    client_id: holdfast
+    client_secret_file: /etc/holdfast/oidc-client-secret   <span class="c"># the secret alone, root-only</span>
+  bootstrap_admins: [alice]</code></pre></div>
+    <p><strong>Who may do what</strong> follows the user's groups. By default, members of <code>holdfast-admins</code> are admins, <code>holdfast-editors</code> editors and <code>holdfast-viewers</code> viewers, on every host. Change the bindings with <code>holdfast access set</code> (<a href="#access">Access and roles</a>).</p>
+    <p>A name in <code>bootstrap_admins</code> (<code>HOLDFAST_ADMINS</code>) is admin on every host at every login while it is listed, whatever its groups, and every such login is audited. It is there so someone can log in before your groups are set up. Once they are, remove the names from <code>server.yaml</code> and restart.</p>
+    <p>Holdfast knows people by the <code>preferred_username</code> claim (<code>auth.oidc.username_claim</code> changes it). Use a claim that your provider sets and users cannot change themselves, since bindings and <code>bootstrap_admins</code> name people by it.</p>
+    <p>A browser session lasts 12 hours and ends after an hour without use. Second factors are your provider's job.</p>
+  </div>
+
+  <div class="sub" id="install-agents">
+    <h3>Agents</h3>
+    <p>Add the host on the server first. Adding tests the storage for that host, saves a new config revision, and issues an enrollment code that works once, for 15 minutes:</p>
+    <div class="cmd"><pre><code>holdfast host add web01.example.com --job system --path /etc --path /home --path /srv \
+  --exclude '/home/*/.cache' --daily 02:00 --spread 30 \
+  --keep-daily 14d --keep-weekly 8w --keep-monthly 12mo --keep-yearly 3y</code></pre></div>
+    <p>It prints the line to run on the host as root, with everything filled in:</p>
+    <div class="cmd"><pre><code>curl -sfL https://github.com/kabsdk/holdfast/releases/download/v1.0.0/install.sh | HOLDFAST_SERVER=https://holdfast.example.com:8443 HOLDFAST_FQDN=web01.example.com HOLDFAST_CODE=3DK5-TM2E-28V6 HOLDFAST_CA_SHA256=2315…d08c HOLDFAST_VERSION=1.0.0 sh -</code></pre></div>
+    <p>On the host, the installer installs <code>holdfast-restic</code> and <code>holdfast-agent</code> of the server's own version, and runs <code>holdfast-agent enroll</code>. Enrolling checks the server's certificate against the pin, makes the agent a private key and certificate of its own, which never leave the host, and sends the code. The server pins that certificate: from then on it is the host, on every connection. Then the agent starts, fetches its jobs, and keeps its own schedule.</p>
+    <p>The UI's <strong>Add host</strong> page does the same and shows the line with a copy button, then follows the host from <em>waiting</em> to <em>agent connected</em> to <em>first backup done</em>.</p>
+    <p><strong>What a host decides for itself</strong> is in its own <code>/etc/holdfast/agent.yaml</code>, which only root on the host can change, and which enrolling again keeps:</p>
+    <div class="cmd"><pre><code>restore:
+  root: /var/restore             <span class="c"># restores into new folders under here (the default)</span>
+  allow_in_place: false          <span class="c"># over the original files, after a safety backup</span>
+  allow_other_directories: false <span class="c"># into any other folder</span>
+  allow_other_hosts: false       <span class="c"># another host's snapshot, onto this host</span>
+dumps:                           <span class="c"># commands a dump job may name (see Database dumps)</span>
+  postgresql:
+    command: [/usr/bin/pg_dumpall, --clean]
+    user: postgres
+    filename: postgresql.sql</code></pre></div>
+    <p>After changing it, <code>systemctl restart holdfast-agent</code>. Each <code>allow_</code> widens what an admin login, or whoever controls the server, can do on this host. In place means writing files there as root. Turn them on only where you need them, and off again afterwards.</p>
+    <p><strong>A code expired</strong> after 15 minutes, or was used: <code>holdfast host enroll-code web01.example.com</code> issues a new one, with a new line. <strong>Configuration management</strong>: install the two packages your own way and run only the enrollment, which <code>host add</code> also prints: <code>holdfast-agent enroll --server … --fqdn … --code … --ca-sha256 …</code>, then <code>systemctl enable --now holdfast-agent</code>.</p>
+    <p>The agent runs as root, at low CPU and I/O priority (<code>Nice=10</code>, <code>IOSchedulingClass=idle</code>), so a backup gives way to the host's own work. Its first backup runs as soon as it has enrolled; after that, it follows the schedule. Its certificate does not expire; a new enrollment replaces it.</p>
+  </div>
+
+  <div class="sub" id="install-cli">
+    <h3>The CLI on a workstation</h3>
+    <div class="cmd"><pre><code>curl -sfL https://github.com/kabsdk/holdfast/releases/latest/download/install.sh | sudo sh -s - cli
+holdfast login --server https://holdfast.example.com
+holdfast whoami</code></pre></div>
+    <p><code>holdfast login</code> shows a code to enter at your provider, the OIDC device flow, and keeps a session for 7 days in <code>~/.config/holdfast</code>. Add <code>--ca-file</code> if the UI's certificate is from a CA the system does not trust. On the server itself, as root, no login is needed.</p>
+  </div>
+
+  <div class="sub" id="install-monitoring">
+    <h3>Monitoring and alerts</h3>
+    <p>Holdfast does not send alerts itself. The server and the storage witness export Prometheus metrics, and Prometheus evaluates the alert rules that ship with Holdfast. Something then has to deliver what fires: Alertmanager, or the mail script below.</p>
+    <h4>The storage witness</h4>
+    <p><code>holdfast-freshness</code> lists the bucket directly, apart from the server, so "the agent says the backup worked" and "the bucket has a fresh snapshot" are checked separately, and its alerts fire even when the server is down. Run it anywhere but the Holdfast server, such as the Prometheus host. It needs a third key that may only list the bucket:</p>
+    <div class="cmd"><pre><code>{"Version": "2012-10-17", "Statement": [
+ {"Effect": "Allow", "Action": ["s3:ListBucket"], "Resource": ["arn:aws:s3:::holdfast"]}]}</code></pre></div>
+    <div class="cmd"><pre><code>export HOLDFAST_S3_ENDPOINT=https://s3.example.com HOLDFAST_S3_BUCKET=holdfast
+export HOLDFAST_WITNESS_ACCESS_KEY_ID=… HOLDFAST_WITNESS_SECRET_ACCESS_KEY=…
+curl -sfL https://github.com/kabsdk/holdfast/releases/latest/download/install.sh | sh -s - witness</code></pre></div>
+    <p>It serves its metrics on port 9817. Its key file is <code>/etc/holdfast/witness.env</code>, and where it looks is in <code>/etc/systemd/system/holdfast-freshness.service.d/install.conf</code>. The witness only reports each host's newest snapshot in the bucket. The alert rule judges it against twice the host's most frequent job's gap, which comes from the server's metrics. While those are missing, because the server is down, the rule uses the witness's own limit, 48 hours (<code>-stale-after</code>).</p>
+    <h4>Prometheus</h4>
+    <p>Copy the rules from the server's <code>/usr/share/holdfast/prometheus/holdfast-alerts.yml</code>, and the agents' CA from <code>/etc/holdfast/tls/ca.crt</code>, to the Prometheus host:</p>
+    <div class="cmd"><pre><code>rule_files: [/etc/prometheus/rules/holdfast-alerts.yml]
+scrape_configs:
+  - job_name: holdfast-server
+    scheme: https
+    tls_config: {ca_file: /etc/prometheus/holdfast-ca.crt}
+    static_configs: [{targets: ["holdfast.example.com:8443"]}]
+  - job_name: holdfast-witness
+    static_configs: [{targets: ["prometheus.example.com:9817"]}]</code></pre></div>
+    <p>Prometheus scrapes the server and the witness, never the agents. <code>/metrics</code> needs no client certificate.</p>
+    <h4>Delivering alerts</h4>
+    <p>Each rule has a <code>severity</code> label: <code>page</code> means backups are not happening or are at risk, act now; <code>ticket</code> means look into it today; <code>none</code> is the <code>Watchdog</code>, which always fires. With Alertmanager, route them as usual.</p>
+    <p><strong>Without Alertmanager</strong>, <code>holdfast-alert-mail.sh</code>, in <code>/usr/share/holdfast/alerting/</code> on the server, reads Prometheus's alerts every minute and mails once when an alert starts and once when it stops. It needs <code>curl</code>, <code>jq</code> and a <code>sendmail</code> (postfix, or msmtp-mta for a relay). On the Prometheus host:</p>
+    <div class="cmd"><pre><code>install -m 0755 holdfast-alert-mail.sh /usr/local/bin/holdfast-alert-mail
+
+<span class="c"># /etc/systemd/system/holdfast-alert-mail.service</span>
+[Unit]
+Description=Mail Holdfast's firing alerts
+[Service]
+Type=oneshot
+Environment=PROM=http://127.0.0.1:9090
+Environment=TO=backup-team@example.com
+<span class="c"># Environment=HEARTBEAT_URL=https://hc.example.org/ping/&lt;uuid&gt;</span>
+ExecStart=/usr/local/bin/holdfast-alert-mail
+DynamicUser=yes
+StateDirectory=holdfast-alert-mail
+Environment=STATE=/var/lib/holdfast-alert-mail/firing.tsv
+
+<span class="c"># /etc/systemd/system/holdfast-alert-mail.timer</span>
+[Unit]
+Description=Mail Holdfast's firing alerts every minute
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+[Install]
+WantedBy=timers.target</code></pre></div>
+    <p>Then <code>systemctl enable --now holdfast-alert-mail.timer</code>. For a pager or a chat, replace the script's <code>mailto</code> function.</p>
+    <p class="warn"><span><strong>Set up a dead man's switch.</strong> If Prometheus or the mailer stops, nothing fires, and silence looks like health. Either point <code>HEARTBEAT_URL</code> above at a heartbeat service outside your site, such as Healthchecks: each run that sees <code>Watchdog</code> firing pings it. Or run <code>/usr/share/holdfast/alerting/holdfast-deadman.sh</code> every 5 minutes from a machine in another site, with <code>PROM</code> (Prometheus's URL) and <code>TO</code> (an address) in its environment. It mails once when Prometheus cannot be reached or <code>Watchdog</code> stops firing, and once when that is over. Test it once: stop Prometheus and check that the alarm arrives.</span></p>
+  </div>
+
+  <div class="sub" id="install-offsite">
+    <h3>Off-site copies (optional)</h3>
+    <p>With a second bucket, best in another site, the server copies every host's snapshots there with <code>restic copy</code>, under each job's own off-site retention. Without it, Holdfast keeps one bucket and shows nothing about off-site copies at all.</p>
+    <ol class="steps">
+      <li>Make the off-site bucket as the primary one: versioning, a lifecycle rule, made by an identity of your own.</li>
+      <li>Make <strong>one key</strong> for it, with the maintenance key's policy for that bucket. Use a key of its own: a key that can write both buckets puts both under one secret.</li>
+      <li>At install time, set <code>HOLDFAST_OFFSITE_ENDPOINT</code>, <code>HOLDFAST_OFFSITE_BUCKET</code>, <code>HOLDFAST_OFFSITE_ACCESS_KEY_ID</code> and <code>HOLDFAST_OFFSITE_SECRET_ACCESS_KEY</code>. Later, add an <code>offsite:</code> section to <code>server.yaml</code> and restart:
+        <div class="cmd"><pre><code>offsite:
+  endpoint: https://s3.site-b.example.com
+  bucket: holdfast-offsite
+  maintenance_credentials_file: /etc/holdfast/offsite.env   <span class="c"># AWS_ACCESS_KEY_ID=… and AWS_SECRET_ACCESS_KEY=…, mode 600</span>
+  poll: 5m</code></pre></div></li>
+    </ol>
+    <p>Copying starts then, for every host: first every snapshot primary has, then each new one. The nightly export is written to the off-site bucket's <code>meta/</code> too. No host ever gets the off-site key: a restore from off-site reads the copy through the server's gateway. Using it is in <a href="#offsite">Off-site copies</a>.</p>
+  </div>
+
+  <div class="sub" id="install-mirror">
+    <h3>Mirrors and closed networks</h3>
+    <p>Hosts that cannot reach GitHub can install from a mirror: any directory that holds one release's files as published (<code>install.sh</code>, <code>VERSION</code>, <code>SHA256SUMS</code> and the packages), served over HTTPS or HTTP, or mounted on every host.</p>
+    <div class="cmd"><pre><code><span class="c"># the server, from the mirror</span>
+curl -sfL https://mirror.example.com/holdfast/1.0.0/install.sh | HOLDFAST_DOWNLOAD_URL=https://mirror.example.com/holdfast/1.0.0 sh -s - server
+<span class="c"># or from a directory on the machine</span>
+HOLDFAST_DOWNLOAD_URL=file:///srv/holdfast/1.0.0 sh /srv/holdfast/1.0.0/install.sh server</code></pre></div>
+    <p>A server installed from a mirror writes <code>download_url</code> into its <code>server.yaml</code>, so the line <code>host add</code> prints fetches from the same mirror. Set or change <code>download_url</code> by hand for a server installed otherwise. The packages are still checked against the mirror's <code>SHA256SUMS</code>.</p>
+  </div>
+
+  <div class="sub" id="install-manual">
+    <h3>Without the script</h3>
+    <p>The script only drives apt or dnf, so installing the packages yourself gives exactly the same files. Each release has five packages for amd64. They are not signed yet: check them against <code>SHA256SUMS</code>.</p>
+    <div class="tablebox"><table>
+      <thead><tr><th>Package</th><th>Holds</th><th>Needs</th></tr></thead>
+      <tbody>
+        <tr><td>holdfast-restic</td><td>restic, the version Holdfast is tested with, at <code>/usr/libexec/holdfast/restic</code>; not on PATH</td><td></td></tr>
+        <tr><td>holdfast-agent</td><td><code>/usr/bin/holdfast-agent</code> and its unit</td><td>holdfast-restic of the same version</td></tr>
+        <tr><td>holdfast-server</td><td><code>/usr/bin/holdfast-server</code>, its unit, the example <code>server.yaml</code>, the alert rules and scripts</td><td>holdfast-restic and holdfast-cli of the same version</td></tr>
+        <tr><td>holdfast-cli</td><td><code>/usr/bin/holdfast</code></td><td></td></tr>
+        <tr><td>holdfast-freshness</td><td>the storage witness and its unit</td><td></td></tr>
+      </tbody>
+    </table></div>
+    <div class="cmd"><pre><code>sha256sum -c --ignore-missing SHA256SUMS
+apt install ./holdfast-restic_*.deb ./holdfast-agent_*.deb      <span class="c"># Debian, Ubuntu</span>
+dnf install ./holdfast-restic-*.rpm ./holdfast-agent-*.rpm      <span class="c"># RHEL, Oracle Linux</span></code></pre></div>
+    <p>Installing a package enables no service: each needs its config first. Every package keeps its licence and the licences of what it contains in <code>/usr/share/doc/&lt;package&gt;/</code>.</p>
+    <details class="more">
+      <summary>The server by hand: PostgreSQL, the keys, the agent listener's certificate</summary>
+      <p>A PostgreSQL database and user, here on the same machine (on RHEL, first <code>postgresql-setup --initdb</code>, and <code>scram-sha-256</code> instead of <code>ident</code> for 127.0.0.1 in <code>pg_hba.conf</code>):</p>
+      <div class="cmd"><pre><code>runuser -u postgres -- psql -c 'CREATE ROLE holdfast LOGIN'
+runuser -u postgres -- psql -c '\password holdfast'          <span class="c"># asks for the password; it never goes in argv</span>
+runuser -u postgres -- createdb -O holdfast holdfast
+install -d -m 700 /etc/holdfast /etc/holdfast/tls
+echo 'postgres://holdfast:PASSWORD@127.0.0.1:5432/holdfast?sslmode=disable' &gt; /etc/holdfast/db.dsn; chmod 600 /etc/holdfast/db.dsn</code></pre></div>
+      <p>The credentials key and the two storage keys:</p>
+      <div class="cmd"><pre><code>holdfast-server keygen /etc/holdfast/credentials.key
+printf 'AWS_ACCESS_KEY_ID=%s\nAWS_SECRET_ACCESS_KEY=%s\n' … … &gt; /etc/holdfast/gateway.env       <span class="c"># and maintenance.env; chmod 600</span></code></pre></div>
+      <p>A CA for the agent listener, and a certificate it signs for the name in <code>public_url</code>; agents pin the CA:</p>
+      <div class="cmd"><pre><code>cd /etc/holdfast/tls
+openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 7300 -subj '/CN=Holdfast agent CA' \
+  -addext 'basicConstraints=critical,CA:TRUE,pathlen:0' -addext 'keyUsage=critical,keyCertSign,cRLSign' -keyout ca.key -out ca.crt
+openssl req -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -subj '/CN=holdfast.example.com' -keyout server.key -out server.csr
+printf 'subjectAltName=DNS:holdfast.example.com\nextendedKeyUsage=serverAuth\n' &gt; server.ext
+openssl x509 -req -in server.csr -CA ca.crt -CAkey ca.key -CAcreateserial -days 3650 -extfile server.ext -out leaf.crt
+cat leaf.crt ca.crt &gt; server.crt; chmod 600 ca.key server.key
+openssl x509 -in ca.crt -outform DER | sha256sum                 <span class="c"># this is ca_sha256</span></code></pre></div>
+      <p>Then write <code>/etc/holdfast/server.yaml</code> from <code>/usr/share/holdfast/server.yaml.example</code> and <code>systemctl enable --now holdfast-server</code>.</p>
+    </details>
+  </div>
+
+  <div class="sub" id="installer-ref">
+    <h3>Installer settings</h3>
+    <p>Every setting is an environment variable. Required ones are marked; a group marked "all or none" is checked as a group.</p>
+    <div class="tablebox"><table class="ref">
+      <thead><tr><th>Setting</th><th>Role</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td>HOLDFAST_VERSION</td><td>all</td><td>The release to install, such as <code>1.0.0</code>. Default: the latest.</td></tr>
+        <tr><td>HOLDFAST_DOWNLOAD_URL</td><td>all</td><td>A mirror holding one release's files: <code>https://</code>, <code>http://</code> or <code>file:///</code>. Default: the release on GitHub.</td></tr>
+        <tr><td>HOLDFAST_SERVER</td><td>agent</td><td><span class="pill x">required</span> The server's URL for agents, such as <code>https://holdfast.example.com:8443</code>.</td></tr>
+        <tr><td>HOLDFAST_CODE</td><td>agent</td><td><span class="pill x">required</span> The host's enrollment code. On an enrolled host, a code enrolls it again; without one the packages are only upgraded.</td></tr>
+        <tr><td>HOLDFAST_CA_SHA256</td><td>agent</td><td>The pin: the sha256 of the certificate the agent insists the server's chains to, normally the server's CA. Without it the agent trusts the system's CAs instead; use that only if the agent listener has a certificate from one.</td></tr>
+        <tr><td>HOLDFAST_FQDN</td><td>agent</td><td>This host's name as added in Holdfast. Default: <code>hostname -f</code>.</td></tr>
+        <tr><td>HOLDFAST_S3_ENDPOINT</td><td>server, witness</td><td><span class="pill x">required</span> The S3 endpoint.</td></tr>
+        <tr><td>HOLDFAST_S3_BUCKET</td><td>server, witness</td><td><span class="pill x">required</span> The bucket.</td></tr>
+        <tr><td>HOLDFAST_S3_REGION</td><td>server, witness</td><td>The bucket's region, if your S3 needs one.</td></tr>
+        <tr><td>HOLDFAST_GATEWAY_ACCESS_KEY_ID, HOLDFAST_GATEWAY_SECRET_ACCESS_KEY</td><td>server</td><td><span class="pill x">required</span> The gateway key.</td></tr>
+        <tr><td>HOLDFAST_MAINTENANCE_ACCESS_KEY_ID, HOLDFAST_MAINTENANCE_SECRET_ACCESS_KEY</td><td>server</td><td><span class="pill x">required</span> The maintenance key.</td></tr>
+        <tr><td>HOLDFAST_ESCROW_RECIPIENT</td><td>server</td><td><span class="pill x">required</span> The escrow's age public key, <code>age1…</code>.</td></tr>
+        <tr><td>HOLDFAST_PUBLIC_URL</td><td>server</td><td>The URL agents use. Its port is the agent listener's. Default: <code>https://&lt;hostname -f&gt;:8443</code>.</td></tr>
+        <tr><td>HOLDFAST_ZONE</td><td>server</td><td>The time zone for schedules that name none, such as <code>Europe/Copenhagen</code>. Default: the machine's, written into <code>server.yaml</code> as <code>default_zone</code>.</td></tr>
+        <tr><td>HOLDFAST_DATABASE_DSN</td><td>server</td><td>A PostgreSQL to use, such as <code>postgres://holdfast:…@db.example.com/holdfast</code>. Default: install one here.</td></tr>
+        <tr><td>HOLDFAST_TLS_CERT, HOLDFAST_TLS_KEY</td><td>server</td><td>The agent listener's certificate chain and key. Both or neither. Default: a CA of its own. Agents pin the last certificate in the chain file, so end it with your root CA: renewing the server's certificate, or an intermediate, then leaves the pin unchanged.</td></tr>
+        <tr><td>HOLDFAST_OFFSITE_ENDPOINT, _BUCKET, _ACCESS_KEY_ID, _SECRET_ACCESS_KEY</td><td>server</td><td><span class="pill plan">all or none</span> Off-site copies. And <code>HOLDFAST_OFFSITE_REGION</code> if needed.</td></tr>
+        <tr><td>HOLDFAST_UI_URL, HOLDFAST_UI_TLS_CERT, HOLDFAST_UI_TLS_KEY, HOLDFAST_OIDC_ISSUER, HOLDFAST_OIDC_CLIENT_ID, HOLDFAST_OIDC_CLIENT_SECRET</td><td>server</td><td><span class="pill plan">all or none</span> The web UI and its login.</td></tr>
+        <tr><td>HOLDFAST_OIDC_CA_FILE</td><td>server</td><td>A CA to trust for the OIDC provider.</td></tr>
+        <tr><td>HOLDFAST_ADMINS</td><td>server</td><td>User names, comma-separated, that are admin everywhere at first login.</td></tr>
+        <tr><td>HOLDFAST_WITNESS_ACCESS_KEY_ID, HOLDFAST_WITNESS_SECRET_ACCESS_KEY</td><td>witness</td><td><span class="pill x">required</span> A key that may only list the bucket.</td></tr>
+      </tbody>
+    </table></div>
+    <p>A refused install looks like this, and changes nothing:</p>
+    <div class="cmd"><pre><code>[holdfast] error: these settings are missing:
+  HOLDFAST_S3_ENDPOINT: the S3 endpoint, such as https://s3.example.com
+  HOLDFAST_GATEWAY_ACCESS_KEY_ID: the gateway key's ID: it may read and add under repos/, and delete only lock files
+  …
+[holdfast] error: these settings are wrong:
+  HOLDFAST_ESCROW_RECIPIENT: is not an age public key: it starts with age1
+[holdfast] Nothing was changed. Set them in the environment and run it again; "sh install.sh help" lists every setting.</code></pre></div>
+  </div>
+
+  <div class="sub" id="upgrade">
+    <h3>Upgrading</h3>
+    <p><strong>Upgrade the server first.</strong> Then upgrade the agents, one by one, in any order and at any pace. Run the installer again with the same role and the same version on each; on a machine that is set up, it only upgrades the packages.</p>
+    <div class="cmd"><pre><code><span class="c"># on the server: write a fresh export first, then upgrade</span>
+holdfast export now
+curl -sfL https://github.com/kabsdk/holdfast/releases/download/v1.1.0/install.sh | HOLDFAST_VERSION=1.1.0 sh -s - server
+<span class="c"># on each host, the same version</span>
+curl -sfL https://github.com/kabsdk/holdfast/releases/download/v1.1.0/install.sh | HOLDFAST_VERSION=1.1.0 sh -</code></pre></div>
+    <ul class="plain">
+      <li>Pin the version, as above, so a release published between the server's upgrade and a host's cannot make an agent newer than its server. <code>dpkg-query -W holdfast-server</code> or <code>rpm -q holdfast-server</code> on the server shows its version. The line <code>host add</code> prints is pinned to the server's version already.</li>
+      <li>The server migrates its database when it starts. Its upgrade restarts it; agents wait meanwhile and carry on. There is no downgrade: to go back, install the old version on a new database and restore the export you wrote before the upgrade (<a href="#lost-server">A lost server</a>).</li>
+      <li>The agent and the server agree on a protocol version at every poll. A server accepts every agent from its minimum on. An agent that is too old is refused with the range it needs: it keeps backing up on its saved config, the server still takes its reports, and the host shows <code>agent_too_old</code> until it is upgraded. An agent newer than its server logs "upgrade the server first".</li>
+      <li>An agent restarted in the middle of a backup reports that run as interrupted; the job's next run backs up as usual. Upgrade agents outside their backup windows, or check <code>holdfast host events</code> afterwards.</li>
+      <li>Each release pins one restic, so <code>holdfast-restic</code> moves with the other packages. A host that runs another restic gets the <code>restic</code> warning.</li>
+    </ul>
+  </div>
+
+  <div class="sub" id="remove">
+    <h3>Removing</h3>
+    <p>Removing a package stops and disables its service. It never deletes <code>/etc/holdfast</code>, the agent's state, or any backup. To stop backing up a host, remove it in Holdfast (<code>holdfast host remove</code>): its repository stays. To delete its backups, decommission it, which waits 7 days (<a href="#decommission">Decommissioning</a>).</p>
+  </div>
+</section>
+
+<!-- ================================================================================================ ARCHITECTURE -->
+<section class="chapter" id="architecture">
+  <h2>Architecture</h2>
+
+  <div class="sub" id="picture">
+    <h3>The picture</h3>
+    <p>One Holdfast server, an agent on every host, and an S3 bucket. A second, off-site bucket is optional.</p>
+    <figure>
+      <div class="scroll">
+        <svg viewBox="0 0 960 470" role="img" aria-label="Holdfast's parts and who connects to whom. People use the server's UI and API on port 443. Each agent connects only to the server on port 8443, with its own certificate, for its settings, its reports and its backup data. The server's gateway writes backups to the primary bucket with a key that cannot delete; the server cleans up with its maintenance key, stores its state in PostgreSQL, and copies each new snapshot to the optional off-site bucket. The storage witness lists the primary bucket.">
+          <defs>
+            <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="mk"/></marker>
+            <marker id="ahx" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="mkx"/></marker>
+          </defs>
+          <rect class="site" x="8" y="8" width="652" height="454" rx="10"/>
+          <rect class="site" x="676" y="8" width="276" height="454" rx="10"/>
+          <text class="sitelabel" x="24" y="30">PRIMARY SITE</text>
+          <text class="sitelabel" x="692" y="30">OFF-SITE · OPTIONAL</text>
+          <rect class="box" x="28" y="62" width="150" height="52" rx="6"/>
+          <text class="t" x="103" y="84" text-anchor="middle">People</text>
+          <text class="s" x="103" y="102" text-anchor="middle">browser · CLI</text>
+          <rect class="box key" x="250" y="50" width="210" height="100" rx="6"/>
+          <text class="t" x="355" y="74" text-anchor="middle">holdfast-server</text>
+          <text class="s" x="355" y="92" text-anchor="middle">settings · history · clean-up</text>
+          <rect class="box" x="262" y="106" width="186" height="32" rx="4"/>
+          <text class="gw" x="355" y="126" text-anchor="middle">gateway: checks each host</text>
+          <rect class="box store" x="500" y="62" width="140" height="52" rx="6"/>
+          <text class="t" x="570" y="84" text-anchor="middle">PostgreSQL</text>
+          <text class="s" x="570" y="102" text-anchor="middle">revisions · audit log</text>
+          <rect class="box" x="40" y="232" width="170" height="64" rx="6"/>
+          <rect class="box" x="34" y="226" width="170" height="64" rx="6"/>
+          <rect class="box key" x="28" y="220" width="170" height="64" rx="6"/>
+          <text class="t" x="113" y="246" text-anchor="middle">holdfast-agent</text>
+          <text class="s" x="113" y="266" text-anchor="middle">one per host · no storage key</text>
+          <rect class="box store" x="250" y="370" width="210" height="76" rx="6"/>
+          <text class="t" x="355" y="400" text-anchor="middle">S3 bucket (primary)</text>
+          <text class="s" x="355" y="420" text-anchor="middle">repos/ · escrow/ · meta/</text>
+          <rect class="box" x="500" y="382" width="140" height="56" rx="6"/>
+          <text class="t" x="570" y="406" text-anchor="middle">Storage witness</text>
+          <text class="s" x="570" y="424" text-anchor="middle">lists the bucket</text>
+          <rect class="box store" x="700" y="370" width="230" height="76" rx="6"/>
+          <text class="t" x="815" y="400" text-anchor="middle">S3 bucket (off-site)</text>
+          <text class="s" x="815" y="420" text-anchor="middle">own passwords · own retention</text>
+          <path class="ln" d="M178 88 H246" marker-end="url(#ah)"/>
+          <text class="lbl" x="212" y="80" text-anchor="middle">443</text>
+          <path class="ln" d="M460 88 H496" marker-end="url(#ah)"/>
+          <text class="lbl" x="478" y="80" text-anchor="middle">stores</text>
+          <path class="ln" d="M198 252 H330 V154" marker-end="url(#ah)"/>
+          <text class="lbl" x="218" y="270">8443 · settings · reports · backups</text>
+          <text class="lbl" x="218" y="286">mutual TLS, its own certificate</text>
+          <path class="ln" d="M390 150 V366" marker-end="url(#ah)"/>
+          <text class="lbl" x="382" y="320" text-anchor="end">gateway key: adds,</text>
+          <text class="lbl" x="382" y="336" text-anchor="end">cannot delete</text>
+          <path class="ln" d="M430 150 V366" marker-end="url(#ah)"/>
+          <text class="lbl" x="438" y="320">maintenance key:</text>
+          <text class="lbl" x="438" y="336">forget · check · prune</text>
+          <path class="ln" d="M500 410 H464" marker-end="url(#ah)"/>
+          <text class="lbl" x="482" y="402" text-anchor="middle">lists</text>
+          <path class="lnx" d="M460 140 H815 V366" marker-end="url(#ahx)"/>
+          <text class="lblx" x="640" y="132" text-anchor="middle">copies each new snapshot</text>
+          <text class="lbl" x="823" y="250">restic copy,</text>
+          <text class="lbl" x="823" y="266">then its own clean-up</text>
+        </svg>
+      </div>
+      <figcaption>Every arrow points from the side that opens the connection. A host talks only to the Holdfast server, and proves who it is with a key it made itself. Only the server holds storage keys: one that can add but not delete, for the hosts' backups, and one for clean-up. The server also fills the off-site bucket (orange), if there is one. Prometheus, not drawn, scrapes the server and the witness.</figcaption>
+    </figure>
+    <dl class="parts">
+      <dt>holdfast-agent</dt><dd>Runs as root on each host. It keeps its own schedule and a saved copy of its jobs, runs restic itself, and spools its reports to disk until the server has them. It holds no storage key. It only ever dials out.</dd>
+      <dt>holdfast-server</dt><dd>Keeps the settings, the history and the audit log in PostgreSQL. Serves the UI and the API to people, and the root-only socket to the CLI on the server. Forgets, checks and prunes each repository once a day. Makes the off-site copies when there is an off-site bucket. Writes the nightly export.</dd>
+      <dt>The gateway</dt><dd>A part of the server, not a program of its own. It speaks restic's REST protocol to the agents and S3 to the bucket. It knows each host by its certificate, lets it read and add to its own repository only, delete only its own lock files, and never rewrite a file. Every refusal is audited.</dd>
+      <dt>PostgreSQL</dt><dd>The server's state: config revisions, history, the audit log, the snapshot catalogue (a cache, read again from the repositories), and every repository password, sealed with the credentials key.</dd>
+      <dt>S3 buckets</dt><dd>Each host has one restic repository under <code>repos/&lt;fqdn&gt;/</code>, with its own password. <code>escrow/</code> holds the passwords encrypted to your age key; <code>meta/</code> holds the nightly exports.</dd>
+      <dt>holdfast-freshness</dt><dd>The storage witness: lists the bucket for Prometheus, apart from the server.</dd>
+      <dt>Prometheus</dt><dd>Scrapes the server and the witness, never the agents, and evaluates the alert rules that ship with Holdfast.</dd>
+    </dl>
+  </div>
+
+  <div class="sub" id="life">
+    <h3>Life of a backup</h3>
+    <figure>
+      <div class="scroll">
+        <svg viewBox="0 0 900 380" role="img" aria-label="The steps of a backup, between the agent, the server, the gateway and the bucket. 1: the agent polls the server and gets its jobs, which it saves. 2: at the scheduled time it runs restic, which encrypts on the host and sends the data through the gateway. 3: the gateway checks the host's certificate and writes the encrypted files to the bucket with the gateway key. 4: the agent reports the run. 5: once a day the server forgets, checks and prunes with the maintenance key. 6: with an off-site bucket, the server copies the new snapshot there.">
+          <defs><marker id="ah2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="mk"/></marker></defs>
+          <rect class="box key" x="40" y="16" width="160" height="40" rx="6"/><text class="t" x="120" y="41" text-anchor="middle">Agent (on the host)</text>
+          <rect class="box key" x="290" y="16" width="160" height="40" rx="6"/><text class="t" x="370" y="41" text-anchor="middle">Server</text>
+          <rect class="box" x="510" y="16" width="160" height="40" rx="6"/><text class="t" x="590" y="41" text-anchor="middle">Gateway (in the server)</text>
+          <rect class="box store" x="720" y="16" width="160" height="40" rx="6"/><text class="t" x="800" y="41" text-anchor="middle">S3 bucket</text>
+          <line class="lane" x1="120" y1="56" x2="120" y2="370"/><line class="lane" x1="370" y1="56" x2="370" y2="370"/>
+          <line class="lane" x1="590" y1="56" x2="590" y2="370"/><line class="lane" x1="800" y1="56" x2="800" y2="370"/>
+          <text class="num" x="128" y="84">1</text>
+          <path class="ln" d="M120 92 H366" marker-end="url(#ah2)"/><text class="lbli" x="140" y="86">poll: "what are my jobs?" (long poll)</text>
+          <path class="ln" d="M370 110 H124" marker-end="url(#ah2)"/><text class="lbl" x="355" y="126" text-anchor="end">jobs of the current revision, saved on disk</text>
+          <text class="num" x="128" y="162">2</text>
+          <path class="ln" d="M120 170 H586" marker-end="url(#ah2)"/><text class="lbli" x="140" y="164">02:00: restic backup, encrypted on the host</text>
+          <text class="num" x="598" y="196">3</text>
+          <path class="ln" d="M590 204 H796" marker-end="url(#ah2)"/><text class="lbli" x="606" y="198">checks the host's certificate</text>
+          <text class="lbl" x="606" y="222">writes with the gateway key</text>
+          <text class="num" x="128" y="252">4</text>
+          <path class="ln" d="M120 260 H366" marker-end="url(#ah2)"/><text class="lbli" x="140" y="254">report: success, snapshot ID</text>
+          <text class="num" x="378" y="296">5</text>
+          <path class="ln" d="M370 304 H796" marker-end="url(#ah2)"/><text class="lbli" x="386" y="298">daily, in the quiet stretch: forget (after 7 days), check, prune</text>
+          <text class="lbl" x="386" y="320">with the maintenance key</text>
+          <text class="num" x="378" y="350">6</text>
+          <text class="lbli" x="392" y="356">with an off-site bucket: restic copy of the new snapshot</text>
+        </svg>
+      </div>
+      <figcaption>The agent gets its jobs from the server and then follows its own schedule; the server sends changes, not start signals. restic encrypts on the host, so the gateway and the bucket only ever see encrypted data.</figcaption>
+    </figure>
+    <ul class="plain">
+      <li><strong>If the server is down</strong>, the agent keeps its schedule. restic waits for the gateway, and a backup that fails is retried as soon as the server answers.</li>
+      <li><strong>A failed backup</strong> is retried after 5, 15 and 45 minutes, as long as the retry starts before the job's next run.</li>
+      <li><strong>A backup or check that runs too long</strong> is stopped at the schedule's longest gap (at least an hour) and reported as failed, so the host's other jobs can run. A first backup too big for one gap finishes over several runs: restic saves its index as it goes, so what a stopped run uploaded is not sent again.</li>
+      <li><strong>One restic at a time per host.</strong> Backups, checks and restores queue on the host. A backup that meets the daily clean-up's lock on its repository waits up to 15 minutes (<code>retry_lock</code>), then fails and is retried like any failed run.</li>
+      <li><strong>Each agent checks its own repository</strong> once a day, right after a backup, reading a rotating 1/30 of the data, so all of it is read once a month.</li>
+    </ul>
+  </div>
+
+  <div class="sub" id="network">
+    <h3>Who connects to whom</h3>
+    <div class="tablebox"><table>
+      <thead><tr><th>From</th><th>To</th><th>Port</th><th>What for</th></tr></thead>
+      <tbody>
+        <tr><td>Every agent</td><td>Server</td><td class="m">8443/tcp</td><td>Jobs, reports and backups through the gateway, over mutual TLS. The port of <code>public_url</code>.</td></tr>
+        <tr><td>People, the CLI</td><td>Server</td><td class="m">443/tcp</td><td>The UI and the API, with OIDC login. The port of <code>ui.public_url</code>.</td></tr>
+        <tr><td>Server</td><td>S3</td><td class="m">endpoint</td><td>The gateway and the maintenance key; the off-site bucket if set.</td></tr>
+        <tr><td>Server</td><td>OIDC provider</td><td class="m">443/tcp</td><td>Logins.</td></tr>
+        <tr><td>Server</td><td>PostgreSQL</td><td class="m">5432/tcp</td><td>Its state; local unless you gave a DSN.</td></tr>
+        <tr><td>Prometheus</td><td>Server</td><td class="m">8443/tcp</td><td><code>/metrics</code>, no login or client certificate: host and job names and their state, no secrets.</td></tr>
+        <tr><td>Prometheus</td><td>Witness</td><td class="m">9817/tcp</td><td>The witness's metrics.</td></tr>
+        <tr><td>Witness</td><td>S3</td><td class="m">endpoint</td><td>Lists the bucket.</td></tr>
+      </tbody>
+    </table></div>
+    <p>Agents accept no connections. Nothing connects to a host.</p>
+  </div>
+
+  <div class="sub" id="where">
+    <h3>What is stored where</h3>
+    <div class="tablebox"><table>
+      <thead><tr><th>Where</th><th>What</th></tr></thead>
+      <tbody>
+        <tr><td>The bucket, <code>repos/&lt;fqdn&gt;/</code></td><td>Each host's restic repository: encrypted with the host's password, readable with plain restic.</td></tr>
+        <tr><td>The bucket, <code>escrow/&lt;fqdn&gt;.age</code></td><td>The host's repository URL and password, encrypted to your age key. Written when a host is added and whenever its password changes; retried every 15 minutes until it is written.</td></tr>
+        <tr><td>The bucket, <code>meta/&lt;date&gt;.age</code></td><td>The nightly export of the server's database, encrypted to your age key. The newest 30 are kept.</td></tr>
+        <tr><td>Server, PostgreSQL</td><td>Config revisions, history, the audit log, the snapshot catalogue, the agents' pinned certificates, and the repository passwords sealed with the credentials key.</td></tr>
+        <tr><td>Server, <code>/etc/holdfast/</code></td><td><code>server.yaml</code> and the files it names: the credentials key, the storage key files, the database DSN, the OIDC secret, the TLS keys and the agents' CA. All root-only.</td></tr>
+        <tr><td>Host, <code>/etc/holdfast/</code></td><td><code>agent.yaml</code>, the host's own settings, and <code>credentials/repo.pass</code>, the repository password, root-only.</td></tr>
+        <tr><td>Host, <code>/var/lib/holdfast-agent/</code></td><td>The agent's private key and certificate, its saved jobs, its event spool and restic's cache.</td></tr>
+      </tbody>
+    </table></div>
+  </div>
+
+  <div class="sub" id="one-server">
+    <h3>One server, replaced when lost</h3>
+    <p>Holdfast runs as one server, with no standby, cluster or second gateway. That is how open-source tools of this kind are built: Kopia's repository server, Proxmox Backup Server, UrBackup and Bareos each run one server, and the answer to a lost one is a new one on the same storage.</p>
+    <ul class="plain">
+      <li><strong>While the server is down</strong>, no backup is made: agents keep their schedule and back up as soon as it answers. Nothing already in the bucket is affected, and the storage witness, which lists the bucket directly, alerts when snapshots go stale. For nightly backups, a few hours' outage only makes them late.</li>
+      <li><strong>When the server is lost</strong>, a new one is installed and restored from the newest nightly export, and the agents reconnect by themselves (<a href="#lost-server">A lost server</a>).</li>
+    </ul>
+  </div>
+
+  <div class="sub" id="sizing">
+    <h3>Sizing</h3>
+    <p>Every backup and restore passes through the server's gateway, so its network is what the fleet shares. In the lab, a server with 2 vCPUs and 2 GiB carried <strong>66 MiB/s</strong>: three agents backed up 256 MiB each of new random data at once, 768 MiB in 11.6 s, with the server's CPU about a quarter busy. The lab is one machine's virtual network, so this is a floor: on real hardware, the server's network link and the storage are the limit.</p>
+    <p>restic sends only what changed, so the question is whether a night's changes cross the server's link within your backup window. A fleet whose changes take longer needs a second, independent Holdfast with its own bucket; Holdfast does not spread one fleet over several servers.</p>
+    <p><strong>Disk</strong> on the server is not measured yet. It holds PostgreSQL, which grows with the history and the audit log, and restic's cache in <code>/var/lib/holdfast-server/cache</code>, used by the daily clean-up: each repository's index and directory data, a small part of its size. The lab's server has 20 GiB; watch the disk as the fleet grows.</p>
+  </div>
+</section>
+
+<!-- ================================================================================================ USAGE -->
+<section class="chapter" id="usage">
+  <h2>Using Holdfast</h2>
+
+  <div class="sub" id="ways">
+    <h3>UI, CLI and API</h3>
+    <p>Every option and every action exists in all three, with the same names and the same checks. The UI and the CLI are clients of the HTTP API; nothing is decided in a client.</p>
+    <dl class="parts">
+      <dt>The web UI</dt><dd>Fleet, Problems, Restores, Config history, Audit log, Access, Exports and Settings, plus a page per host and per snapshot, and search in the top bar. Off-site copies have their own pages, in orange, when there is an off-site bucket.</dd>
+      <dt>The CLI</dt><dd><code>holdfast</code>. As root on the server it uses the root-only socket and is admin everywhere. Elsewhere, <code>holdfast login</code> first. <code>--json</code> prints the API's own answer, for scripts.</dd>
+      <dt>The API</dt><dd><code>https://holdfast.example.com/api/v1/…</code>, JSON, with the session from a login: a browser's cookie, or the CLI's bearer token. Root on the server can use it on <code>/run/holdfast/api.sock</code>. A refused save answers 422 with every finding.</dd>
+    </dl>
+    <p>Writes that change the config take <code>-m</code>, a message for the revision. Every action is recorded in the host's history and the audit log.</p>
+  </div>
+
+  <div class="sub" id="hosts">
+    <h3>Hosts</h3>
+    <p>A host is known by its FQDN, which names its repository, <code>repos/&lt;fqdn&gt;/</code>. Each host has one repository and one password; all its jobs write there, each snapshot tagged <code>job=&lt;id&gt;</code>.</p>
+    <div class="tablebox"><table class="ref">
+      <thead><tr><th>Command</th><th>Does</th></tr></thead>
+      <tbody>
+        <tr><td>holdfast host add &lt;fqdn&gt;</td><td>Admin. Adds a host, optionally with its first job (<code>--job</code> and the job flags), and prints the line to enroll it.</td></tr>
+        <tr><td>holdfast host list</td><td>Every host you may see, with its state.</td></tr>
+        <tr><td>holdfast host show &lt;fqdn&gt;</td><td>The agent, its version and revision, drift, the jobs and their last runs, the storage checks, the repository's size, the escrow state, and any problem.</td></tr>
+        <tr><td>holdfast host events &lt;fqdn&gt;</td><td>Recent runs: backups, checks, restores, with their results.</td></tr>
+        <tr><td>holdfast host enroll-code &lt;fqdn&gt;</td><td>A new 15-minute code, revoking the open one, with a new line to run.</td></tr>
+        <tr><td>holdfast host remove &lt;fqdn&gt;</td><td>Admin. Removes the host from the config. Its agent stops backing up and its certificate stops working. <strong>Its repository stays</strong>, as it is: it can still be browsed and restored from, and nothing in it is cleaned up any more. Adding the same FQDN again brings it back, after a new enrollment. To delete it, <a href="#decommission">decommission</a> it.</td></tr>
+      </tbody>
+    </table></div>
+    <p>A host cannot be renamed: its name is its repository's. Add the new name as a new host, and remove, later decommission, the old one. There is no quota per host; the repository's size is measured every day and shown on its page.</p>
+    <p><strong>Drift</strong>: each agent reports the config revision it applied. A host whose agent does not run its current config shows <code>drift</code>. Holdfast is the authority for config; the server sends the config again.</p>
+  </div>
+
+  <div class="sub" id="jobs">
+    <h3>Jobs and schedules</h3>
+    <p>A job says what to back up, when, and how long to keep it. <code>holdfast job set</code> creates or replaces one, as a new revision:</p>
+    <div class="cmd"><pre><code>holdfast job set web01.example.com system --path /etc --path /home --path /srv \
+  --exclude '/home/*/.cache' --exclude '*.tmp' \
+  --daily 02:00 --spread 30 --zone Europe/Copenhagen \
+  --keep-daily 14d --keep-weekly 8w --keep-monthly 12mo --keep-yearly 3y --keep-last 3 \
+  --limit-upload 20480 -m "nightly system backup"</code></pre></div>
+    <h4>Schedules</h4>
+    <div class="tablebox"><table>
+      <thead><tr><th>Form</th><th>Flags</th><th>Example</th></tr></thead>
+      <tbody>
+        <tr><td>Every N minutes or hours</td><td class="m">--every 4h --from 01:00</td><td>01:00, 05:00, 09:00 … each day; the series starts again from <code>--from</code> every day.</td></tr>
+        <tr><td>Daily</td><td class="m">--daily 02:00,14:00</td><td>One or more times a day.</td></tr>
+        <tr><td>Weekly</td><td class="m">--weekly mon,thu --at 03:00</td><td>The chosen days, at one time.</td></tr>
+      </tbody>
+    </table></div>
+    <p><code>--spread 30</code> starts each run at a random moment up to 30 minutes late, so hosts do not all start at once. There is no spread unless you set one; the UI suggests 20 minutes. <code>--no-spread</code> turns a spread off. <code>--zone</code> names the schedule's time zone; without it, the server's default zone is used. <code>--limit-upload</code> caps the upload in KiB/s (restic's <code>--limit-upload</code>).</p>
+    <p>For every schedule Holdfast shows the next 5 runs, the <strong>longest gap</strong> between runs, the <strong>worst-case data loss</strong> (the longest gap plus the spread), and the <strong>stale threshold</strong>, twice the longest gap, after which a job without a successful backup alerts.</p>
+    <h4>Other job commands</h4>
+    <div class="tablebox"><table class="ref">
+      <thead><tr><th>Command</th><th>Does</th></tr></thead>
+      <tbody>
+        <tr><td>holdfast job check &lt;fqdn&gt; &lt;job&gt; …</td><td>Runs the checks on a job with the same flags as <code>job set</code>, without saving.</td></tr>
+        <tr><td>holdfast job run &lt;fqdn&gt; &lt;job&gt;</td><td>Backs up now.</td></tr>
+        <tr><td>holdfast job remove &lt;fqdn&gt; &lt;job&gt;</td><td>Admin. Removes the job. Its snapshots stay, and the daily clean-up no longer touches them: they stay until you delete them.</td></tr>
+        <tr><td>holdfast job keep-longer &lt;fqdn&gt; &lt;job&gt;</td><td>Brings back an older retention that was in force during the last 7 days, as a new revision: by default the newest one that differs from today's, or <code>--revision &lt;n&gt;</code>'s.</td></tr>
+      </tbody>
+    </table></div>
+    <p><code>--base &lt;revision&gt;</code> on <code>job set</code> refuses the save if someone saved in between, so two people cannot overwrite each other unknowingly.</p>
+  </div>
+
+  <div class="sub" id="retention">
+    <h3>Retention</h3>
+    <p>Retention is set only as time windows, and restic decides what each one keeps. "One per day for 14 days" means the same on a host that backs up hourly and on one that backs up daily. Counts such as restic's <code>--keep-daily 14</code> are never used: on a weekly schedule they would keep 14 weeks.</p>
+    <div class="tablebox"><table>
+      <thead><tr><th>Holdfast option</th><th>Flag</th><th>restic</th></tr></thead>
+      <tbody>
+        <tr><td>Keep every backup for X</td><td class="m">--keep-within 7d</td><td class="m">--keep-within</td></tr>
+        <tr><td>One per hour for X</td><td class="m">--keep-hourly 48h</td><td class="m">--keep-within-hourly</td></tr>
+        <tr><td>One per day for X</td><td class="m">--keep-daily 14d</td><td class="m">--keep-within-daily</td></tr>
+        <tr><td>One per week for X</td><td class="m">--keep-weekly 8w</td><td class="m">--keep-within-weekly</td></tr>
+        <tr><td>One per month for X</td><td class="m">--keep-monthly 12mo</td><td class="m">--keep-within-monthly</td></tr>
+        <tr><td>One per year for X</td><td class="m">--keep-yearly 3y</td><td class="m">--keep-within-yearly</td></tr>
+        <tr><td>Always keep the newest N</td><td class="m">--keep-last 3</td><td class="m">--keep-last</td></tr>
+      </tbody>
+    </table></div>
+    <p><strong>The daily run.</strong> Once a day per host, in the middle of its longest quiet stretch (the longest gap between its jobs' runs, so it rarely meets a backup), the server takes every retention policy each job had during the last 7 days, asks restic what each one keeps (<code>restic forget --dry-run</code>), keeps the union, and forgets the rest by snapshot ID. Then it runs <code>restic check</code> and <code>restic prune</code>. A failed check blocks the prune. It forgets only snapshots its agents reported; a snapshot Holdfast did not make is left alone. <code>holdfast retention run &lt;fqdn&gt;</code> starts the same run now.</p>
+    <p><strong>The 7-day protection.</strong> Because the union covers the last 7 days, a change that keeps less only takes effect 7 days later. Until then the snapshots it would drop are <em>pending</em>: <code>holdfast pending &lt;fqdn&gt;</code> lists each one, the revision whose policy still keeps it, and when it may go. To undo the change, save the old retention again, or use <code>holdfast job keep-longer</code>.</p>
+    <p>Each snapshot in the list shows which rule keeps it, in restic's own words, such as "daily within 14d", and whether a pending cut will remove it, and from when.</p>
+  </div>
+
+  <div class="sub" id="checks">
+    <h3>Checks and their codes</h3>
+    <p>Every save is checked, the same in the UI, the API and the CLI, and every finding has a stable code. <strong>Errors</strong> block the save. <strong>Warnings</strong> must be accepted one by one, by code: <code>--accept R102,R104</code> in the CLI, <code>accept</code> in the API, a tick box in the UI. The accepted codes are stored in the revision and the audit log.</p>
+    <div class="two">
+      <div class="tablebox"><table>
+        <thead><tr><th>Error</th><th>When</th></tr></thead>
+        <tbody>
+          <tr><td>R001</td><td>A retention tier is finer than the schedule.</td></tr>
+          <tr><td>R002</td><td>A window is shorter than its own period.</td></tr>
+          <tr><td>R003</td><td>A coarser tier adds nothing.</td></tr>
+          <tr><td>R004</td><td>Nothing is kept.</td></tr>
+          <tr><td>R005</td><td>A tier has no duration.</td></tr>
+          <tr><td>S001</td><td>The spread is half the interval or more.</td></tr>
+          <tr><td>S003</td><td>The schedule is invalid.</td></tr>
+          <tr><td>D001</td><td>The host's <code>agent.yaml</code> defines no dump of that name.</td></tr>
+          <tr><td>D002</td><td>The host's agent is too old for dump jobs.</td></tr>
+        </tbody>
+      </table></div>
+      <div class="tablebox"><table>
+        <thead><tr><th>Warning</th><th>When</th></tr></thead>
+        <tbody>
+          <tr><td>S002</td><td>Runs are scheduled more often than they take (from 5 finished runs).</td></tr>
+          <tr><td>R006</td><td>Keep newest is 0.</td></tr>
+          <tr><td>R101</td><td>The oldest restore point is less than about 30 days old.</td></tr>
+          <tr><td>R102</td><td>About more than 1000 snapshots would be kept.</td></tr>
+          <tr><td>R103</td><td>The longest gap between runs is more than a day; the message gives the worst-case data loss.</td></tr>
+          <tr><td>R104</td><td>The change cuts retention: the new policy keeps a strict subset of what the old one keeps. Accepting it needs an admin.</td></tr>
+          <tr><td>O101</td><td>Off-site keeps less than primary.</td></tr>
+          <tr><td>I001 · I002</td><td>Information only: no yearly tier; a dump job on a host whose agent has not enrolled yet.</td></tr>
+        </tbody>
+      </table></div>
+    </div>
+    <p>Storage checks, B001 to B016, test the S3 server instead of the config, and cannot be accepted (<a href="#ref-storage-codes">Storage checks</a>).</p>
+  </div>
+
+  <div class="sub" id="snapshots">
+    <h3>Snapshots</h3>
+    <p>The server keeps a catalogue of every host's snapshots, read from the repositories and refreshed after each run. Every snapshot ID anywhere in the product is a link.</p>
+    <div class="tablebox"><table class="ref">
+      <thead><tr><th>Command</th><th>Does</th></tr></thead>
+      <tbody>
+        <tr><td>holdfast snapshot list &lt;fqdn&gt;</td><td>A host's snapshots, newest first. <code>--job</code>, <code>--month 2026-11</code>, <code>--all</code> for snapshots no longer in the repository, <code>--refresh</code> to read the repository first.</td></tr>
+        <tr><td>holdfast snapshot files &lt;fqdn&gt; &lt;id&gt; [path]</td><td>One folder of a snapshot: names and metadata (<code>restic ls --long</code>).</td></tr>
+        <tr><td>holdfast snapshot changes &lt;fqdn&gt; &lt;id&gt;</td><td>What changed since the job's previous snapshot, or since <code>--against &lt;id&gt;</code>: added, removed, content changed, metadata only, type changed (<code>restic diff --metadata</code>).</td></tr>
+        <tr><td>holdfast snapshot find &lt;fqdn&gt; &lt;pattern&gt;</td><td>A file's versions across all snapshots (<code>restic find</code>).</td></tr>
+        <tr><td>holdfast search &lt;text&gt;</td><td>Hosts, jobs and snapshot IDs, deleted ones included, marked <strong>Deleted</strong>.</td></tr>
+      </tbody>
+    </table></div>
+    <p><strong>The UI, the API and the CLI never show file contents</strong>, only names and metadata. To compare a file's lines between two snapshots, restore both on the host and diff them there (<a href="#restore">Restoring</a>, Restore both versions).</p>
+    <p>Snapshots marked <strong>Not made by Holdfast</strong> were found in the repository but no agent reported them. Snapshots that <strong>disappeared</strong> were deleted without Holdfast. Both are alerted (<a href="#outside">Changes outside Holdfast</a>).</p>
+  </div>
+
+  <div class="sub" id="restore">
+    <h3>Restoring</h3>
+    <p>A restore runs on the host, through its agent, with restic's <code>restore --sparse --verify</code>. Everything in the snapshot is restored unless you leave something out.</p>
+    <div class="cmd"><pre><code>holdfast restore web01.example.com 4f2a91c3 --wait                              <span class="c"># into a new root-only folder</span>
+holdfast restore web01.example.com 4f2a91c3 --only /etc/nginx --dry-run         <span class="c"># what would be restored</span>
+holdfast restore web01.example.com 4f2a91c3 --in-place --only /srv/www -m "INC-1234"
+holdfast restore web01.example.com 4f2a91c3 --to /srv/old --overwrite if-newer</code></pre></div>
+    <div class="tablebox"><table>
+      <thead><tr><th>Target</th><th>Flag</th><th>Needs</th></tr></thead>
+      <tbody>
+        <tr><td>A new folder (default)</td><td class="m"></td><td><code>/var/restore/&lt;date&gt;-&lt;user&gt;-&lt;snapshot&gt;</code>, mode 0700, owners, modes and ACLs kept. Editors may.</td></tr>
+        <tr><td>The original location</td><td class="m">--in-place</td><td>The host allows it (<code>allow_in_place</code>). Holdfast first backs up what will be replaced. Admins only.</td></tr>
+        <tr><td>Another folder</td><td class="m">--to &lt;dir&gt;</td><td>The host allows it (<code>allow_other_directories</code>). Admins only.</td></tr>
+        <tr><td>Another host</td><td class="m">--to-host &lt;fqdn&gt;</td><td>The target host allows it (<code>allow_other_hosts</code>). An admin on both hosts. Into a new or another folder, never in place.</td></tr>
+        <tr><td>From the off-site copy</td><td class="m">--from-offsite</td><td>An off-site bucket. On the snapshot's own host, never in place: into a new folder (editors) or another one (admins).</td></tr>
+      </tbody>
+    </table></div>
+    <ul class="plain">
+      <li><code>--only &lt;path&gt;</code> restores only that path, and <code>--leave-out &lt;path&gt;</code> leaves it out; repeat either for several paths, but do not mix the two in one restore.</li>
+      <li><code>--overwrite</code> is restic's choice for a file that exists already: <code>always</code>, <code>if-changed</code>, <code>if-newer</code> or <code>never</code>.</li>
+      <li><code>-m</code> gives a reason, which goes into the audit log. <code>--wait</code> waits for the agent's result and prints the folder.</li>
+      <li>A restore the host has not picked up within 24 hours is cancelled, and the cancellation is reported.</li>
+      <li><strong>The host sets the bounds.</strong> Only root on the host, in <code>agent.yaml</code>, can allow restores in place, into other folders, or from other hosts. A stolen admin login cannot write over a host's files unless that host allows it. It can still read backups, by restoring them onto a machine it enrolled (<a href="#sec-whatif">If something goes wrong</a>).</li>
+      <li><strong>Restore both versions to diff on the host</strong> (editors): <code>holdfast restore pair &lt;fqdn&gt; &lt;id&gt; &lt;other id&gt; &lt;path&gt; --wait</code> restores one file from two snapshots into a root-only folder and prints the <code>diff -u</code> command to run on the host.</li>
+      <li><strong>Onto another host</strong>, the target reads the source host's repository through the gateway, read-only, for that one restore, and gets the source's password once. Both hosts' histories record it.</li>
+      <li>SELinux labels are restored as the snapshot has them, except for a dump and a restore from another host, which get the label the host gives a new file.</li>
+    </ul>
+    <p>The UI's snapshot page has the same, with every item ticked and the ones you untick shown as <strong>Left out</strong>. The <strong>Restores</strong> page lists every restore in the fleet: who, what, where, and the result.</p>
+  </div>
+
+  <div class="sub" id="dumps">
+    <h3>Database dumps</h3>
+    <p>A dump job backs up what a command prints, such as a database dump, as one file in the snapshot. A file copy of a running database is not a backup, so database files are better excluded and dumped instead.</p>
+    <p><strong>The command is the host's own</strong>, defined by root on the host in <code>agent.yaml</code>; a job only names it. The server never sends a command to run.</p>
+    <div class="cmd"><pre><code><span class="c"># /etc/holdfast/agent.yaml on db01</span>
+dumps:
+  postgresql:
+    command: [/usr/bin/pg_dumpall, --clean]    <span class="c"># argv, no shell; the first item an absolute path</span>
+    user: postgres                             <span class="c"># run as this user (default root)</span>
+    filename: postgresql.sql                   <span class="c"># the file's name in the snapshot</span>
+    env: {PGHOST: /run/postgresql}             <span class="c"># optional, besides PATH and LANG</span>
+  mariadb:
+    command: [/usr/bin/mariadb-dump, --all-databases, --single-transaction, --routines, --events]
+    filename: mariadb.sql</code></pre></div>
+    <div class="cmd"><pre><code>holdfast job set db01.example.com pg --dump postgresql --daily 01:30 --keep-daily 14d --keep-monthly 6mo</code></pre></div>
+    <p>The agent runs it with <code>restic backup --stdin-from-command</code>, as its user, with a clean environment. A command that exits non-zero fails the run, and no snapshot is made. A dump is restored into a new folder; loading it is your job, on the host, such as <code>sudo -u postgres psql -f /var/restore/…/postgresql.sql</code>.</p>
+  </div>
+
+  <div class="sub" id="deleting">
+    <h3>Deleting</h3>
+    <p>Holdfast deletes backups only in these ways, and every one is audited. All but Prune now and Delete now wait 7 days.</p>
+    <div class="tablebox"><table>
+      <thead><tr><th>Way</th><th>Command</th><th>Waits</th></tr></thead>
+      <tbody>
+        <tr><td>Retention</td><td class="m">(the daily run)</td><td>7 days after a cut; pending meanwhile.</td></tr>
+        <tr><td>Delete one snapshot</td><td class="m">holdfast snapshot delete &lt;fqdn&gt; &lt;id&gt;</td><td>7 days; <code>--cancel</code> undoes it.</td></tr>
+        <tr><td>Delete now</td><td class="m">… --now --confirm &lt;short name&gt;</td><td>No. Admin, typing the host's short name, such as <code>web01</code>.</td></tr>
+        <tr><td>Prune now</td><td class="m">holdfast prune-now &lt;fqdn&gt; --confirm &lt;short name&gt;</td><td>No. Forgets what the current retention drops, then checks and prunes. Admin.</td></tr>
+        <tr><td>Decommission</td><td class="m">holdfast host decommission &lt;fqdn&gt; --confirm &lt;fqdn&gt;</td><td>7 days; a removed host only. Admin, typing the full name.</td></tr>
+      </tbody>
+    </table></div>
+    <p>With off-site copies, the daily run does not forget a snapshot that is not copied yet while it is younger than 7 days. Prune now and Delete now are not held back by that.</p>
+    <p>Without <code>--confirm</code>, Prune now only shows what it would do: how many snapshots go and stay, the date range, every snapshot, and the exact restic commands. The UI shows the same confirmation page. <code>holdfast prunes</code> lists past forgets and prunes, with who, what, what restic said was freed, and when the data is really gone.</p>
+    <p><strong>"Really gone"</strong>: a prune frees the space, but S3 versioning keeps the old files until your lifecycle rule expires them. Each snapshot's page gives that date: the prune's date plus the rule's days. Until then a rollback brings it back.</p>
+  </div>
+
+  <div class="sub" id="offsite">
+    <h3>Off-site copies</h3>
+    <p>With an off-site bucket, the server copies every new snapshot there, every 5 minutes by default, with <code>restic copy</code>. Each host has its own off-site repository with its own password, which the host never has, escrowed in the off-site bucket. Once a day the off-site repository is checked and cleaned up like the primary one, under its own retention, behind the same 7-day protection.</p>
+    <ul class="plain">
+      <li><strong>Off-site retention</strong> starts as a copy of the job's primary retention. After that an admin sets it: <code>holdfast --offsite job set web01.example.com system --keep-daily 30d --keep-monthly 24mo</code>. Off-site, only the retention can be set; the job's paths and schedule are the primary job's. Keeping less than primary is warning O101.</li>
+      <li><code>holdfast offsite match-primary &lt;fqdn&gt; &lt;job&gt;</code> copies primary's retention again. <code>holdfast offsite exclude &lt;fqdn&gt; &lt;job&gt;</code> stops copying a job and keeps its copies; <code>holdfast offsite include &lt;fqdn&gt; &lt;job&gt;</code> starts again.</li>
+      <li><strong>A host removed or decommissioned in primary</strong> keeps its copies off-site, under their off-site retention. Its jobs show as Retired there; once all are, an admin can remove the host off-site and then decommission it there, after 7 days.</li>
+      <li><code>holdfast offsite copies &lt;fqdn&gt;</code> lists a host's copies. <code>holdfast restore &lt;fqdn&gt; &lt;id&gt; --from-offsite</code> restores one, on its own host.</li>
+      <li><strong>Deleting a snapshot in primary never deletes its copy.</strong> The copy is marked <em>Deleted in primary</em>, and an admin may choose <strong>Delete here too</strong> on the off-site pages, which waits 7 days as usual.</li>
+      <li><strong>The hold.</strong> A snapshot that is not copied yet is not forgotten in primary while it is younger than 7 days. A copier that stalls longer is an incident, which its own alert reports long before.</li>
+      <li>Every command takes <code>--offsite</code> to act on the off-site side: <code>holdfast --offsite host show</code>, <code>--offsite revision list</code>, <code>--offsite audit</code>. In the UI, the off-site pages are the same pages, in orange, marked OFF-SITE.</li>
+    </ul>
+  </div>
+
+  <div class="sub" id="history">
+    <h3>Config history and the audit log</h3>
+    <p>Every save makes a numbered revision with who, when, a message, the full config, and the warning codes accepted for it. There is deliberately no rollback button: to undo a change, save the old values again, which passes the same checks. A rollback could quietly cut retention.</p>
+    <div class="cmd"><pre><code>holdfast revision list
+holdfast revision show 42
+holdfast revision diff 41 42
+holdfast audit --host web01.example.com
+holdfast settings          <span class="c"># what server.yaml says, without secrets</span></code></pre></div>
+    <p>The audit log has every action: logins, saves, runs, restores with their reason, deletions, rollbacks, exports, and every request the gateway refused. People see only the revisions and entries of hosts they may see.</p>
+  </div>
+
+  <div class="sub" id="problems">
+    <h3>Problems</h3>
+    <p>The UI's Problems page and the fleet's "Needs attention" list what the server knows is wrong, host by host, each with a code. <code>holdfast host show</code> shows a host's.</p>
+    <div class="tablebox"><table>
+      <thead><tr><th>Code</th><th>Means</th></tr></thead>
+      <tbody>
+        <tr><td><span class="pill x">stale</span></td><td>A job has had no successful backup for longer than twice its longest gap.</td></tr>
+        <tr><td><span class="pill x">failed</span></td><td>The last run failed.</td></tr>
+        <tr><td><span class="pill x">storage</span></td><td>A storage check fails for this host (a B code).</td></tr>
+        <tr><td><span class="pill x">disappeared</span></td><td>Snapshots were deleted without Holdfast.</td></tr>
+        <tr><td><span class="pill x">foreign_keys</span></td><td>A restic password was added to the repository outside Holdfast.</td></tr>
+        <tr><td><span class="pill x">rotation</span></td><td>An old password still opens the repository after a rotation.</td></tr>
+        <tr><td><span class="pill x">decommission</span></td><td>A due decommission could not delete (a warning while one waits).</td></tr>
+        <tr><td><span class="pill plan">incomplete</span></td><td>Snapshots have unreadable files.</td></tr>
+        <tr><td><span class="pill plan">offline</span></td><td>The agent has not been in touch.</td></tr>
+        <tr><td><span class="pill plan">drift</span></td><td>The agent does not run its current config.</td></tr>
+        <tr><td><span class="pill plan">ahead</span></td><td>After a server rebuild: the agent runs a change the restored server lost. Make the change again.</td></tr>
+        <tr><td><span class="pill plan">restic</span></td><td>The host runs another restic than the pinned one.</td></tr>
+        <tr><td><span class="pill plan">agent_too_old</span></td><td>Upgrade the agent.</td></tr>
+        <tr><td><span class="pill plan">not_made_by_holdfast</span></td><td>The repository holds snapshots no agent reported.</td></tr>
+        <tr><td><span class="pill plan">catalogue</span></td><td>The snapshot list could not be read from the repository.</td></tr>
+        <tr><td><span class="pill plan">retention</span></td><td>The last forget-and-prune failed.</td></tr>
+        <tr><td><span class="pill plan">removing · enroll · rollback</span></td><td>A removal, a new enrollment or a rollback is under way.</td></tr>
+        <tr><td><span class="pill plan">escrow</span></td><td>No recipient, or the escrow file could not be written.</td></tr>
+        <tr><td><span class="pill plan">size</span></td><td>The repository's size could not be measured.</td></tr>
+      </tbody>
+    </table></div>
+    <p>The server's own problems, which belong to no host, are on every page of the UI and in <code>holdfast status</code>: <code>export</code> (no recipient, a failed export, or none for 2 days) and <code>export_offsite</code>. Paging stays with Prometheus and its rules.</p>
+  </div>
+
+  <div class="sub" id="access">
+    <h3>Access and roles</h3>
+    <p>There are three roles. Each is a flat set of permissions; they do not inherit from one another.</p>
+    <div class="tablebox"><table>
+      <thead><tr><th>Permission</th><th>Viewer</th><th>Editor</th><th>Admin</th></tr></thead>
+      <tbody>
+        <tr><td>See hosts, jobs, schedules, retention, status, history, alerts</td><td>✓</td><td>✓</td><td>✓</td></tr>
+        <tr><td>Browse file names and metadata, find files, see the paths in the Restores list</td><td></td><td>✓</td><td>✓</td></tr>
+        <tr><td>Back up now; restore into a new folder, a pair of versions, or from off-site into a new folder; set jobs; keep longer</td><td></td><td>✓</td><td>✓</td></tr>
+        <tr><td>Restore in place, into another folder or onto another host</td><td></td><td></td><td>✓</td></tr>
+        <tr><td>Cut retention (accept R104), run the daily clean-up now, Prune now, delete snapshots</td><td></td><td></td><td>✓</td></tr>
+        <tr><td>Add hosts, issue codes, rotate passwords, import hosts</td><td></td><td></td><td>✓</td></tr>
+        <tr><td>Remove jobs and hosts, decommission, roll back; acknowledge changes; run checks</td><td></td><td></td><td>✓</td></tr>
+        <tr><td>Change who may do what; write an export now</td><td></td><td></td><td>✓</td></tr>
+      </tbody>
+    </table></div>
+    <p><strong>Bindings</strong> give a group a role on a list of host patterns. A user can have several; they combine per host. <strong>A host you have no binding for does not exist for you</strong>: it is not listed, searched or counted, and asking for it answers "not found". There are no custom roles.</p>
+    <div class="cmd"><pre><code><span class="c"># bindings.json</span>
+[
+  {"group": "holdfast-admins",  "role": "admin",  "hosts": ["*"]},
+  {"group": "dc1-ops",          "role": "editor", "hosts": ["*.dc1.example.com"]},
+  {"group": "auditors",         "role": "viewer", "hosts": ["*"]}
+]</code></pre></div>
+    <div class="cmd"><pre><code>holdfast access list
+holdfast access set --file bindings.json -m "dc1 team"
+holdfast access sessions
+holdfast access end-sessions bob        <span class="c"># after removing bob from a group</span>
+holdfast whoami                         <span class="c"># who you are and what you may do where</span></code></pre></div>
+    <p>In a host pattern, <code>*</code> matches any characters and <code>?</code> one, so <code>*.dc1.example.com</code> matches every host in dc1. <code>access set</code> replaces every binding, the default ones included, as a new revision. It refuses a list that would leave nobody admin on every host, unless <code>bootstrap_admins</code> names someone.</p>
+    <p>Groups are read at login. A change in a user's groups takes effect at their next login; end their sessions to make it immediate. Root on the server is admin everywhere, and is audited as <code>local:root</code>.</p>
+  </div>
+
+  <div class="sub" id="cli-ref">
+    <h3>CLI reference</h3>
+    <p>Every command takes <code>--json</code> (the API's answer), <code>--offsite</code> (the off-site side), and <code>-h</code>. Admin-only commands are marked.</p>
+    <div class="tablebox"><table class="ref">
+      <thead><tr><th>Command</th><th>Does</th></tr></thead>
+      <tbody>
+        <tr><td>status</td><td>The server's state and its own problems.</td></tr>
+        <tr><td>login · logout · whoami</td><td>Log in through the provider (a device code), end the session, show your access.</td></tr>
+        <tr><td>host add|list|show|events|enroll-code|remove</td><td>Hosts (<a href="#hosts">Hosts</a>).</td></tr>
+        <tr><td>host rotate</td><td>Admin. After a compromise: a new repository password, the agent's certificate unpinned, a new code.</td></tr>
+        <tr><td>host acknowledge</td><td>Admin. Clear the red alerts for changes made outside Holdfast, after looking into them.</td></tr>
+        <tr><td>host rollback|rollbacks</td><td>Admin. Roll a repository back to a time, from S3's old versions; list past rollbacks.</td></tr>
+        <tr><td>host decommission</td><td>Admin. Delete a removed host's repository after 7 days.</td></tr>
+        <tr><td>host import</td><td>Admin. Add a host back from its decrypted escrow file, after a rebuild.</td></tr>
+        <tr><td>job set|check|run|remove|keep-longer</td><td>Jobs (<a href="#jobs">Jobs and schedules</a>).</td></tr>
+        <tr><td>snapshot list|files|changes|find</td><td>Snapshots (<a href="#snapshots">Snapshots</a>).</td></tr>
+        <tr><td>snapshot delete</td><td>Admin. Delete one snapshot after 7 days, or now.</td></tr>
+        <tr><td>restore · restore pair · restores</td><td>Restore; restore two versions of a file to diff; every restore in the fleet.</td></tr>
+        <tr><td>pending · prunes</td><td>What waits out the 7 days; past forgets and prunes.</td></tr>
+        <tr><td>retention run</td><td>Admin. Run the daily forget and prune now, with the protection.</td></tr>
+        <tr><td>prune-now</td><td>Admin. Forget and prune now, without the 7 days.</td></tr>
+        <tr><td>check</td><td>Admin. Test every host's storage now, and ask each agent to check its repository.</td></tr>
+        <tr><td>offsite copies|exclude|include|match-primary</td><td>Off-site copies.</td></tr>
+        <tr><td>revision list|show|diff · audit · settings · search</td><td>History, audit log, settings, search.</td></tr>
+        <tr><td>access list|set|sessions|end-sessions</td><td>Admin. Bindings and sessions.</td></tr>
+        <tr><td>export list|now</td><td>The nightly exports; write one now (admin).</td></tr>
+        <tr><td>escrow export --to &lt;file&gt;</td><td>Root on the server only. Every host's credentials in one 0600 file, to store offline.</td></tr>
+      </tbody>
+    </table></div>
+    <p>On the server, <code>holdfast-server</code> has two commands of its own: <code>keygen &lt;path&gt;</code> makes a credentials key, and <code>restore-export</code> restores a nightly export into a new server (<a href="#lost-server">A lost server</a>). On a host, <code>holdfast-agent enroll</code> enrolls and <code>holdfast-agent version</code> prints its version.</p>
+  </div>
+</section>
+
+<!-- ================================================================================================ OPERATING -->
+<section class="chapter" id="operating">
+  <h2>Operating Holdfast</h2>
+
+  <div class="sub" id="daily">
+    <h3>What runs by itself</h3>
+    <div class="tablebox"><table>
+      <thead><tr><th>What</th><th>When</th><th>Where to see it</th></tr></thead>
+      <tbody>
+        <tr><td>Backups</td><td>On each job's schedule; failed ones retried after 5, 15 and 45 minutes.</td><td><code>holdfast host events</code></td></tr>
+        <tr><td>Repository check</td><td>Each agent, once a day after a backup, reading 1/30 of the data.</td><td><code>HoldfastMaintenanceStale</code></td></tr>
+        <tr><td>Forget, check and prune</td><td>Once a day per host, in the middle of its longest quiet stretch.</td><td><code>holdfast prunes</code></td></tr>
+        <tr><td>Storage contract test</td><td>Once a day per host.</td><td><code>holdfast host show</code></td></tr>
+        <tr><td>Repository size</td><td>Once a day per host, with the old versions S3 keeps.</td><td>The host's page; <code>holdfast_repository_bytes</code></td></tr>
+        <tr><td>Nightly export</td><td>00:30 in the default zone; at start if missed; retried hourly.</td><td><code>holdfast export list</code></td></tr>
+        <tr><td>Escrow files</td><td>When a host is added or its password changes; retried every 15 minutes.</td><td><code>holdfast host show</code></td></tr>
+        <tr><td>Off-site copies</td><td>Every 5 minutes, with an off-site bucket.</td><td><code>holdfast offsite copies</code></td></tr>
+      </tbody>
+    </table></div>
+    <p><code>maintenance.check: off</code> and <code>maintenance.retention: off</code> in <code>server.yaml</code> turn the daily check and the daily clean-up off; <code>holdfast check</code>, <code>retention run</code>, Prune now and Delete now still work.</p>
+  </div>
+
+  <div class="sub" id="alerts">
+    <h3>Alerts</h3>
+    <div class="tablebox"><table>
+      <thead><tr><th>Alert</th><th>Severity</th><th>Means</th></tr></thead>
+      <tbody>
+        <tr><td>HoldfastServerDown</td><td><span class="pill x">page</span></td><td>The server is unreachable. Backups wait; watch the storage alerts.</td></tr>
+        <tr><td>HoldfastBackupStale</td><td><span class="pill x">page</span></td><td>A job has had no successful backup for longer than its stale threshold.</td></tr>
+        <tr><td>HoldfastStorageStale · StorageMissing</td><td><span class="pill x">page</span></td><td>The witness sees no new snapshot for a host in the bucket, or none at all.</td></tr>
+        <tr><td>HoldfastWitnessDisagreement</td><td><span class="pill x">page</span></td><td>The server reports a backup that the bucket does not have.</td></tr>
+        <tr><td>HoldfastStorageScrapeFailed</td><td><span class="pill x">page</span></td><td>The witness cannot list the bucket.</td></tr>
+        <tr><td>HoldfastSnapshotsDisappeared</td><td><span class="pill x">page</span></td><td>Snapshots were deleted without Holdfast.</td></tr>
+        <tr><td>HoldfastRepositoryKeyAdded</td><td><span class="pill x">page</span></td><td>A restic password was added outside Holdfast.</td></tr>
+        <tr><td>HoldfastStorageContractBroken</td><td><span class="pill x">page</span></td><td>A storage check (B code) fails.</td></tr>
+        <tr><td>HoldfastOffsiteLag</td><td><span class="pill x">page</span></td><td>A job's off-site copy is more than twice its longest gap behind.</td></tr>
+        <tr><td>HoldfastBackupFailed · BackupIncomplete · FirstBackupMissing</td><td><span class="pill plan">ticket</span></td><td>A run failed; snapshots miss unreadable files for 24 hours; an enrolled host has no backup yet.</td></tr>
+        <tr><td>HoldfastAgentOffline · ConfigDrift · AgentClockSkew · AgentTooOld · ResticNotPinned</td><td><span class="pill plan">ticket</span></td><td>An agent is silent, runs an old config, has a wrong clock, is too old, or runs another restic.</td></tr>
+        <tr><td>HoldfastMaintenanceStale · RetentionFailing</td><td><span class="pill plan">ticket</span></td><td><code>restic check</code> has not succeeded for 3 days; the last forget-and-prune failed.</td></tr>
+        <tr><td>HoldfastSnapshotsNotMadeByHoldfast</td><td><span class="pill plan">ticket</span></td><td>The repository holds snapshots no agent reported.</td></tr>
+        <tr><td>HoldfastEscrowNotConfigured · EscrowNotWritten · EscrowOutdated</td><td><span class="pill plan">ticket</span></td><td>No recipient; a host's escrow file is not current; hosts missing from the manual escrow bundle.</td></tr>
+        <tr><td>HoldfastExportStale · ExportOffsiteFailed</td><td><span class="pill plan">ticket</span></td><td>No nightly export for 2 days; it was not written off-site.</td></tr>
+        <tr><td>HoldfastDecommissionOverdue · OffsiteCopyFailing</td><td><span class="pill plan">ticket</span></td><td>A decommission could not delete; copies to off-site keep failing.</td></tr>
+        <tr><td>Watchdog</td><td><span class="pill n">none</span></td><td>Always fires, for the dead man's switch.</td></tr>
+      </tbody>
+    </table></div>
+  </div>
+
+  <div class="sub" id="offline">
+    <h3>What to keep offline</h3>
+    <p>A new server is built from the bucket and a few small files kept off the server. Keep them from the day you install, and again after changing any of them.</p>
+    <ul class="plain">
+      <li><strong>The escrow's age private key</strong> (<code>escrow-key.txt</code>). It opens the nightly exports and every host's escrow file.</li>
+      <li><strong>A copy of <code>/etc/holdfast</code></strong> from the server: <code>server.yaml</code>, the credentials key, the storage key files, the database DSN, the OIDC secret, and <code>tls/</code> with the agents' CA. The nightly export does not hold these, as they include the database's password.</li>
+      <li>Optionally, <code>holdfast escrow export --to bundle.json</code> as root on the server: every host's repository and password in one plain JSON file, for a recovery with plain restic. Store it encrypted. The server remembers which passwords the last bundle held, and <code>HoldfastEscrowOutdated</code> fires when a host's password is newer.</li>
+      <li>The packages of the version you run, if your hosts cannot reach GitHub.</li>
+    </ul>
+  </div>
+
+  <div class="sub" id="lost-server">
+    <h3>A lost server</h3>
+    <p>Use this when the server's machine or its PostgreSQL is lost. Nothing in the bucket is touched by the loss. What is lost is what happened after the newest export: config revisions, history and audit entries, and hosts added since. Everyone logs in again.</p>
+    <ol class="steps">
+      <li><strong>A new machine</strong> with the same name, or point the old name at it: agents use the name in <code>public_url</code>.</li>
+      <li><strong>Put <code>/etc/holdfast</code> back</strong> from your offline copy, root-only (<code>chmod 700 /etc/holdfast</code>, and 600 on the files in it).</li>
+      <li><strong>Run the server's install line</strong>, with no settings:
+        <div class="cmd"><pre><code>curl -sfL https://github.com/kabsdk/holdfast/releases/latest/download/install.sh | sh -s - server</code></pre></div>
+        <p>With <code>/etc/holdfast</code> back and no Holdfast installed, it prepares a rebuild. It installs PostgreSQL with an empty database, and the user and password from the restored <code>db.dsn</code>, when that names the local database it made. It installs the packages and leaves the server stopped, and says so. With a database of your own, make it empty first.</p></li>
+      <li><strong>Restore the newest export</strong>, as root:
+        <div class="cmd"><pre><code>holdfast-server restore-export -identity escrow-key.txt -latest</code></pre></div>
+        <p>It reads the newest <code>meta/&lt;date&gt;.age</code> from the bucket with the maintenance key. Before it touches the database, it checks that the age key opens the export, that the export is whole and not from a newer Holdfast, that the credentials key opens the passwords in it, and that the database is empty. Then it loads every table, migrates to the installed version, and audits the restore. To restore an older export, or one from the off-site bucket, download it and give its file instead of <code>-latest</code>.</p></li>
+      <li><strong>Start the server</strong>: <code>systemctl enable --now holdfast-server</code>.</li>
+      <li><strong>Check</strong>: <code>holdfast status</code>, then <code>holdfast host list</code>. Every agent enrolled before the export comes back within a minute or two, by itself, as its pinned certificate is in the export. A host that shows <strong>ahead</strong> ran a change made after the export: its agent keeps that config until you make the change again.</li>
+      <li><strong>Hosts added after the export</strong> are refused, as their certificates are not in it. For each, decrypt its escrow file (<code>age -d -i escrow-key.txt &lt;fqdn&gt;.age &gt; escrow.json</code>, read from the bucket by your storage admin), then <code>holdfast host import &lt;fqdn&gt; --escrow-file escrow.json</code>, run the line it prints on the host, set its jobs again, and delete <code>escrow.json</code>.</li>
+      <li><code>holdfast export now</code> writes a fresh export at once.</li>
+    </ol>
+    <p>This runbook is tested twice: in the lab on real VMs (the server's database, packages, <code>/etc/holdfast</code> and state deleted, the server restored, and all three agents back by themselves with every snapshot), and by the installer's test, which replaces the server with a new machine and the install line, on AlmaLinux and Ubuntu.</p>
+    <p><strong>If the primary bucket is lost too</strong>, and you have an off-site bucket: each host's off-site repository has its own password in that bucket's <code>escrow/</code>, encrypted to the same age key. Open them with plain restic, as for a lost host below. Rebuilding Holdfast onto the off-site bucket as its new primary is not a tested path.</p>
+  </div>
+
+  <div class="sub" id="lost-host">
+    <h3>A lost host</h3>
+    <p>A full restore needs a job whose paths cover <code>/</code>, excluding <code>/proc</code>, <code>/sys</code>, <code>/dev</code>, <code>/run</code>, <code>/tmp</code> and the like. A host whose jobs cover only data is rebuilt from its installer and configuration management, then gets its data back.</p>
+    <h4>Holdfast is up</h4>
+    <ol class="steps">
+      <li>Install the OS with the same FQDN.</li>
+      <li>Note the last good snapshot first: <code>holdfast snapshot list web01.example.com</code>.</li>
+      <li><code>holdfast host enroll-code web01.example.com</code> (or <code>host add</code> again if it was removed: it comes back with its repository), and run the line it prints on the host. The agent backs the fresh host up at once; that is one more snapshot, and retention keeps the old ones.</li>
+      <li>On the host, set <code>restore.allow_in_place: true</code> and the <code>dumps:</code> it had in <code>/etc/holdfast/agent.yaml</code>, and <code>systemctl restart holdfast-agent</code>.</li>
+      <li>Restore: <code>holdfast restore web01.example.com &lt;id&gt; --in-place --only /etc --only /srv --wait</code>, or into a new folder to copy from.</li>
+      <li>Set <code>allow_in_place</code> back to <code>false</code>, and restart the agent.</li>
+    </ol>
+    <p>A spare with another name takes over with a restore onto another host: <code>holdfast restore web01.example.com &lt;id&gt; --to-host spare01.example.com</code>, which the spare must allow.</p>
+    <h4>Holdfast is gone too</h4>
+    <p>Everything needed is outside Holdfast. Your storage admin reads <code>escrow/web01.example.com.age</code> from the bucket (the maintenance key cannot read it), and you decrypt it with your offline key: <code>age -d -i escrow-key.txt web01.example.com.age &gt; escrow.json</code>. It is JSON with <code>fqdn</code>, <code>repository</code>, <code>repo_password</code>, <code>credentials_version</code> and <code>written_at</code>. Ask your storage admin for a key that may only read that host's repository, to delete afterwards:</p>
+    <div class="cmd"><pre><code>{"Version": "2012-10-17", "Statement": [
+ {"Effect": "Allow", "Action": ["s3:ListBucket", "s3:GetBucketLocation"], "Resource": ["arn:aws:s3:::holdfast"]},
+ {"Effect": "Allow", "Action": ["s3:GetObject"], "Resource": ["arn:aws:s3:::holdfast/repos/web01.example.com/*"]}]}</code></pre></div>
+    <p>Boot a rescue system, mount the new disks at <code>/mnt</code>, take restic from the <code>holdfast-restic</code> package (<code>dpkg-deb -x</code> or <code>rpm2cpio … | cpio -id</code>) or restic's own release, and restore without locks:</p>
+    <div class="cmd"><pre><code>export RESTIC_REPOSITORY=s3:https://s3.example.com/holdfast/repos/web01.example.com
+export RESTIC_PASSWORD_FILE=/root/web01.pass          <span class="c"># repo_password from escrow.json, mode 0600</span>
+export AWS_ACCESS_KEY_ID=… AWS_SECRET_ACCESS_KEY=…     <span class="c"># the read-only key</span>
+restic --no-lock snapshots --host web01.example.com
+restic --no-lock restore &lt;id&gt; --target /mnt</code></pre></div>
+    <p>Then fix <code>/mnt/etc/fstab</code> if UUIDs changed, reinstall the bootloader and initramfs from a chroot, and on RHEL <code>touch /.autorelabel</code>. Once Holdfast is back, enroll the host again as above.</p>
+  </div>
+
+  <div class="sub" id="compromised">
+    <h3>A compromised host</h3>
+    <p>Root on a host can read its repository password and its agent's key, so assume both are known. Through the gateway the attacker can read this host's backups and add new ones, but cannot delete or overwrite any, and cannot reach another host's.</p>
+    <ol class="steps">
+      <li><strong>Cut it off</strong>: <code>holdfast host rotate web01.example.com -m "INC-1234"</code>. It adds a new repository password, checks it, stores it, unpins the agent's certificate, removes the old password and writes the escrow file again. From then on the host's certificate gets nothing. A host can delete no snapshot, so a rollback is rarely needed here. If snapshots did disappear before you rotate, roll back first: a rollback to a time before a rotation is refused.</li>
+      <li><strong>Look for passwords added outside Holdfast</strong> (<code>foreign_keys</code> in <code>holdfast host show</code>). Remove each one you did not add with plain restic, the maintenance key and the new password from the host's escrow file, then acknowledge:
+        <div class="cmd"><pre><code>export RESTIC_PASSWORD_FILE=/root/web01.pass AWS_ACCESS_KEY_ID=… AWS_SECRET_ACCESS_KEY=…   <span class="c"># the maintenance key</span>
+restic -r s3:https://s3.example.com/holdfast/repos/web01.example.com key list
+restic -r s3:https://s3.example.com/holdfast/repos/web01.example.com key remove &lt;id&gt;
+holdfast host acknowledge web01.example.com</code></pre></div></li>
+      <li><strong>Find the last good snapshot</strong>: <code>holdfast snapshot list web01.example.com --all</code> shows any <em>Not made by Holdfast</em>; <code>holdfast snapshot changes</code> shows what changed between snapshots. Look at binaries, <code>/etc</code>, SSH keys, cron jobs and systemd units.</li>
+      <li><strong>Rebuild or clean the host</strong>, enroll it with the code the rotation printed (or a new one from <code>enroll-code</code>), and restore what you need.</li>
+      <li>If you keep a manual escrow bundle offline, export a new one: the old one holds the old password.</li>
+    </ol>
+    <p>A rotation changes the password, not restic's data key, which the password only unlocks. Whatever the attacker already copied stays readable to them. What the rotation stops is any further access.</p>
+    <p>Every step is in the audit log: <code>host.rotated</code>, <code>repository.key_removed</code>, <code>escrow.written</code>, <code>agent.enrolled</code>, and any <code>gateway.refused</code>.</p>
+  </div>
+
+  <div class="sub" id="rollback">
+    <h3>Rolling a repository back</h3>
+    <p>For a repository damaged or emptied behind Holdfast's back, or after a mistaken Prune now. A rollback copies each object's version of a past time over today's, from S3's old versions, and puts a delete marker in front of each object that was not there then. <strong>No version is deleted</strong>, so a rollback can itself be rolled back.</p>
+    <div class="cmd"><pre><code>holdfast host rollback web01.example.com --to "2026-11-20 03:00"                         <span class="c"># shows what changes</span>
+holdfast host rollback web01.example.com --to "2026-11-20 03:00" --confirm web01.example.com --wait</code></pre></div>
+    <p>The preview lists the objects brought back and set aside, and the snapshots that come back. The host's agent is paused while it runs; then <code>restic check</code> runs and the agent resumes. It is refused for a time before the host's last password rotation, or older than the lifecycle rule's days. Admin only; the "disappeared" alert in the UI links to it.</p>
+  </div>
+
+  <div class="sub" id="decommission">
+    <h3>Decommissioning</h3>
+    <p>Removing a host never deletes data. To delete a removed host's backups, an admin decommissions it, typing the FQDN:</p>
+    <div class="cmd"><pre><code>holdfast host remove web01.example.com -m "retired"
+holdfast host decommission web01.example.com --confirm web01.example.com -m "retired, CHG-77"
+holdfast host decommission web01.example.com --cancel                                  <span class="c"># within 7 days</span></code></pre></div>
+    <p>After 7 days the server deletes every object under <code>repos/web01.example.com/</code> and its escrow file. S3 keeps the old versions until the lifecycle rule expires them; the host's page gives the date the data is really gone. A decommissioned host added again starts over, with a new repository and password.</p>
+  </div>
+
+  <div class="sub" id="outside">
+    <h3>Changes made outside Holdfast</h3>
+    <ul class="plain">
+      <li><strong>Holdfast's own files on a host are repaired</strong>, and the repair is recorded: the saved config is sent again, and the credential files are fetched again if they changed.</li>
+      <li><strong>Changes to a repository are shown in red and alerted, never undone</strong>: a snapshot Holdfast did not make, a snapshot that disappeared (with the date until which it can be recovered, and a rollback offer), and a password added outside Holdfast. After looking into it, <code>holdfast host acknowledge &lt;fqdn&gt;</code> clears the alert; the record stays.</li>
+      <li>There is no raw restic console in Holdfast. If you run restic by hand against a repository, Holdfast sees the result and says so.</li>
+    </ul>
+  </div>
+
+  <div class="sub" id="certificate">
+    <h3>The agents' certificate</h3>
+    <p>The installer's agent listener certificate is valid for 10 years, and signed by the CA in <code>/etc/holdfast/tls/ca.crt</code> and <code>ca.key</code>, valid for 20, which agents pin. To replace the certificate, such as for a new name, sign a new one with that CA for the name in <code>public_url</code>, and restart the server:</p>
+    <div class="cmd"><pre><code>cd /etc/holdfast/tls
+openssl req -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -subj '/CN=holdfast.example.com' -keyout new.key -out new.csr
+printf 'subjectAltName=DNS:holdfast.example.com\nextendedKeyUsage=serverAuth\n' &gt; new.ext
+openssl x509 -req -in new.csr -CA ca.crt -CAkey ca.key -CAcreateserial -days 3650 -extfile new.ext -out new.crt
+cat new.crt ca.crt &gt; server.crt; mv new.key server.key; chmod 600 server.key
+systemctl restart holdfast-server</code></pre></div>
+    <p>Agents need nothing, as the CA is unchanged. A new CA means every agent must enroll again.</p>
+  </div>
+
+  <div class="sub" id="troubleshooting">
+    <h3>Troubleshooting</h3>
+    <div class="tablebox"><table>
+      <thead><tr><th>Symptom</th><th>Likely cause</th><th>What to do</th></tr></thead>
+      <tbody>
+        <tr><td>The installer stops with "these settings are missing"</td><td>As it says.</td><td>Set them and run it again. Nothing was changed.</td></tr>
+        <tr><td>The server does not start</td><td>A wrong setting, an unreadable key file, the database.</td><td><code>journalctl -u holdfast-server</code>. Key files must be mode 600. <code>server.yaml</code> refuses unknown keys, so a typo is named.</td></tr>
+        <tr><td><code>host add</code> fails with a B code</td><td>The bucket or a key does not meet the storage contract.</td><td>Fix what the code says (<a href="#ref-storage-codes">Storage checks</a>) and add the host again.</td></tr>
+        <tr><td>Enrollment: "pinned fingerprint"</td><td>The pin does not match the server's certificate, or something sits in between.</td><td>Use the line <code>host add</code> printed, unchanged. Check that the host reaches the server directly.</td></tr>
+        <tr><td>Enrollment: code invalid or expired</td><td>Used, or older than 15 minutes.</td><td><code>holdfast host enroll-code &lt;fqdn&gt;</code>.</td></tr>
+        <tr><td>"unknown agent certificate"</td><td>The host was rotated, removed or rebuilt, or added after the export a rebuilt server came from.</td><td>Enroll it again; after a rebuild, <code>host import</code>.</td></tr>
+        <tr><td><code>stale</code> or <code>failed</code></td><td>The host is down, the server was down, or restic failed.</td><td><code>holdfast host events &lt;fqdn&gt;</code> has the error; <code>journalctl -u holdfast-agent</code> on the host.</td></tr>
+        <tr><td><code>offline</code></td><td>The agent cannot reach the server.</td><td>On the host: <code>systemctl status holdfast-agent</code>, the firewall to 8443, DNS.</td></tr>
+        <tr><td><code>agent_too_old</code></td><td>The server was upgraded.</td><td>Run the installer on the host.</td></tr>
+        <tr><td>A save is refused with a code</td><td>A check fired.</td><td>Fix an error; accept a warning with <code>--accept</code> if you mean it.</td></tr>
+        <tr><td>The <code>export</code> problem</td><td>No recipient, or the maintenance key may not write <code>meta/</code> (B016).</td><td><code>holdfast export list</code> shows the error; fix the key's policy; <code>holdfast export now</code>.</td></tr>
+        <tr><td>Login fails in the browser</td><td>The redirect URI, the client secret, the issuer's certificate, or the groups claim.</td><td>The server's log names the step. A user without a matching group sees no host.</td></tr>
+      </tbody>
+    </table></div>
+  </div>
+</section>
+
+<!-- ================================================================================================ SECURITY -->
+<section class="chapter" id="security">
+  <h2>Security</h2>
+
+  <div class="sub" id="sec-model">
+    <h3>The model</h3>
+    <p>Backups are encrypted on the host by restic, before they leave it. Hosts hold no storage key: they reach the bucket only through the server's gateway, which knows each host by a certificate whose private key never left that host, and lets it read and add to its own repository only. The server's keys cannot delete an old version or change the bucket's settings, so whatever is deleted, by a mistake, an attacker or Holdfast itself, can be brought back from S3's versions until your lifecycle rule expires them. That floor is in the storage, out of Holdfast's reach. Holdfast's own 7-day protection sits on top of it.</p>
+  </div>
+
+  <div class="sub" id="sec-keys">
+    <h3>Who holds which key</h3>
+    <div class="tablebox"><table>
+      <thead><tr><th>Who</th><th>Holds</th><th>Can do</th></tr></thead>
+      <tbody>
+        <tr><td>A host</td><td>Its own private key and certificate, and its repository's password. No storage key.</td><td>Read and add to its own repository, through the gateway. Delete its own lock files. Nothing else.</td></tr>
+        <tr><td>The gateway (in the server)</td><td>The gateway key.</td><td>Read and add under <code>repos/</code>, delete lock files. It cannot delete a backup, even with a bug in its code.</td></tr>
+        <tr><td>The server's clean-up</td><td>The maintenance key, and every repository password, sealed with the credentials key.</td><td>Forget, check and prune; write escrow files and exports. It cannot delete old versions or change the bucket's settings.</td></tr>
+        <tr><td>The off-site copier (in the server)</td><td>The off-site key, and the off-site passwords.</td><td>Write and clean up the off-site bucket. Reads the primary only through the server itself, read-only.</td></tr>
+        <tr><td>You, offline</td><td>The escrow's age key and a copy of <code>/etc/holdfast</code>.</td><td>Open any repository with plain restic; rebuild the server.</td></tr>
+        <tr><td>Your storage admin</td><td>The buckets themselves.</td><td>Versioning, the lifecycle rule, Object Lock if wanted. Holdfast tests the first two.</td></tr>
+      </tbody>
+    </table></div>
+  </div>
+
+  <div class="sub" id="sec-windows">
+    <h3>Undoing a deletion</h3>
+    <figure>
+      <div class="scroll">
+        <svg viewBox="0 0 880 200" role="img" aria-label="Timeline after a snapshot is deleted or retention is shortened: 7 days pending, during which it can be cancelled; then the daily run forgets and prunes; then S3 keeps the old versions for the lifecycle rule's days, here 30, during which a rollback brings the files back; then the data is really gone. An admin's Prune now or Delete now skips the 7 days only.">
+          <defs><marker id="ahx2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="mkx"/></marker></defs>
+          <text class="lblx" x="60" y="30">Prune now / Delete now: an admin can skip the 7 days</text>
+          <path class="bypass" d="M60 88 Q130 40 198 88" marker-end="url(#ahx2)"/>
+          <rect class="band1" x="60" y="90" width="140" height="52" rx="4"/>
+          <text class="t" x="130" y="112" text-anchor="middle">7 days pending</text>
+          <text class="s" x="130" y="130" text-anchor="middle">cancel · Keep longer</text>
+          <rect class="band2" x="200" y="90" width="600" height="52" rx="4"/>
+          <text class="t" x="500" y="112" text-anchor="middle">S3 keeps the old versions (lifecycle rule, here 30 days)</text>
+          <text class="s" x="500" y="130" text-anchor="middle">a rollback brings the files back</text>
+          <line class="tick" x1="60" y1="142" x2="60" y2="150"/><line class="tick" x1="200" y1="142" x2="200" y2="150"/><line class="tick" x1="800" y1="142" x2="800" y2="150"/>
+          <text class="lbl" x="60" y="166">day 0</text><text class="lbl" x="200" y="166" text-anchor="middle">day 7</text><text class="lbl" x="800" y="166" text-anchor="end">day 37</text>
+          <text class="s" x="60" y="186">change saved</text><text class="s" x="200" y="186" text-anchor="middle">forget · check · prune</text><text class="s" x="800" y="186" text-anchor="end">really gone</text>
+        </svg>
+      </div>
+      <figcaption>After a snapshot is deleted or retention is shortened. Holdfast waits 7 days before it forgets anything; only an admin, typing the host's name, can skip that wait. Nothing in Holdfast can skip the second window: its keys may not delete old versions. The second window's length is your lifecycle rule.</figcaption>
+    </figure>
+  </div>
+
+  <div class="sub" id="sec-whatif">
+    <h3>If something goes wrong</h3>
+    <div class="tablebox"><table>
+      <thead><tr><th>What happens</th><th>What it can do</th><th>What still saves you</th></tr></thead>
+      <tbody>
+        <tr><td>A host is hacked</td><td>Read its own backups and add new ones. It cannot delete any, and cannot reach another host's.</td><td>Old snapshots stay. <code>holdfast host rotate</code> gives the repository a new password and forgets the host's key.</td></tr>
+        <tr><td>The server is hacked, or an admin makes a mistake</td><td>Read every backup, as the server holds the passwords. Delete snapshots through restic, in both buckets.</td><td>S3 versioning: a rollback brings the files back until the lifecycle rule expires them. No Holdfast key can delete an old version.</td></tr>
+        <tr><td>An admin's login is stolen</td><td>What an admin can do in Holdfast, which includes <strong>reading backups</strong>. The attacker can add a machine of their own as a host and restore any host's snapshot onto it, if it allows <code>allow_other_hosts</code>, which they set. Or they can issue an enrollment code for an existing host and enroll their machine in its place. They cannot run commands on your hosts, and can restore over files only where a host allows it.</td><td>The 7-day protection for everything but Prune now and Delete now; versioning behind it; the audit log, which records every host added, code issued and restore; your provider's second factor. Keep admins few.</td></tr>
+        <tr><td>The server is down</td><td>No backups, no config changes, no clean-up, no UI.</td><td>Agents keep their schedule and back up when it returns. The witness alerts on stale snapshots.</td></tr>
+        <tr><td>A snapshot disappears without Holdfast</td><td>Someone ran restic by hand, or the storage lost data.</td><td>Shown in red and alerted. Roll back from S3's versions.</td></tr>
+        <tr><td>The primary site is lost</td><td>The server, its database and the primary bucket.</td><td>With an off-site bucket: its copies, with their own passwords escrowed there, and the nightly export. Without one, what that site held is gone.</td></tr>
+        <tr><td>Holdfast's PostgreSQL is lost</td><td>Settings and history; backups pause until the server is rebuilt.</td><td>The nightly export and your offline copy of <code>/etc/holdfast</code>. The agents reconnect by themselves.</td></tr>
+        <tr><td>The escrow key is lost</td><td>Nothing at once.</td><td>The server still has every password. Make a new key pair, change <code>escrow.age_recipient</code>, restart: new escrow files and exports use it. Exports made before are unreadable.</td></tr>
+      </tbody>
+    </table></div>
+  </div>
+
+  <div class="sub" id="sec-rules">
+    <h3>Rules that always hold</h3>
+    <ul class="plain">
+      <li>The UI, the API and the CLI never show file contents: only names and metadata. Restores run on an agent and write to that host, or to another enrolled host an admin names.</li>
+      <li>Nothing destructive bypasses the 7-day protection, except an admin's Prune now, Delete now or repository rollback. Prune now and Delete now are confirmed by typing the host's short name, a rollback by typing its full name. A rollback deletes no S3 version.</li>
+      <li>Removing a job or a host never deletes data. Only a decommission does, after 7 days.</li>
+      <li>Agents never forget or prune. Only the server does, with its maintenance key.</li>
+      <li>Every action is audited, with the person, the time and any accepted warning codes. Every refusal by the gateway too.</li>
+      <li>Credentials never appear in the UI, in API or CLI output, in logs, in metrics or in config revisions. A decrypted escrow file given to <code>host import</code> is never shown back.</li>
+      <li>Passwords are never passed on a command line, and restic never inherits <code>RESTIC_*</code> or <code>AWS_*</code> variables from its parent.</li>
+      <li>There is no raw restic console and no free-form restic argument. <code>restic unlock</code> only ever removes stale locks.</li>
+      <li>A dump runs only a command root on the host defined, as the user it names, with a clean environment.</li>
+    </ul>
+  </div>
+
+  <div class="sub" id="sec-crypto">
+    <h3>Encryption and secrets</h3>
+    <dl class="parts">
+      <dt>Backups</dt><dd>restic encrypts and authenticates every file on the host (AES-256 with Poly1305), with the host's own repository password. The gateway and the bucket only see encrypted data.</dd>
+      <dt>Agent ↔ server</dt><dd>TLS 1.2 or later, mutual. The agent pins the server's CA; the server pins the agent's own certificate, made at enrollment. No token or shared secret is ever sent.</dd>
+      <dt>People ↔ server</dt><dd>HTTPS on the UI's own listener, OIDC login, sessions of 12 hours for browsers and 7 days for the CLI, which an admin can end.</dd>
+      <dt>Passwords at rest</dt><dd>Sealed in PostgreSQL with the credentials key, which only the server's root can read. The nightly export holds them still sealed: the export alone opens no repository.</dd>
+      <dt>Escrow and exports</dt><dd>Encrypted with <code>age</code> to your public key; the private key never touches the server.</dd>
+      <dt>Files on disk</dt><dd>Every key and secret file is root-only (mode 600); the server refuses a storage key file that others can read.</dd>
+    </dl>
+  </div>
+
+  <div class="sub" id="sec-hardening">
+    <h3>Hardening checklist</h3>
+    <ul class="plain">
+      <li>Make the bucket with an identity that is neither of Holdfast's keys, and keep the explicit denies in both policies.</li>
+      <li>Choose the lifecycle rule's days deliberately: it is how long any deletion can be undone. Consider Object Lock on the bucket for a floor no one can lower.</li>
+      <li>Keep the escrow key and a copy of <code>/etc/holdfast</code> offline, and test a restore with plain restic once.</li>
+      <li>Use an off-site bucket in another site, with a key of its own.</li>
+      <li>Put the UI behind your OIDC provider's second factor, and keep admins few. Prefer editor for daily work.</li>
+      <li>Leave restore bounds at their defaults on hosts that do not need more.</li>
+      <li>Allow 8443 to the server only from your hosts and Prometheus, and 443 only from your admins. <code>/metrics</code> on 8443 needs no login; it shows host and job names and their state, and no secrets.</li>
+      <li>Remove the names in <code>bootstrap_admins</code> once your groups work.</li>
+      <li>Route the alerts, and set up the dead man's switch outside your site.</li>
+      <li>Read <code>install.sh</code> before piping it to a shell if your policy asks for that; it checks every package against <code>SHA256SUMS</code>.</li>
+    </ul>
+  </div>
+
+  <div class="sub" id="sec-limits">
+    <h3>Known limits</h3>
+    <ul class="plain">
+      <li><strong>The server can read every backup, and so can an admin.</strong> The server holds every repository's password, so whoever controls it can restore anything. An admin can enroll a machine and restore any host's backups onto it. What neither can do is destroy backups beyond the lifecycle rule's reach.</li>
+      <li><strong>Prune now and Delete now need one admin.</strong> A second admin's approval for destructive actions is not built.</li>
+      <li><strong>The packages are not signed yet.</strong> They are checked against <code>SHA256SUMS</code>, which comes from the same place.</li>
+      <li><strong>No outside security review</strong> has been done yet.</li>
+      <li>Holdfast cannot test that the off-site bucket is really in another site.</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ================================================================================================ REFERENCE -->
+<section class="chapter" id="reference">
+  <h2>Reference</h2>
+
+  <div class="sub" id="ref-server-yaml">
+    <h3>server.yaml</h3>
+    <p><code>/etc/holdfast/server.yaml</code>, root-only. Unknown keys are refused, so a typo is an error, not a silently ignored setting. Change it as root and restart <code>holdfast-server</code>; <code>holdfast settings</code> shows it without secrets. The full example is <code>/usr/share/holdfast/server.yaml.example</code>.</p>
+    <div class="tablebox"><table class="ref">
+      <thead><tr><th>Key</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td>listen</td><td>The agent listener, also <code>/metrics</code> and <code>/healthz</code>. Default <code>:8443</code>.</td></tr>
+        <tr><td>public_url</td><td>The URL agents use. Required.</td></tr>
+        <tr><td>tls.cert_file, tls.key_file</td><td>The agent listener's certificate chain and key. Required.</td></tr>
+        <tr><td>ca_sha256</td><td>The pin printed in the enrollment line.</td></tr>
+        <tr><td>api_socket</td><td>The root-only socket for the CLI on the server, <code>/run/holdfast/api.sock</code>.</td></tr>
+        <tr><td>database_dsn_file</td><td>A file holding the PostgreSQL DSN (or <code>database_dsn</code>). Required.</td></tr>
+        <tr><td>credentials_key_file</td><td>The credentials key. Required. Keep a copy offline.</td></tr>
+        <tr><td>default_zone</td><td>The time zone for schedules that name none. UTC when the key is absent; the installer writes the machine's zone.</td></tr>
+        <tr><td>download_url</td><td>Where hosts fetch <code>install.sh</code> and the packages, for a mirror.</td></tr>
+        <tr><td>state_dir, restic_bin</td><td>Defaults <code>/var/lib/holdfast-server</code> and <code>/usr/libexec/holdfast/restic</code>.</td></tr>
+        <tr><td>storage.endpoint, .bucket, .region</td><td>The primary bucket.</td></tr>
+        <tr><td>storage.gateway_credentials_file</td><td>The gateway key: <code>AWS_ACCESS_KEY_ID=…</code> and <code>AWS_SECRET_ACCESS_KEY=…</code>, mode 600.</td></tr>
+        <tr><td>storage.maintenance_credentials_file</td><td>The maintenance key, the same format.</td></tr>
+        <tr><td>escrow.age_recipient</td><td>The escrow's age public key.</td></tr>
+        <tr><td>maintenance.check</td><td><code>daily</code> or <code>off</code>: each agent's daily check.</td></tr>
+        <tr><td>maintenance.check_cycle_days</td><td>The check reads 1/N of the data each day. Default 30.</td></tr>
+        <tr><td>maintenance.retention</td><td><code>daily</code> or <code>off</code>: the daily forget and prune.</td></tr>
+        <tr><td>offsite.endpoint, .bucket, .region, .maintenance_credentials_file, .poll</td><td>Off-site copies; <code>poll</code> default 5m.</td></tr>
+        <tr><td>ui.listen, ui.public_url, ui.tls</td><td>The web UI's listener, URL and certificate. Off while <code>ui.listen</code> is not set.</td></tr>
+        <tr><td>auth.oidc.issuer, .client_id, .client_secret_file</td><td>The OIDC provider; required with <code>ui.listen</code>.</td></tr>
+        <tr><td>auth.oidc.groups_claim, .username_claim, .scopes, .ca_file</td><td>Defaults <code>groups</code>, <code>preferred_username</code>, <code>openid profile groups</code>, the system's CAs.</td></tr>
+        <tr><td>auth.bootstrap_admins</td><td>User names that are admin everywhere at every login while listed, whatever their groups. For the first login; remove them once groups work.</td></tr>
+      </tbody>
+    </table></div>
+  </div>
+
+  <div class="sub" id="ref-agent-yaml">
+    <h3>agent.yaml</h3>
+    <p><code>/etc/holdfast/agent.yaml</code> on each host, written by <code>holdfast-agent enroll</code>. <code>restore:</code> and <code>dumps:</code> are the host's own, and enrolling again keeps them.</p>
+    <div class="tablebox"><table class="ref">
+      <thead><tr><th>Key</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td>server, fqdn, ca_sha256</td><td>Written at enrollment.</td></tr>
+        <tr><td>state_dir, credentials_dir, restic_bin</td><td>Defaults <code>/var/lib/holdfast-agent</code>, <code>/etc/holdfast/credentials</code>, <code>/usr/libexec/holdfast/restic</code>.</td></tr>
+        <tr><td>poll_timeout, tick, retry_lock</td><td>The long poll (25s), the scheduler's resolution (1s), how long a backup waits for the clean-up's lock (15m).</td></tr>
+        <tr><td>restore.root</td><td>Where new restore folders go. Default <code>/var/restore</code>.</td></tr>
+        <tr><td>restore.allow_in_place, .allow_other_directories, .allow_other_hosts</td><td>What restores may do on this host. All false by default.</td></tr>
+        <tr><td>dumps.&lt;name&gt;.command, .user, .filename, .env</td><td>The dump commands jobs may name.</td></tr>
+      </tbody>
+    </table></div>
+  </div>
+
+  <div class="sub" id="ref-files">
+    <h3>Files and units</h3>
+    <div class="tablebox"><table class="ref">
+      <thead><tr><th>Path</th><th>What</th></tr></thead>
+      <tbody>
+        <tr><td>/usr/bin/holdfast-server, holdfast-server.service</td><td>The server and its unit.</td></tr>
+        <tr><td>/usr/bin/holdfast-agent, holdfast-agent.service</td><td>The agent and its unit.</td></tr>
+        <tr><td>/usr/bin/holdfast</td><td>The CLI.</td></tr>
+        <tr><td>/usr/bin/holdfast-freshness, holdfast-freshness.service</td><td>The storage witness.</td></tr>
+        <tr><td>/usr/libexec/holdfast/restic</td><td>The pinned restic.</td></tr>
+        <tr><td>/usr/share/holdfast/</td><td>The example <code>server.yaml</code>, the alert rules, the alerting scripts.</td></tr>
+        <tr><td>/etc/holdfast/</td><td>Settings and keys, root-only (<a href="#where">What is stored where</a>).</td></tr>
+        <tr><td>/var/lib/holdfast-server/, /var/lib/holdfast-agent/</td><td>State and restic's cache.</td></tr>
+        <tr><td>/run/holdfast/api.sock</td><td>The root-only API socket on the server.</td></tr>
+        <tr><td>/usr/share/doc/holdfast-*/</td><td>Each package's licence and third-party notices.</td></tr>
+      </tbody>
+    </table></div>
+  </div>
+
+  <div class="sub" id="ref-storage-codes">
+    <h3>Storage checks</h3>
+    <p>Errors that cannot be accepted. Hosts hold no key, so B001, B002 and B005 to B007 test the gateway key on the host's prefix.</p>
+    <div class="tablebox"><table>
+      <thead><tr><th>Code</th><th>Fails when</th></tr></thead>
+      <tbody>
+        <tr><td>B001</td><td>The gateway key cannot write under the host's prefix, or cannot delete under its <code>locks/</code>.</td></tr>
+        <tr><td>B002</td><td>The gateway key cannot read back or list the host's prefix.</td></tr>
+        <tr><td>B003</td><td>The maintenance key cannot read what the gateway key wrote.</td></tr>
+        <tr><td>B004</td><td>The maintenance key cannot write, list or delete under <code>repos/</code>.</td></tr>
+        <tr><td>B005</td><td>The gateway key can delete outside <code>locks/</code>.</td></tr>
+        <tr><td>B006</td><td>The gateway key can delete a version for good.</td></tr>
+        <tr><td>B007</td><td>The gateway key can use the bucket outside <code>repos/</code>, such as <code>escrow/</code> or <code>meta/</code>.</td></tr>
+        <tr><td>B008</td><td>Bucket versioning is not enabled.</td></tr>
+        <tr><td>B009</td><td>The maintenance key can delete a version for good.</td></tr>
+        <tr><td>B010</td><td>The maintenance key can change the bucket's settings: versioning, the lifecycle rule or the policy.</td></tr>
+        <tr><td>B011</td><td>No enabled lifecycle rule expires noncurrent versions under <code>repos/</code>.</td></tr>
+        <tr><td>B012</td><td>The maintenance key cannot write and delete under <code>escrow/</code>.</td></tr>
+        <tr><td>B016</td><td>The maintenance key cannot write, read back and delete under <code>meta/</code>.</td></tr>
+      </tbody>
+    </table></div>
+    <p>The off-site bucket passes B004, B008 to B012 and B016 with the off-site key.</p>
+  </div>
+
+  <div class="sub" id="ref-metrics">
+    <h3>Metrics</h3>
+    <p>The server's, at <code>https://holdfast.example.com:8443/metrics</code>; the witness's at port 9817. The main ones:</p>
+    <div class="tablebox"><table class="ref">
+      <thead><tr><th>Metric</th><th>Means</th></tr></thead>
+      <tbody>
+        <tr><td>holdfast_job_last_success_timestamp_seconds</td><td>Each job's last successful backup.</td></tr>
+        <tr><td>holdfast_job_longest_gap_seconds</td><td>Each job's longest gap between runs, for its stale threshold.</td></tr>
+        <tr><td>holdfast_runs_total</td><td>Runs by host, kind, job and status.</td></tr>
+        <tr><td>holdfast_agent_last_seen_timestamp_seconds</td><td>When each agent was last in touch.</td></tr>
+        <tr><td>holdfast_agent_config_in_sync</td><td>Whether each agent runs its current config.</td></tr>
+        <tr><td>holdfast_storage_contract_ok, _failed</td><td>Each host's storage checks, and the failing code.</td></tr>
+        <tr><td>holdfast_repository_bytes{versions}</td><td>Each repository's size: current, and the old versions S3 keeps.</td></tr>
+        <tr><td>holdfast_snapshots_disappeared, holdfast_repository_foreign_keys</td><td>Changes made outside Holdfast.</td></tr>
+        <tr><td>holdfast_gateway_bytes_total, _requests_total, _refusals_total</td><td>Traffic through the gateway, and what it refused.</td></tr>
+        <tr><td>holdfast_export_last_success_timestamp_seconds</td><td>The last nightly export.</td></tr>
+        <tr><td>holdfast_offsite_behind_seconds</td><td>How far each job's off-site copy is behind.</td></tr>
+        <tr><td>holdfast_storage_newest_snapshot_timestamp_seconds</td><td>The witness: each host's newest snapshot in the bucket.</td></tr>
+      </tbody>
+    </table></div>
+  </div>
+
+  <div class="sub" id="ref-api">
+    <h3>API</h3>
+    <p>JSON under <code>/api/v1/</code>, on the UI's listener with a session, or on the root socket on the server. The CLI's <code>--json</code> shows each answer. The main routes:</p>
+    <div class="cmd"><pre><code>GET    /api/v1/status                         GET  /api/v1/me
+GET    /api/v1/hosts                          POST /api/v1/hosts                      <span class="c"># add</span>
+GET    /api/v1/hosts/{fqdn}                   DELETE /api/v1/hosts/{fqdn}             <span class="c"># remove</span>
+POST   /api/v1/hosts/{fqdn}/enrollment-code   POST /api/v1/hosts/{fqdn}/rotate
+PUT    /api/v1/hosts/{fqdn}/jobs/{job}        POST /api/v1/hosts/{fqdn}/jobs/{job}/check
+POST   /api/v1/hosts/{fqdn}/jobs/{job}/run    GET  /api/v1/hosts/{fqdn}/events
+GET    /api/v1/hosts/{fqdn}/snapshots         GET  /api/v1/hosts/{fqdn}/snapshots/{id}/files
+GET    /api/v1/hosts/{fqdn}/snapshots/{id}/changes
+POST   /api/v1/hosts/{fqdn}/snapshots/{id}/restore
+POST   /api/v1/hosts/{fqdn}/snapshots/{id}/delete
+GET    /api/v1/hosts/{fqdn}/pending           POST /api/v1/hosts/{fqdn}/prune-now
+GET    /api/v1/hosts/{fqdn}/rollback?to=…     POST /api/v1/hosts/{fqdn}/decommission
+GET    /api/v1/revisions                      GET  /api/v1/revisions/{a}/diff/{b}
+GET    /api/v1/audit                          GET  /api/v1/search?q=…
+GET    /api/v1/access                         GET  /api/v1/exports      POST /api/v1/exports
+/api/v1/offsite/…                             <span class="c"># the same routes, for the off-site copies</span></code></pre></div>
+    <p>Saves take <code>accept</code>, the warning codes accepted, and <code>message</code>. A refused save answers 422 with every finding; a host you may not see answers 404.</p>
+  </div>
+</section>
+
+<!-- ================================================================================================ DESIGN -->
+<section class="chapter" id="design">
+  <h2>Design choices</h2>
+
+  <div class="sub" id="choices">
+    <h3>Choices and why</h3>
+    <p>Each choice has a written record with its full reasoning in the repository's <code>docs/decisions/</code>; the number is on the right.</p>
+    <ul class="choices">
+      <li><span class="what">restic does the work. Holdfast manages it.</span><span class="why">restic is proven. Where restic can decide something, Holdfast asks it rather than doing it again.</span><span class="rec">001 · 030</span></li>
+      <li><span class="what">Hosts reach storage only through the server's gateway.</span><span class="why">No storage key on any host, so adding a host is one command. The price: backups need the server to be up.</span><span class="rec">041</span></li>
+      <li><span class="what">A host proves who it is with a key it makes itself, which the server pins, as SSH does.</span><span class="why">No secret in transit to steal or replay, and no certificate authority for hosts to run or renew.</span><span class="rec">041</span></li>
+      <li><span class="what">Two storage keys per bucket, made by you and tested by Holdfast.</span><span class="why">Works with any S3. The key the hosts' traffic uses cannot delete.</span><span class="rec">029 · 041</span></li>
+      <li><span class="what">The agent keeps its own schedule.</span><span class="why">No central scheduler to fail; the server sends changes, not start signals.</span><span class="rec">006</span></li>
+      <li><span class="what">Only the server forgets and prunes, and every deletion waits 7 days.</span><span class="why">Deleting happens in one place, under one set of rules, with time to notice a mistake.</span><span class="rec">007 · 015 · 031</span></li>
+      <li><span class="what">Retention as time windows, decided by restic.</span><span class="why">"Keep 14 days" means the same on every schedule.</span><span class="rec">018 · 030</span></li>
+      <li><span class="what">The last safety net is S3 versioning.</span><span class="why">It holds even against a hacked server.</span><span class="rec">030</span></li>
+      <li><span class="what">Restores run on the host, within bounds the host sets.</span><span class="why">A hacked server or admin login cannot write over a host's files unless the host allows it, and the UI never shows file contents.</span><span class="rec">023 · 030</span></li>
+      <li><span class="what">Config as revisions in PostgreSQL, with no rollback button.</span><span class="why">Every change passes the same checks; a rollback could quietly cut retention.</span><span class="rec">012 · 013</span></li>
+      <li><span class="what">UI = API = CLI, every action audited.</span><span class="why">Everything can be scripted, nothing hides in one tool, and you can see who did what.</span><span class="rec">014 · 028</span></li>
+      <li><span class="what">OIDC login with three fixed roles.</span><span class="why">Your provider does passwords and second factors; roles are easy to reason about.</span><span class="rec">024 · 025 · 035</span></li>
+      <li><span class="what">Off-site copies are optional and made by the server, with their own passwords and retention.</span><span class="why">One program to run; a leaked primary password does not open the copies.</span><span class="rec">041</span></li>
+      <li><span class="what">One server, replaced when lost; no standby.</span><span class="why">Backups tolerate a delay; the data is safe in the bucket. A rebuild from a nightly export is simpler to trust than a cluster.</span><span class="rec">040 · 042</span></li>
+      <li><span class="what">Passwords escrowed with age.</span><span class="why">You can recover without Holdfast, and the bucket alone opens nothing.</span><span class="rec">036</span></li>
+      <li><span class="what">Dumps from commands defined on the host.</span><span class="why">Root on the host decides what runs there.</span><span class="rec">037</span></li>
+      <li><span class="what">A one-line install that stops on a missing setting.</span><span class="why">Installs as k3s does. The storage keys and the escrow key decide what can be deleted and what can be rebuilt, so they are given on purpose, never guessed.</span><span class="rec">044</span></li>
+      <li><span class="what">Apache-2.0.</span><span class="why">Company legal reviews accept it routinely, and it carries a patent grant.</span><span class="rec">043</span></li>
+    </ul>
+  </div>
+
+  <div class="sub" id="left-out">
+    <h3>Left out on purpose</h3>
+    <ul class="plain">
+      <li>High availability of Holdfast itself: no standby, cluster or second gateway. <span class="muted mono">042</span></li>
+      <li>Kubernetes, Windows and macOS. <span class="muted mono">002 · 042</span></li>
+      <li>A raw restic console, free-form restic arguments, and viewing file contents.</li>
+      <li>Custom roles. <span class="muted mono">035</span></li>
+      <li>Managing Object Lock: it is your storage's setting, which Holdfast reports. <span class="muted mono">041</span></li>
+      <li>Fixes for what restic itself cannot handle. <span class="muted mono">030</span></li>
+    </ul>
+  </div>
+
+  <div class="sub" id="status">
+    <h3>Where it stands</h3>
+    <ol class="track">
+      <li><span class="m">M1</span><span>Agent and server core: enrollment, config revisions, schedules, backups, the storage witness, metrics</span><span class="pill ok">done</span></li>
+      <li><span class="m">M2</span><span>Snapshot list, browsing, changes, restores through the agent</span><span class="pill ok">done</span></li>
+      <li><span class="m">M3</span><span>Checks, retention decided by restic, the 7-day protection, Prune now, deleting a snapshot</span><span class="pill ok">done</span></li>
+      <li><span class="m">M4</span><span>The API with login and roles, and the web UI</span><span class="pill ok">done</span></li>
+      <li><span class="m">M5</span><span>Packages and upgrades, run controls, repository size, escrow, a compromised host, alerting, decommission</span><span class="pill ok">done</span></li>
+      <li><span class="m">M6</span><span>Dumps, restore onto another host, rollback from S3 versions, the bare-metal runbook</span><span class="pill ok">done</span></li>
+      <li><span class="m">M7–M8</span><span>Off-site copies; the gateway and agent certificates, no storage key on hosts</span><span class="pill ok">done</span></li>
+      <li><span class="m">M9</span><span>Replacing a lost server from the nightly export, host import, sizing</span><span class="pill ok">done</span></li>
+      <li><span class="m">044</span><span>The one-line installer, tested on Ubuntu 24.04, AlmaLinux 9 and Oracle Linux 9</span><span class="pill ok">done</span></li>
+    </ol>
+    <div class="two">
+      <div class="panel">
+        <h4>How it is tested</h4>
+        <ul class="plain">
+          <li>End-to-end tests run the real programs against real restic, MinIO and PostgreSQL, through the gateway, with off-site on and off, and a server lost and restored.</li>
+          <li>The installer's test installs a server and agents with <code>curl | sh</code> on systemd machines of each distribution, and backs up.</li>
+          <li>A lab of VMs with Ceph checks that 13 kinds of file metadata survive a restore on Ubuntu, AlmaLinux and Oracle Linux, and walks the rebuild runbook.</li>
+        </ul>
+      </div>
+      <div class="panel">
+        <h4>Still open</h4>
+        <ul class="plain">
+          <li>A second admin's approval for destructive actions.</li>
+          <li>Signed packages and an apt or yum repository.</li>
+          <li>An outside security review.</li>
+          <li>The website's own address; until then the installer comes from GitHub releases.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="sub" id="glossary">
+    <h3>Glossary</h3>
+    <dl class="words">
+      <div><dt>restic</dt><dd>The open-source backup program Holdfast runs. It encrypts and deduplicates.</dd></div>
+      <div><dt>Repository</dt><dd>restic's store for one host, under <code>repos/&lt;fqdn&gt;/</code> in the bucket.</dd></div>
+      <div><dt>Snapshot</dt><dd>One backup: the state of the job's paths at one moment.</dd></div>
+      <div><dt>Job</dt><dd>What to back up on a host, when, and how long to keep it.</dd></div>
+      <div><dt>Revision</dt><dd>A numbered save of the whole config, with who, when and why.</dd></div>
+      <div><dt>Enrollment</dt><dd>A host proving itself to the server once, with a one-time code, after which its certificate is pinned.</dd></div>
+      <div><dt>Pin</dt><dd>The sha256 of a certificate that one side insists on seeing from the other.</dd></div>
+      <div><dt>Gateway</dt><dd>The part of the server that passes the hosts' backups to S3 and decides what each host may do.</dd></div>
+      <div><dt>Gateway key, maintenance key</dt><dd>The server's two S3 keys: one adds, one cleans up; neither can delete old versions.</dd></div>
+      <div><dt>Forget, prune</dt><dd>restic's two steps of deleting: forget drops snapshots from the list; prune frees their data.</dd></div>
+      <div><dt>Pending</dt><dd>A deletion waiting out the 7 days, which can still be cancelled.</dd></div>
+      <div><dt>Versioning, lifecycle rule</dt><dd>S3 keeping old versions of every file, and the rule that expires them after a number of days.</dd></div>
+      <div><dt>Escrow</dt><dd>Each repository's password, encrypted to your offline age key, in the bucket.</dd></div>
+      <div><dt>Nightly export</dt><dd>The server's database, encrypted to the same key, in <code>meta/</code>, for rebuilding a lost server.</dd></div>
+      <div><dt>Credentials key</dt><dd>The server's key that seals every repository password in its database.</dd></div>
+      <div><dt>Storage witness</dt><dd><code>holdfast-freshness</code>: lists the bucket for Prometheus, apart from the server.</dd></div>
+      <div><dt>Drift</dt><dd>An agent that does not run its current config.</dd></div>
+      <div><dt>FQDN</dt><dd>A host's full name, such as <code>web01.example.com</code>: its identity in Holdfast.</dd></div>
+    </dl>
+  </div>
+</section>
+
+<footer>
+  <span>Holdfast is free software under the Apache License 2.0. The full behaviour is in the repository's <code>docs/spec.md</code>, and every decision's reasoning in <code>docs/decisions/</code>.</span>
+  <span>Commands and output on this page are from the tested release; names such as <code>holdfast.example.com</code> and the pins are examples.</span>
+</footer>
+
+</main>
+</div>
+
+<script>
+// A copy button on each command block. The text is copied without the button's own label.
+document.querySelectorAll('.cmd').forEach(function (box) {
+  var pre = box.querySelector('pre');
+  if (!pre) return;
+  var b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'copy';
+  b.textContent = 'Copy';
+  b.setAttribute('aria-label', 'Copy this block');
+  b.addEventListener('click', function () {
+    var text = pre.innerText;
+    var done = function () { b.textContent = 'Copied'; setTimeout(function () { b.textContent = 'Copy'; }, 1500); };
+    var select = function () {
+      var r = document.createRange(); r.selectNodeContents(pre);
+      var s = window.getSelection(); s.removeAllRanges(); s.addRange(r);
+      b.textContent = 'Selected: press Ctrl+C';
+      setTimeout(function () { b.textContent = 'Copy'; }, 2500);
+    };
+    try { navigator.clipboard.writeText(text).then(done, select); } catch (e) { select(); }
+  });
+  box.appendChild(b);
+});
+</script>

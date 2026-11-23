@@ -334,15 +334,11 @@ func hostCmd() *cobra.Command {
 			in["job_id"], in["job"], in["accept"] = add.id, job, add.accept
 		}
 		var res struct {
-			Revision   int64     `json:"revision"`
-			Warning    string    `json:"warning"`
-			Findings   []finding `json:"findings"`
-			Accepted   []string  `json:"accepted_codes"`
-			Enrollment struct {
-				Code           string    `json:"code"`
-				ExpiresAt      time.Time `json:"expires_at"`
-				InstallCommand string    `json:"install_command"`
-			} `json:"enrollment"`
+			Revision   int64      `json:"revision"`
+			Warning    string     `json:"warning"`
+			Findings   []finding  `json:"findings"`
+			Accepted   []string   `json:"accepted_codes"`
+			Enrollment enrollment `json:"enrollment"`
 		}
 		raw, err := call("POST", "/api/v1/hosts", in, &res)
 		if err != nil {
@@ -352,8 +348,7 @@ func hostCmd() *cobra.Command {
 			printJSON(raw)
 			return nil
 		}
-		fmt.Printf("added %s in revision %d; its storage passed every check\nenrollment code %s, valid until %s\n\nrun on the host, as root:\n  %s\n",
-			a[0], res.Revision, res.Enrollment.Code, res.Enrollment.ExpiresAt.Local().Format("15:04"), res.Enrollment.InstallCommand)
+		fmt.Printf("added %s in revision %d; its storage passed every check\n%s", a[0], res.Revision, res.Enrollment.howTo())
 		if len(res.Findings) > 0 {
 			fmt.Println("\nchecks on job " + add.id + ":")
 			printFindings(res.Findings, res.Accepted)
@@ -403,11 +398,7 @@ func hostCmd() *cobra.Command {
 	c.AddCommand(hostOperatingCmds()...)
 	c.AddCommand(hostImportCmd())
 	c.AddCommand(&cobra.Command{Use: "enroll-code <fqdn>", Short: "Issue a new 15-minute enrollment code (revokes the open one)", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, a []string) error {
-		var e struct {
-			Code           string    `json:"code"`
-			ExpiresAt      time.Time `json:"expires_at"`
-			InstallCommand string    `json:"install_command"`
-		}
+		var e enrollment
 		raw, err := call("POST", "/api/v1/hosts/"+url.PathEscape(a[0])+"/enrollment-code", nil, &e)
 		if err != nil {
 			return err
@@ -416,7 +407,7 @@ func hostCmd() *cobra.Command {
 			printJSON(raw)
 			return nil
 		}
-		fmt.Printf("enrollment code %s, valid until %s\n  %s\n", e.Code, e.ExpiresAt.Local().Format("15:04"), e.InstallCommand)
+		fmt.Print(e.howTo())
 		return nil
 	}})
 	c.AddCommand(&cobra.Command{Use: "events <fqdn>", Short: "Recent runs on a host", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, a []string) error {

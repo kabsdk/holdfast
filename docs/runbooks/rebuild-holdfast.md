@@ -30,12 +30,20 @@ writes one at once. Standard tools open one without Holdfast: `age -d -i escrow-
 
 ## The steps
 
-1. **A machine with PostgreSQL** and an empty database and user for Holdfast, as `docs/install.md` makes them.
-2. **The packages**: `holdfast-restic`, `holdfast-cli`, `holdfast-server` (and `holdfast-freshness` if it ran there).
-   Do not start `holdfast-server` yet.
-3. **Put `/etc/holdfast` back**: `server.yaml`, the credentials key and every file `server.yaml` names, root-only.
-   If the new machine has another address, point `public_url`'s name at it: agents use that name.
-4. **Restore the newest export**, as root:
+1. **Put `/etc/holdfast` back** on the new machine: `server.yaml`, the credentials key and every file `server.yaml`
+   names, root-only. If the new machine has another address, point `public_url`'s name at it: agents use that name.
+2. **Run the server's install line** (decision 044), with no settings:
+
+   ```
+   curl -sfL https://github.com/kabsdk/holdfast/releases/latest/download/install.sh | sh -s - server
+   ```
+
+   With `/etc/holdfast` back and no Holdfast installed, it prepares a rebuild: it installs PostgreSQL with the database
+   password from `db.dsn` (when `db.dsn` names the local database the installer made), installs `holdfast-restic`,
+   `holdfast-cli` and `holdfast-server`, and leaves the server stopped. The newest release is never older than the
+   export, which restoring needs. By hand instead: PostgreSQL with an empty database and user, and the three packages
+   at the version the lost server ran or newer; do not start `holdfast-server` yet.
+3. **Restore the newest export**, as root:
 
    ```
    holdfast-server restore-export -identity escrow-key.txt -latest
@@ -51,23 +59,26 @@ writes one at once. Standard tools open one without Holdfast: `age -d -i escrow-
 
    It then loads every table, the off-site ones too, migrates them to the installed version, and audits the restore.
    It prints the head revision and the number of hosts.
-5. **Start the server**: `systemctl enable --now holdfast-server`.
-6. **Check**:
+4. **Start the server**: `systemctl enable --now holdfast-server`.
+5. **Check**:
    - `holdfast status` shows no problem, and `holdfast export list` says the server was restored, from which export;
    - `holdfast host list`: every agent enrolled before the export comes back online within a minute or two, by
      itself: the export holds each one's pinned certificate. Its snapshots are listed again;
    - a host that shows **"ahead"** ran a change made after the export. Its agent keeps that config, and the server
      sends it nothing, until you make the change again (`holdfast job set …`). A host with no such change needs nothing.
-7. **Hosts added after the export** are not in it: their agents are refused. For each one:
+6. **Hosts added after the export** are not in it: their agents are refused. For each one:
    1. Decrypt its escrow file. The storage admin reads `escrow/<fqdn>.age` from the bucket with their own key (the
       maintenance key cannot read it): `age -d -i escrow-key.txt <fqdn>.age > escrow.json`.
    2. `holdfast host import <fqdn> --escrow-file escrow.json`. It checks the file is that host's and names this
       server's repository for it, tests the storage, and proves the password opens the repository. The UI has the
       same form, beside Add host.
-   3. Run the enrollment command it prints on the host, as root. The agent makes a new certificate.
+   3. Run the line it prints on the host, as root. The agent makes a new certificate.
    4. Set its jobs again: the import adds the host without any.
    5. Delete `escrow.json`.
-8. **The next export** is written by the new server at 00:30, or at once with `holdfast export now`.
+7. **The next export** is written by the new server at 00:30, or at once with `holdfast export now`.
+
+`make install-test` walks steps 1 to 5 on containers of each distribution: `/etc/holdfast` put back on a new machine,
+the install line, the newest export restored, and the agent back by itself and backing up (decision 044).
 
 ## Walked in the lab
 
