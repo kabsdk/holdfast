@@ -358,7 +358,7 @@ func (s *Server) enrollment(fqdn, code string, expires time.Time) Enrollment {
 	return Enrollment{FQDN: fqdn, Code: code, ExpiresAt: expires, InstallScript: s.installScript(fqdn, code), InstallCommand: s.installCommand(fqdn, code)}
 }
 
-// installScript is the one line to run on the host, as k3s's (decision 044): it installs the packages of this server's
+// installScript is the one line to run on the host (decision 044): it installs the packages of this server's
 // release, from download_url or GitHub, and enrolls with the code.
 func (s *Server) installScript(fqdn, code string) string {
 	vars := []string{"HOLDFAST_SERVER=" + shellWord(s.set.PublicURL), "HOLDFAST_FQDN=" + shellWord(fqdn), "HOLDFAST_CODE=" + shellWord(code)}

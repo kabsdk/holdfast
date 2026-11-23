@@ -1,4 +1,4 @@
-# 044: A one-line install, as k3s has
+# 044: A one-line install
 
 Status: accepted, 2026-11-23. You asked for installation "in a zerobyte-way (curl some sh script, like k3s as well)",
 and left it to me whether it should stop on missing settings.
@@ -15,7 +15,7 @@ and left it to me whether it should stop on missing settings.
    ```
 
    The role is the first argument, and `agent` when there is none, since agents are the many. Settings are
-   `HOLDFAST_*` environment variables, as k3s's are `K3S_*`. The URL is the GitHub release until the website exists.
+   `HOLDFAST_*` environment variables. The URL is the GitHub release until the website exists.
 
 2. **A missing or wrong setting stops it before it changes anything.** It checks every setting first and prints all
    that are missing or wrong, each with a line saying what it is, then exits 1. It never prompts: `curl | sh` has no

@@ -81,7 +81,7 @@ header { display: grid; gap: 1rem }
 /* Code */
 .cmd { position: relative; min-width: 0 }
 pre { font-family: var(--mono); font-size: 0.84rem; line-height: 1.55; background: var(--code); border: 1px solid var(--line); border-radius: 8px;
-  padding: 0.75rem 0.95rem; margin: 0; overflow-x: auto; white-space: pre; tab-size: 2 }
+  padding: 0.75rem 0.95rem; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; tab-size: 2 }
 .cmd pre { padding-right: 4.5rem }
 pre code { background: none; padding: 0; font-size: inherit; overflow-wrap: normal }
 pre .c { color: var(--muted) }
@@ -134,7 +134,7 @@ tr:last-child td { border-bottom: 0 }
 th { font-size: 0.74rem; font-family: var(--mono); letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); font-weight: 500 }
 td:first-child { font-weight: 600 }
 td.m, td .m { font-family: var(--mono); font-size: 0.85rem; font-weight: 500 }
-table.ref td:first-child { font-family: var(--mono); font-size: 0.84rem; font-weight: 500; white-space: nowrap }
+table.ref td:first-child { font-family: var(--mono); font-size: 0.84rem; font-weight: 500; overflow-wrap: anywhere; width: 34% }
 .pill { font-family: var(--mono); font-size: 0.72rem; padding: 0.1rem 0.5rem; border-radius: 999px; white-space: nowrap }
 .pill.ok { background: var(--ok-soft); color: var(--ok) }
 .pill.plan { background: var(--plan-soft); color: var(--plan) }
@@ -172,6 +172,9 @@ footer { font-size: 0.9rem; color: var(--muted); border-top: 1px solid var(--lin
   <ol>
     <li><a href="#introduction">Introduction</a>
       <ol><li><a href="#what">What Holdfast does</a></li><li><a href="#who">Who it is for</a></li><li><a href="#features">What you get</a></li><li><a href="#requirements">Requirements</a></li></ol></li>
+    <li><a href="#architecture">Architecture</a>
+      <ol><li><a href="#picture">The picture</a></li><li><a href="#life">Life of a backup</a></li><li><a href="#network">Who connects to whom</a></li>
+      <li><a href="#where">What is stored where</a></li><li><a href="#one-server">One server</a></li><li><a href="#sizing">Sizing</a></li></ol></li>
     <li><a href="#quickstart">Quick start</a></li>
     <li><a href="#installation">Installation</a>
       <ol><li><a href="#before">Before you start</a></li><li><a href="#storage">The bucket and its keys</a></li><li><a href="#escrow-key">The escrow key</a></li>
@@ -179,9 +182,6 @@ footer { font-size: 0.9rem; color: var(--muted); border-top: 1px solid var(--lin
       <li><a href="#install-cli">The CLI on a workstation</a></li><li><a href="#install-monitoring">Monitoring and alerts</a></li><li><a href="#install-offsite">Off-site copies</a></li>
       <li><a href="#install-mirror">Mirrors and closed networks</a></li><li><a href="#install-manual">Without the script</a></li><li><a href="#installer-ref">Installer settings</a></li>
       <li><a href="#upgrade">Upgrading</a></li><li><a href="#remove">Removing</a></li></ol></li>
-    <li><a href="#architecture">Architecture</a>
-      <ol><li><a href="#picture">The picture</a></li><li><a href="#life">Life of a backup</a></li><li><a href="#network">Who connects to whom</a></li>
-      <li><a href="#where">What is stored where</a></li><li><a href="#one-server">One server</a></li><li><a href="#sizing">Sizing</a></li></ol></li>
     <li><a href="#usage">Using Holdfast</a>
       <ol><li><a href="#ways">UI, CLI and API</a></li><li><a href="#hosts">Hosts</a></li><li><a href="#jobs">Jobs and schedules</a></li><li><a href="#retention">Retention</a></li>
       <li><a href="#checks">Checks and their codes</a></li><li><a href="#snapshots">Snapshots</a></li><li><a href="#restore">Restoring</a></li><li><a href="#dumps">Database dumps</a></li>
@@ -212,7 +212,7 @@ footer { font-size: 0.9rem; color: var(--muted); border-top: 1px solid var(--lin
   <h1>Holdfast documentation</h1>
   <p class="lede">Holdfast runs restic backups for a fleet of Linux servers from one place. You install one Holdfast server, put a small agent on every host, and say what to back up and how long to keep it. The agents make encrypted backups with restic and send them through the server to your own S3 storage. The server keeps the settings and the history, cleans up every day under a 7-day safety rule, and alerts you when something is wrong.</p>
   <div class="status">
-    <div><b>Install</b><span>One line per machine: <code>curl … | sh</code>, as k3s does it.</span></div>
+    <div><b>Install</b><span>One line per machine: <code>curl … | sh</code>.</span></div>
     <div><b>No storage key on hosts</b><span>The server holds two S3 keys, whether you have 5 hosts or 500. Hosts hold none.</span></div>
     <div><b>Free and open</b><span>Apache-2.0. No paid tier, no feature gating.</span></div>
   </div>
@@ -273,6 +273,174 @@ footer { font-size: 0.9rem; color: var(--muted); border-top: 1px solid var(--lin
   </div>
 </section>
 
+<!-- ================================================================================================ ARCHITECTURE -->
+<section class="chapter" id="architecture">
+  <h2>Architecture</h2>
+
+  <div class="sub" id="picture">
+    <h3>The picture</h3>
+    <p>One Holdfast server, an agent on every host, and an S3 bucket. A second, off-site bucket is optional.</p>
+    <figure>
+      <div class="scroll">
+        <svg viewBox="0 0 960 470" role="img" aria-label="Holdfast's parts and who connects to whom. People use the server's UI and API on port 443. Each agent connects only to the server on port 8443, with its own certificate, for its settings, its reports and its backup data. The server's gateway writes backups to the primary bucket with a key that cannot delete; the server cleans up with its maintenance key, stores its state in PostgreSQL, and copies each new snapshot to the optional off-site bucket. The storage witness lists the primary bucket.">
+          <defs>
+            <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="mk"/></marker>
+            <marker id="ahx" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="mkx"/></marker>
+          </defs>
+          <rect class="site" x="8" y="8" width="652" height="454" rx="10"/>
+          <rect class="site" x="676" y="8" width="276" height="454" rx="10"/>
+          <text class="sitelabel" x="24" y="30">PRIMARY SITE</text>
+          <text class="sitelabel" x="692" y="30">OFF-SITE · OPTIONAL</text>
+          <rect class="box" x="28" y="62" width="150" height="52" rx="6"/>
+          <text class="t" x="103" y="84" text-anchor="middle">People</text>
+          <text class="s" x="103" y="102" text-anchor="middle">browser · CLI</text>
+          <rect class="box key" x="250" y="50" width="210" height="100" rx="6"/>
+          <text class="t" x="355" y="74" text-anchor="middle">holdfast-server</text>
+          <text class="s" x="355" y="92" text-anchor="middle">settings · history · clean-up</text>
+          <rect class="box" x="262" y="106" width="186" height="32" rx="4"/>
+          <text class="gw" x="355" y="126" text-anchor="middle">gateway: checks each host</text>
+          <rect class="box store" x="500" y="62" width="140" height="52" rx="6"/>
+          <text class="t" x="570" y="84" text-anchor="middle">PostgreSQL</text>
+          <text class="s" x="570" y="102" text-anchor="middle">revisions · audit log</text>
+          <rect class="box" x="40" y="232" width="170" height="64" rx="6"/>
+          <rect class="box" x="34" y="226" width="170" height="64" rx="6"/>
+          <rect class="box key" x="28" y="220" width="170" height="64" rx="6"/>
+          <text class="t" x="113" y="246" text-anchor="middle">holdfast-agent</text>
+          <text class="s" x="113" y="266" text-anchor="middle">one per host · no storage key</text>
+          <rect class="box store" x="250" y="370" width="210" height="76" rx="6"/>
+          <text class="t" x="355" y="400" text-anchor="middle">S3 bucket (primary)</text>
+          <text class="s" x="355" y="420" text-anchor="middle">repos/ · escrow/ · meta/</text>
+          <rect class="box" x="500" y="382" width="140" height="56" rx="6"/>
+          <text class="t" x="570" y="406" text-anchor="middle">Storage witness</text>
+          <text class="s" x="570" y="424" text-anchor="middle">lists the bucket</text>
+          <rect class="box store" x="700" y="370" width="230" height="76" rx="6"/>
+          <text class="t" x="815" y="400" text-anchor="middle">S3 bucket (off-site)</text>
+          <text class="s" x="815" y="420" text-anchor="middle">own passwords · own retention</text>
+          <path class="ln" d="M178 88 H246" marker-end="url(#ah)"/>
+          <text class="lbl" x="212" y="80" text-anchor="middle">443</text>
+          <path class="ln" d="M460 88 H496" marker-end="url(#ah)"/>
+          <text class="lbl" x="478" y="80" text-anchor="middle">stores</text>
+          <path class="ln" d="M198 252 H330 V154" marker-end="url(#ah)"/>
+          <text class="lbl" x="218" y="270">8443 · settings · reports · backups</text>
+          <text class="lbl" x="218" y="286">mutual TLS, its own certificate</text>
+          <path class="ln" d="M390 150 V366" marker-end="url(#ah)"/>
+          <text class="lbl" x="382" y="320" text-anchor="end">gateway key: adds,</text>
+          <text class="lbl" x="382" y="336" text-anchor="end">cannot delete</text>
+          <path class="ln" d="M430 150 V366" marker-end="url(#ah)"/>
+          <text class="lbl" x="438" y="320">maintenance key:</text>
+          <text class="lbl" x="438" y="336">forget · check · prune</text>
+          <path class="ln" d="M500 410 H464" marker-end="url(#ah)"/>
+          <text class="lbl" x="482" y="402" text-anchor="middle">lists</text>
+          <path class="lnx" d="M460 140 H815 V366" marker-end="url(#ahx)"/>
+          <text class="lblx" x="640" y="132" text-anchor="middle">copies each new snapshot</text>
+          <text class="lbl" x="823" y="250">restic copy,</text>
+          <text class="lbl" x="823" y="266">then its own clean-up</text>
+        </svg>
+      </div>
+      <figcaption>Every arrow points from the side that opens the connection. A host talks only to the Holdfast server, and proves who it is with a key it made itself. Only the server holds storage keys: one that can add but not delete, for the hosts' backups, and one for clean-up. The server also fills the off-site bucket (orange), if there is one. Prometheus, not drawn, scrapes the server and the witness.</figcaption>
+    </figure>
+    <dl class="parts">
+      <dt>holdfast-agent</dt><dd>Runs as root on each host. It keeps its own schedule and a saved copy of its jobs, runs restic itself, and spools its reports to disk until the server has them. It holds no storage key. It only ever dials out.</dd>
+      <dt>holdfast-server</dt><dd>Keeps the settings, the history and the audit log in PostgreSQL. Serves the UI and the API to people, and the root-only socket to the CLI on the server. Forgets, checks and prunes each repository once a day. Makes the off-site copies when there is an off-site bucket. Writes the nightly export.</dd>
+      <dt>The gateway</dt><dd>A part of the server, not a program of its own. It speaks restic's REST protocol to the agents and S3 to the bucket. It knows each host by its certificate, lets it read and add to its own repository only, delete only its own lock files, and never rewrite a file. Every refusal is audited.</dd>
+      <dt>PostgreSQL</dt><dd>The server's state: config revisions, history, the audit log, the snapshot catalogue (a cache, read again from the repositories), and every repository password, sealed with the credentials key.</dd>
+      <dt>S3 buckets</dt><dd>Each host has one restic repository under <code>repos/&lt;fqdn&gt;/</code>, with its own password. <code>escrow/</code> holds the passwords encrypted to your age key; <code>meta/</code> holds the nightly exports.</dd>
+      <dt>holdfast-freshness</dt><dd>The storage witness: lists the bucket for Prometheus, apart from the server.</dd>
+      <dt>Prometheus</dt><dd>Scrapes the server and the witness, never the agents, and evaluates the alert rules that ship with Holdfast.</dd>
+    </dl>
+  </div>
+
+  <div class="sub" id="life">
+    <h3>Life of a backup</h3>
+    <figure>
+      <div class="scroll">
+        <svg viewBox="0 0 900 380" role="img" aria-label="The steps of a backup, between the agent, the server, the gateway and the bucket. 1: the agent polls the server and gets its jobs, which it saves. 2: at the scheduled time it runs restic, which encrypts on the host and sends the data through the gateway. 3: the gateway checks the host's certificate and writes the encrypted files to the bucket with the gateway key. 4: the agent reports the run. 5: once a day the server forgets, checks and prunes with the maintenance key. 6: with an off-site bucket, the server copies the new snapshot there.">
+          <defs><marker id="ah2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="mk"/></marker></defs>
+          <rect class="box key" x="40" y="16" width="160" height="40" rx="6"/><text class="t" x="120" y="41" text-anchor="middle">Agent (on the host)</text>
+          <rect class="box key" x="290" y="16" width="160" height="40" rx="6"/><text class="t" x="370" y="41" text-anchor="middle">Server</text>
+          <rect class="box" x="510" y="16" width="160" height="40" rx="6"/><text class="t" x="590" y="41" text-anchor="middle">Gateway (in the server)</text>
+          <rect class="box store" x="720" y="16" width="160" height="40" rx="6"/><text class="t" x="800" y="41" text-anchor="middle">S3 bucket</text>
+          <line class="lane" x1="120" y1="56" x2="120" y2="370"/><line class="lane" x1="370" y1="56" x2="370" y2="370"/>
+          <line class="lane" x1="590" y1="56" x2="590" y2="370"/><line class="lane" x1="800" y1="56" x2="800" y2="370"/>
+          <text class="num" x="128" y="84">1</text>
+          <path class="ln" d="M120 92 H366" marker-end="url(#ah2)"/><text class="lbli" x="140" y="86">poll: "what are my jobs?" (long poll)</text>
+          <path class="ln" d="M370 110 H124" marker-end="url(#ah2)"/><text class="lbl" x="355" y="126" text-anchor="end">jobs of the current revision, saved on disk</text>
+          <text class="num" x="128" y="162">2</text>
+          <path class="ln" d="M120 170 H586" marker-end="url(#ah2)"/><text class="lbli" x="140" y="164">02:00: restic backup, encrypted on the host</text>
+          <text class="num" x="598" y="196">3</text>
+          <path class="ln" d="M590 204 H796" marker-end="url(#ah2)"/><text class="lbli" x="606" y="198">checks the host's certificate</text>
+          <text class="lbl" x="606" y="222">writes with the gateway key</text>
+          <text class="num" x="128" y="252">4</text>
+          <path class="ln" d="M120 260 H366" marker-end="url(#ah2)"/><text class="lbli" x="140" y="254">report: success, snapshot ID</text>
+          <text class="num" x="378" y="296">5</text>
+          <path class="ln" d="M370 304 H796" marker-end="url(#ah2)"/><text class="lbli" x="386" y="298">daily, in the quiet stretch: forget (after 7 days), check, prune</text>
+          <text class="lbl" x="386" y="320">with the maintenance key</text>
+          <text class="num" x="378" y="350">6</text>
+          <text class="lbli" x="392" y="356">with an off-site bucket: restic copy of the new snapshot</text>
+        </svg>
+      </div>
+      <figcaption>The agent gets its jobs from the server and then follows its own schedule; the server sends changes, not start signals. restic encrypts on the host, so the gateway and the bucket only ever see encrypted data.</figcaption>
+    </figure>
+    <ul class="plain">
+      <li><strong>If the server is down</strong>, the agent keeps its schedule. restic waits for the gateway, and a backup that fails is retried as soon as the server answers.</li>
+      <li><strong>A failed backup</strong> is retried after 5, 15 and 45 minutes, as long as the retry starts before the job's next run.</li>
+      <li><strong>A backup or check that runs too long</strong> is stopped at the schedule's longest gap (at least an hour) and reported as failed, so the host's other jobs can run. A first backup too big for one gap finishes over several runs: restic saves its index as it goes, so what a stopped run uploaded is not sent again.</li>
+      <li><strong>One restic at a time per host.</strong> Backups, checks and restores queue on the host. A backup that meets the daily clean-up's lock on its repository waits up to 15 minutes (<code>retry_lock</code>), then fails and is retried like any failed run.</li>
+      <li><strong>Each agent checks its own repository</strong> once a day, right after a backup, reading a rotating 1/30 of the data, so all of it is read once a month.</li>
+    </ul>
+  </div>
+
+  <div class="sub" id="network">
+    <h3>Who connects to whom</h3>
+    <div class="tablebox"><table>
+      <thead><tr><th>From</th><th>To</th><th>Port</th><th>What for</th></tr></thead>
+      <tbody>
+        <tr><td>Every agent</td><td>Server</td><td class="m">8443/tcp</td><td>Jobs, reports and backups through the gateway, over mutual TLS. The port of <code>public_url</code>.</td></tr>
+        <tr><td>People, the CLI</td><td>Server</td><td class="m">443/tcp</td><td>The UI and the API, with OIDC login. The port of <code>ui.public_url</code>.</td></tr>
+        <tr><td>Server</td><td>S3</td><td class="m">endpoint</td><td>The gateway and the maintenance key; the off-site bucket if set.</td></tr>
+        <tr><td>Server</td><td>OIDC provider</td><td class="m">443/tcp</td><td>Logins.</td></tr>
+        <tr><td>Server</td><td>PostgreSQL</td><td class="m">5432/tcp</td><td>Its state; local unless you gave a DSN.</td></tr>
+        <tr><td>Prometheus</td><td>Server</td><td class="m">8443/tcp</td><td><code>/metrics</code>, no login or client certificate: host and job names and their state, no secrets.</td></tr>
+        <tr><td>Prometheus</td><td>Witness</td><td class="m">9817/tcp</td><td>The witness's metrics.</td></tr>
+        <tr><td>Witness</td><td>S3</td><td class="m">endpoint</td><td>Lists the bucket.</td></tr>
+      </tbody>
+    </table></div>
+    <p>Agents accept no connections. Nothing connects to a host.</p>
+  </div>
+
+  <div class="sub" id="where">
+    <h3>What is stored where</h3>
+    <div class="tablebox"><table>
+      <thead><tr><th>Where</th><th>What</th></tr></thead>
+      <tbody>
+        <tr><td>The bucket, <code>repos/&lt;fqdn&gt;/</code></td><td>Each host's restic repository: encrypted with the host's password, readable with plain restic.</td></tr>
+        <tr><td>The bucket, <code>escrow/&lt;fqdn&gt;.age</code></td><td>The host's repository URL and password, encrypted to your age key. Written when a host is added and whenever its password changes; retried every 15 minutes until it is written.</td></tr>
+        <tr><td>The bucket, <code>meta/&lt;date&gt;.age</code></td><td>The nightly export of the server's database, encrypted to your age key. The newest 30 are kept.</td></tr>
+        <tr><td>Server, PostgreSQL</td><td>Config revisions, history, the audit log, the snapshot catalogue, the agents' pinned certificates, and the repository passwords sealed with the credentials key.</td></tr>
+        <tr><td>Server, <code>/etc/holdfast/</code></td><td><code>server.yaml</code> and the files it names: the credentials key, the storage key files, the database DSN, the OIDC secret, the TLS keys and the agents' CA. All root-only.</td></tr>
+        <tr><td>Host, <code>/etc/holdfast/</code></td><td><code>agent.yaml</code>, the host's own settings, and <code>credentials/repo.pass</code>, the repository password, root-only.</td></tr>
+        <tr><td>Host, <code>/var/lib/holdfast-agent/</code></td><td>The agent's private key and certificate, its saved jobs, its event spool and restic's cache.</td></tr>
+      </tbody>
+    </table></div>
+  </div>
+
+  <div class="sub" id="one-server">
+    <h3>One server, replaced when lost</h3>
+    <p>Holdfast runs as one server, with no standby, cluster or second gateway. That is how open-source tools of this kind are built: Kopia's repository server, Proxmox Backup Server, UrBackup and Bareos each run one server, and the answer to a lost one is a new one on the same storage.</p>
+    <ul class="plain">
+      <li><strong>While the server is down</strong>, no backup is made: agents keep their schedule and back up as soon as it answers. Nothing already in the bucket is affected, and the storage witness, which lists the bucket directly, alerts when snapshots go stale. For nightly backups, a few hours' outage only makes them late.</li>
+      <li><strong>When the server is lost</strong>, a new one is installed and restored from the newest nightly export, and the agents reconnect by themselves (<a href="#lost-server">A lost server</a>).</li>
+    </ul>
+  </div>
+
+  <div class="sub" id="sizing">
+    <h3>Sizing</h3>
+    <p>Every backup and restore passes through the server's gateway, so its network is what the fleet shares. In the lab, a server with 2 vCPUs and 2 GiB carried <strong>66 MiB/s</strong>: three agents backed up 256 MiB each of new random data at once, 768 MiB in 11.6 s, with the server's CPU about a quarter busy. The lab is one machine's virtual network, so this is a floor: on real hardware, the server's network link and the storage are the limit.</p>
+    <p>restic sends only what changed, so the question is whether a night's changes cross the server's link within your backup window. A fleet whose changes take longer needs a second, independent Holdfast with its own bucket; Holdfast does not spread one fleet over several servers.</p>
+    <p><strong>Disk</strong> on the server is not measured yet. It holds PostgreSQL, which grows with the history and the audit log, and restic's cache in <code>/var/lib/holdfast-server/cache</code>, used by the daily clean-up: each repository's index and directory data, a small part of its size. The lab's server has 20 GiB; watch the disk as the fleet grows.</p>
+  </div>
+</section>
+
 <!-- ================================================================================================ QUICK START -->
 <section class="chapter" id="quickstart">
   <h2>Quick start</h2>
@@ -281,8 +449,17 @@ footer { font-size: 0.9rem; color: var(--muted); border-top: 1px solid var(--lin
     <li><strong>Make the bucket and two keys</strong> at your S3 server: versioning on, a lifecycle rule for old versions, a gateway key and a maintenance key with the policies in <a href="#storage">The bucket and its keys</a>.</li>
     <li><strong>Make an escrow key pair</strong> on your own machine, not the server, and keep the private key offline:
       <div class="cmd"><pre><code>age-keygen -o escrow-key.txt      <span class="c"># prints: Public key: age1…</span></code></pre></div></li>
-    <li><strong>Install the server.</strong> Put the settings in a file only root can read, then run the installer as root on the server:
-      <div class="cmd"><pre><code>set -a; . ./holdfast.env; set +a
+    <li><strong>Install the server.</strong> Write the settings into a file on the server that only root can read, <code>/root/holdfast.env</code>, with your own values:
+      <div class="cmd"><pre><code>HOLDFAST_S3_ENDPOINT=https://s3.example.com           <span class="c"># your S3 server</span>
+HOLDFAST_S3_BUCKET=holdfast                           <span class="c"># the bucket from step 1</span>
+HOLDFAST_GATEWAY_ACCESS_KEY_ID=…                      <span class="c"># the gateway key from step 1</span>
+HOLDFAST_GATEWAY_SECRET_ACCESS_KEY=…
+HOLDFAST_MAINTENANCE_ACCESS_KEY_ID=…                  <span class="c"># the maintenance key from step 1</span>
+HOLDFAST_MAINTENANCE_SECRET_ACCESS_KEY=…
+HOLDFAST_ESCROW_RECIPIENT=age1…                       <span class="c"># the public key from step 2</span></code></pre></div>
+      <p>Then, as root on the server, load the file into the environment (<code>set -a</code> exports every variable the file sets) and run the installer:</p>
+      <div class="cmd"><pre><code>chmod 600 /root/holdfast.env
+set -a; . /root/holdfast.env; set +a
 curl -sfL https://github.com/kabsdk/holdfast/releases/latest/download/install.sh | sh -s - server</code></pre></div>
       <p>It installs PostgreSQL and Holdfast, starts the server, and prints the pin agents use. Copy <code>/etc/holdfast</code> to a safe place offline now.</p></li>
     <li><strong>Add a host</strong>, as root on the server:
@@ -301,7 +478,7 @@ holdfast snapshot list web01.example.com</code></pre></div></li>
 <!-- ================================================================================================ INSTALLATION -->
 <section class="chapter" id="installation">
   <h2>Installation</h2>
-  <p>Everything is installed by one script, <code>install.sh</code>, released with each version beside the packages. It works as k3s's installer does: you pipe it to <code>sh</code> as root, with its settings in environment variables, and name a role. It installs Holdfast's <code>.deb</code> or <code>.rpm</code> packages with apt or dnf, each checked against the release's <code>SHA256SUMS</code>, and sets the machine up.</p>
+  <p>Everything is installed by one script, <code>install.sh</code>, released with each version beside the packages. You pipe it to <code>sh</code> as root, with its settings in environment variables, and name a role. It installs Holdfast's <code>.deb</code> or <code>.rpm</code> packages with apt or dnf, each checked against the release's <code>SHA256SUMS</code>, and sets the machine up.</p>
   <div class="tablebox"><table>
     <thead><tr><th>Role</th><th>Where</th><th>Command</th></tr></thead>
     <tbody>
@@ -703,174 +880,6 @@ curl -sfL https://github.com/kabsdk/holdfast/releases/download/v1.1.0/install.sh
   <div class="sub" id="remove">
     <h3>Removing</h3>
     <p>Removing a package stops and disables its service. It never deletes <code>/etc/holdfast</code>, the agent's state, or any backup. To stop backing up a host, remove it in Holdfast (<code>holdfast host remove</code>): its repository stays. To delete its backups, decommission it, which waits 7 days (<a href="#decommission">Decommissioning</a>).</p>
-  </div>
-</section>
-
-<!-- ================================================================================================ ARCHITECTURE -->
-<section class="chapter" id="architecture">
-  <h2>Architecture</h2>
-
-  <div class="sub" id="picture">
-    <h3>The picture</h3>
-    <p>One Holdfast server, an agent on every host, and an S3 bucket. A second, off-site bucket is optional.</p>
-    <figure>
-      <div class="scroll">
-        <svg viewBox="0 0 960 470" role="img" aria-label="Holdfast's parts and who connects to whom. People use the server's UI and API on port 443. Each agent connects only to the server on port 8443, with its own certificate, for its settings, its reports and its backup data. The server's gateway writes backups to the primary bucket with a key that cannot delete; the server cleans up with its maintenance key, stores its state in PostgreSQL, and copies each new snapshot to the optional off-site bucket. The storage witness lists the primary bucket.">
-          <defs>
-            <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="mk"/></marker>
-            <marker id="ahx" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="mkx"/></marker>
-          </defs>
-          <rect class="site" x="8" y="8" width="652" height="454" rx="10"/>
-          <rect class="site" x="676" y="8" width="276" height="454" rx="10"/>
-          <text class="sitelabel" x="24" y="30">PRIMARY SITE</text>
-          <text class="sitelabel" x="692" y="30">OFF-SITE · OPTIONAL</text>
-          <rect class="box" x="28" y="62" width="150" height="52" rx="6"/>
-          <text class="t" x="103" y="84" text-anchor="middle">People</text>
-          <text class="s" x="103" y="102" text-anchor="middle">browser · CLI</text>
-          <rect class="box key" x="250" y="50" width="210" height="100" rx="6"/>
-          <text class="t" x="355" y="74" text-anchor="middle">holdfast-server</text>
-          <text class="s" x="355" y="92" text-anchor="middle">settings · history · clean-up</text>
-          <rect class="box" x="262" y="106" width="186" height="32" rx="4"/>
-          <text class="gw" x="355" y="126" text-anchor="middle">gateway: checks each host</text>
-          <rect class="box store" x="500" y="62" width="140" height="52" rx="6"/>
-          <text class="t" x="570" y="84" text-anchor="middle">PostgreSQL</text>
-          <text class="s" x="570" y="102" text-anchor="middle">revisions · audit log</text>
-          <rect class="box" x="40" y="232" width="170" height="64" rx="6"/>
-          <rect class="box" x="34" y="226" width="170" height="64" rx="6"/>
-          <rect class="box key" x="28" y="220" width="170" height="64" rx="6"/>
-          <text class="t" x="113" y="246" text-anchor="middle">holdfast-agent</text>
-          <text class="s" x="113" y="266" text-anchor="middle">one per host · no storage key</text>
-          <rect class="box store" x="250" y="370" width="210" height="76" rx="6"/>
-          <text class="t" x="355" y="400" text-anchor="middle">S3 bucket (primary)</text>
-          <text class="s" x="355" y="420" text-anchor="middle">repos/ · escrow/ · meta/</text>
-          <rect class="box" x="500" y="382" width="140" height="56" rx="6"/>
-          <text class="t" x="570" y="406" text-anchor="middle">Storage witness</text>
-          <text class="s" x="570" y="424" text-anchor="middle">lists the bucket</text>
-          <rect class="box store" x="700" y="370" width="230" height="76" rx="6"/>
-          <text class="t" x="815" y="400" text-anchor="middle">S3 bucket (off-site)</text>
-          <text class="s" x="815" y="420" text-anchor="middle">own passwords · own retention</text>
-          <path class="ln" d="M178 88 H246" marker-end="url(#ah)"/>
-          <text class="lbl" x="212" y="80" text-anchor="middle">443</text>
-          <path class="ln" d="M460 88 H496" marker-end="url(#ah)"/>
-          <text class="lbl" x="478" y="80" text-anchor="middle">stores</text>
-          <path class="ln" d="M198 252 H330 V154" marker-end="url(#ah)"/>
-          <text class="lbl" x="218" y="270">8443 · settings · reports · backups</text>
-          <text class="lbl" x="218" y="286">mutual TLS, its own certificate</text>
-          <path class="ln" d="M390 150 V366" marker-end="url(#ah)"/>
-          <text class="lbl" x="382" y="320" text-anchor="end">gateway key: adds,</text>
-          <text class="lbl" x="382" y="336" text-anchor="end">cannot delete</text>
-          <path class="ln" d="M430 150 V366" marker-end="url(#ah)"/>
-          <text class="lbl" x="438" y="320">maintenance key:</text>
-          <text class="lbl" x="438" y="336">forget · check · prune</text>
-          <path class="ln" d="M500 410 H464" marker-end="url(#ah)"/>
-          <text class="lbl" x="482" y="402" text-anchor="middle">lists</text>
-          <path class="lnx" d="M460 140 H815 V366" marker-end="url(#ahx)"/>
-          <text class="lblx" x="640" y="132" text-anchor="middle">copies each new snapshot</text>
-          <text class="lbl" x="823" y="250">restic copy,</text>
-          <text class="lbl" x="823" y="266">then its own clean-up</text>
-        </svg>
-      </div>
-      <figcaption>Every arrow points from the side that opens the connection. A host talks only to the Holdfast server, and proves who it is with a key it made itself. Only the server holds storage keys: one that can add but not delete, for the hosts' backups, and one for clean-up. The server also fills the off-site bucket (orange), if there is one. Prometheus, not drawn, scrapes the server and the witness.</figcaption>
-    </figure>
-    <dl class="parts">
-      <dt>holdfast-agent</dt><dd>Runs as root on each host. It keeps its own schedule and a saved copy of its jobs, runs restic itself, and spools its reports to disk until the server has them. It holds no storage key. It only ever dials out.</dd>
-      <dt>holdfast-server</dt><dd>Keeps the settings, the history and the audit log in PostgreSQL. Serves the UI and the API to people, and the root-only socket to the CLI on the server. Forgets, checks and prunes each repository once a day. Makes the off-site copies when there is an off-site bucket. Writes the nightly export.</dd>
-      <dt>The gateway</dt><dd>A part of the server, not a program of its own. It speaks restic's REST protocol to the agents and S3 to the bucket. It knows each host by its certificate, lets it read and add to its own repository only, delete only its own lock files, and never rewrite a file. Every refusal is audited.</dd>
-      <dt>PostgreSQL</dt><dd>The server's state: config revisions, history, the audit log, the snapshot catalogue (a cache, read again from the repositories), and every repository password, sealed with the credentials key.</dd>
-      <dt>S3 buckets</dt><dd>Each host has one restic repository under <code>repos/&lt;fqdn&gt;/</code>, with its own password. <code>escrow/</code> holds the passwords encrypted to your age key; <code>meta/</code> holds the nightly exports.</dd>
-      <dt>holdfast-freshness</dt><dd>The storage witness: lists the bucket for Prometheus, apart from the server.</dd>
-      <dt>Prometheus</dt><dd>Scrapes the server and the witness, never the agents, and evaluates the alert rules that ship with Holdfast.</dd>
-    </dl>
-  </div>
-
-  <div class="sub" id="life">
-    <h3>Life of a backup</h3>
-    <figure>
-      <div class="scroll">
-        <svg viewBox="0 0 900 380" role="img" aria-label="The steps of a backup, between the agent, the server, the gateway and the bucket. 1: the agent polls the server and gets its jobs, which it saves. 2: at the scheduled time it runs restic, which encrypts on the host and sends the data through the gateway. 3: the gateway checks the host's certificate and writes the encrypted files to the bucket with the gateway key. 4: the agent reports the run. 5: once a day the server forgets, checks and prunes with the maintenance key. 6: with an off-site bucket, the server copies the new snapshot there.">
-          <defs><marker id="ah2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="mk"/></marker></defs>
-          <rect class="box key" x="40" y="16" width="160" height="40" rx="6"/><text class="t" x="120" y="41" text-anchor="middle">Agent (on the host)</text>
-          <rect class="box key" x="290" y="16" width="160" height="40" rx="6"/><text class="t" x="370" y="41" text-anchor="middle">Server</text>
-          <rect class="box" x="510" y="16" width="160" height="40" rx="6"/><text class="t" x="590" y="41" text-anchor="middle">Gateway (in the server)</text>
-          <rect class="box store" x="720" y="16" width="160" height="40" rx="6"/><text class="t" x="800" y="41" text-anchor="middle">S3 bucket</text>
-          <line class="lane" x1="120" y1="56" x2="120" y2="370"/><line class="lane" x1="370" y1="56" x2="370" y2="370"/>
-          <line class="lane" x1="590" y1="56" x2="590" y2="370"/><line class="lane" x1="800" y1="56" x2="800" y2="370"/>
-          <text class="num" x="128" y="84">1</text>
-          <path class="ln" d="M120 92 H366" marker-end="url(#ah2)"/><text class="lbli" x="140" y="86">poll: "what are my jobs?" (long poll)</text>
-          <path class="ln" d="M370 110 H124" marker-end="url(#ah2)"/><text class="lbl" x="355" y="126" text-anchor="end">jobs of the current revision, saved on disk</text>
-          <text class="num" x="128" y="162">2</text>
-          <path class="ln" d="M120 170 H586" marker-end="url(#ah2)"/><text class="lbli" x="140" y="164">02:00: restic backup, encrypted on the host</text>
-          <text class="num" x="598" y="196">3</text>
-          <path class="ln" d="M590 204 H796" marker-end="url(#ah2)"/><text class="lbli" x="606" y="198">checks the host's certificate</text>
-          <text class="lbl" x="606" y="222">writes with the gateway key</text>
-          <text class="num" x="128" y="252">4</text>
-          <path class="ln" d="M120 260 H366" marker-end="url(#ah2)"/><text class="lbli" x="140" y="254">report: success, snapshot ID</text>
-          <text class="num" x="378" y="296">5</text>
-          <path class="ln" d="M370 304 H796" marker-end="url(#ah2)"/><text class="lbli" x="386" y="298">daily, in the quiet stretch: forget (after 7 days), check, prune</text>
-          <text class="lbl" x="386" y="320">with the maintenance key</text>
-          <text class="num" x="378" y="350">6</text>
-          <text class="lbli" x="392" y="356">with an off-site bucket: restic copy of the new snapshot</text>
-        </svg>
-      </div>
-      <figcaption>The agent gets its jobs from the server and then follows its own schedule; the server sends changes, not start signals. restic encrypts on the host, so the gateway and the bucket only ever see encrypted data.</figcaption>
-    </figure>
-    <ul class="plain">
-      <li><strong>If the server is down</strong>, the agent keeps its schedule. restic waits for the gateway, and a backup that fails is retried as soon as the server answers.</li>
-      <li><strong>A failed backup</strong> is retried after 5, 15 and 45 minutes, as long as the retry starts before the job's next run.</li>
-      <li><strong>A backup or check that runs too long</strong> is stopped at the schedule's longest gap (at least an hour) and reported as failed, so the host's other jobs can run. A first backup too big for one gap finishes over several runs: restic saves its index as it goes, so what a stopped run uploaded is not sent again.</li>
-      <li><strong>One restic at a time per host.</strong> Backups, checks and restores queue on the host. A backup that meets the daily clean-up's lock on its repository waits up to 15 minutes (<code>retry_lock</code>), then fails and is retried like any failed run.</li>
-      <li><strong>Each agent checks its own repository</strong> once a day, right after a backup, reading a rotating 1/30 of the data, so all of it is read once a month.</li>
-    </ul>
-  </div>
-
-  <div class="sub" id="network">
-    <h3>Who connects to whom</h3>
-    <div class="tablebox"><table>
-      <thead><tr><th>From</th><th>To</th><th>Port</th><th>What for</th></tr></thead>
-      <tbody>
-        <tr><td>Every agent</td><td>Server</td><td class="m">8443/tcp</td><td>Jobs, reports and backups through the gateway, over mutual TLS. The port of <code>public_url</code>.</td></tr>
-        <tr><td>People, the CLI</td><td>Server</td><td class="m">443/tcp</td><td>The UI and the API, with OIDC login. The port of <code>ui.public_url</code>.</td></tr>
-        <tr><td>Server</td><td>S3</td><td class="m">endpoint</td><td>The gateway and the maintenance key; the off-site bucket if set.</td></tr>
-        <tr><td>Server</td><td>OIDC provider</td><td class="m">443/tcp</td><td>Logins.</td></tr>
-        <tr><td>Server</td><td>PostgreSQL</td><td class="m">5432/tcp</td><td>Its state; local unless you gave a DSN.</td></tr>
-        <tr><td>Prometheus</td><td>Server</td><td class="m">8443/tcp</td><td><code>/metrics</code>, no login or client certificate: host and job names and their state, no secrets.</td></tr>
-        <tr><td>Prometheus</td><td>Witness</td><td class="m">9817/tcp</td><td>The witness's metrics.</td></tr>
-        <tr><td>Witness</td><td>S3</td><td class="m">endpoint</td><td>Lists the bucket.</td></tr>
-      </tbody>
-    </table></div>
-    <p>Agents accept no connections. Nothing connects to a host.</p>
-  </div>
-
-  <div class="sub" id="where">
-    <h3>What is stored where</h3>
-    <div class="tablebox"><table>
-      <thead><tr><th>Where</th><th>What</th></tr></thead>
-      <tbody>
-        <tr><td>The bucket, <code>repos/&lt;fqdn&gt;/</code></td><td>Each host's restic repository: encrypted with the host's password, readable with plain restic.</td></tr>
-        <tr><td>The bucket, <code>escrow/&lt;fqdn&gt;.age</code></td><td>The host's repository URL and password, encrypted to your age key. Written when a host is added and whenever its password changes; retried every 15 minutes until it is written.</td></tr>
-        <tr><td>The bucket, <code>meta/&lt;date&gt;.age</code></td><td>The nightly export of the server's database, encrypted to your age key. The newest 30 are kept.</td></tr>
-        <tr><td>Server, PostgreSQL</td><td>Config revisions, history, the audit log, the snapshot catalogue, the agents' pinned certificates, and the repository passwords sealed with the credentials key.</td></tr>
-        <tr><td>Server, <code>/etc/holdfast/</code></td><td><code>server.yaml</code> and the files it names: the credentials key, the storage key files, the database DSN, the OIDC secret, the TLS keys and the agents' CA. All root-only.</td></tr>
-        <tr><td>Host, <code>/etc/holdfast/</code></td><td><code>agent.yaml</code>, the host's own settings, and <code>credentials/repo.pass</code>, the repository password, root-only.</td></tr>
-        <tr><td>Host, <code>/var/lib/holdfast-agent/</code></td><td>The agent's private key and certificate, its saved jobs, its event spool and restic's cache.</td></tr>
-      </tbody>
-    </table></div>
-  </div>
-
-  <div class="sub" id="one-server">
-    <h3>One server, replaced when lost</h3>
-    <p>Holdfast runs as one server, with no standby, cluster or second gateway. That is how open-source tools of this kind are built: Kopia's repository server, Proxmox Backup Server, UrBackup and Bareos each run one server, and the answer to a lost one is a new one on the same storage.</p>
-    <ul class="plain">
-      <li><strong>While the server is down</strong>, no backup is made: agents keep their schedule and back up as soon as it answers. Nothing already in the bucket is affected, and the storage witness, which lists the bucket directly, alerts when snapshots go stale. For nightly backups, a few hours' outage only makes them late.</li>
-      <li><strong>When the server is lost</strong>, a new one is installed and restored from the newest nightly export, and the agents reconnect by themselves (<a href="#lost-server">A lost server</a>).</li>
-    </ul>
-  </div>
-
-  <div class="sub" id="sizing">
-    <h3>Sizing</h3>
-    <p>Every backup and restore passes through the server's gateway, so its network is what the fleet shares. In the lab, a server with 2 vCPUs and 2 GiB carried <strong>66 MiB/s</strong>: three agents backed up 256 MiB each of new random data at once, 768 MiB in 11.6 s, with the server's CPU about a quarter busy. The lab is one machine's virtual network, so this is a floor: on real hardware, the server's network link and the storage are the limit.</p>
-    <p>restic sends only what changed, so the question is whether a night's changes cross the server's link within your backup window. A fleet whose changes take longer needs a second, independent Holdfast with its own bucket; Holdfast does not spread one fleet over several servers.</p>
-    <p><strong>Disk</strong> on the server is not measured yet. It holds PostgreSQL, which grows with the history and the audit log, and restic's cache in <code>/var/lib/holdfast-server/cache</code>, used by the daily clean-up: each repository's index and directory data, a small part of its size. The lab's server has 20 GiB; watch the disk as the fleet grows.</p>
   </div>
 </section>
 
@@ -1665,7 +1674,7 @@ GET    /api/v1/access                         GET  /api/v1/exports      POST /ap
       <li><span class="what">One server, replaced when lost; no standby.</span><span class="why">Backups tolerate a delay; the data is safe in the bucket. A rebuild from a nightly export is simpler to trust than a cluster.</span><span class="rec">040 · 042</span></li>
       <li><span class="what">Passwords escrowed with age.</span><span class="why">You can recover without Holdfast, and the bucket alone opens nothing.</span><span class="rec">036</span></li>
       <li><span class="what">Dumps from commands defined on the host.</span><span class="why">Root on the host decides what runs there.</span><span class="rec">037</span></li>
-      <li><span class="what">A one-line install that stops on a missing setting.</span><span class="why">Installs as k3s does. The storage keys and the escrow key decide what can be deleted and what can be rebuilt, so they are given on purpose, never guessed.</span><span class="rec">044</span></li>
+      <li><span class="what">A one-line install that stops on a missing setting.</span><span class="why">The storage keys and the escrow key decide what can be deleted and what can be rebuilt, so they are given on purpose, never guessed.</span><span class="rec">044</span></li>
       <li><span class="what">Apache-2.0.</span><span class="why">Company legal reviews accept it routinely, and it carries a patent grant.</span><span class="rec">043</span></li>
     </ul>
   </div>

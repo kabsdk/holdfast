@@ -1,5 +1,5 @@
 #!/bin/sh
-# Holdfast's installer (decision 044): one line, as root, on each machine, as k3s does it.
+# Holdfast's installer (decision 044): one line, as root, on each machine.
 #
 #   An agent, with the line `holdfast host add` prints:
 #     curl -sfL https://github.com/kabsdk/holdfast/releases/latest/download/install.sh | HOLDFAST_SERVER=… HOLDFAST_CODE=… sh -
