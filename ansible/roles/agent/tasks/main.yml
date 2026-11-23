@@ -1,6 +1,40 @@
 ---
-# A host Holdfast backs up: the agent and restic, enrolled with the server, its own settings in agent.yaml, and the jobs
-# it lacks. The installer's agent role, kept so.
+# A host Holdfast backs up: the agent and restic, enrolled with the server, its restore bounds in agent.yaml, and the
+# jobs it lacks. The installer's agent role, kept so.
+- name: Refuse holdfast_dumps, which 0.6.0 removed
+  ansible.builtin.assert:
+    that: holdfast_dumps is not defined or holdfast_dumps is none
+    fail_msg: >-
+      holdfast_dumps was removed in 0.6.0: Holdfast runs no command on a host (decision 052). Have a systemd timer on
+      the host write the export into a directory, and back that directory up with a job's path.
+    quiet: true
+
+- name: Refuse jobs that are not mappings of holdfast job set's flags
+  ansible.builtin.assert:
+    that: holdfast_jobs | dict2items | map(attribute='value') | reject('mapping') | list | length == 0
+    fail_msg: >-
+      Each job in holdfast_jobs is a mapping of holdfast job set's flags, such as {path: [/etc, /home], daily: "02:00"}.
+      The flags string of 0.5.0 is no longer taken.
+    quiet: true
+
+- name: Read the host's own name, as holdfast_hostname_autodetect asks
+  ansible.builtin.setup:
+    gather_subset: [min]
+  when: holdfast_hostname_autodetect | bool and holdfast_fqdn | length == 0 and ansible_facts.fqdn is not defined
+
+- name: Take the host's own name as its FQDN
+  ansible.builtin.set_fact:
+    holdfast_fqdn: "{{ ansible_facts.fqdn }}"
+  when: holdfast_hostname_autodetect | bool and holdfast_fqdn | length == 0
+
+- name: Refuse a host without its FQDN
+  ansible.builtin.assert:
+    that: holdfast_fqdn is match('^[a-z0-9-]+([.][a-z0-9-]+)+$')
+    fail_msg: >-
+      holdfast_fqdn: give this host's FQDN, such as web01.example.com, its identity in Holdfast; or set
+      holdfast_hostname_autodetect: true to take the host's own (hostname -f). It is "{{ holdfast_fqdn }}".
+    quiet: true
+
 - name: Install the agent and restic
   ansible.builtin.include_role:
     name: kabsdk.holdfast.packages
@@ -16,9 +50,8 @@
   ansible.builtin.include_tasks: enroll.yml
   when: not agent_conf.stat.exists or holdfast_reenroll | bool
 
-- name: Its dumps and restore bounds in agent.yaml
+- name: Its restore bounds in agent.yaml
   ansible.builtin.include_tasks: agentyaml.yml
-  when: holdfast_dumps is not none or holdfast_restore is not none
 
 - name: Restart it now if agent.yaml changed
   ansible.builtin.meta: flush_handlers

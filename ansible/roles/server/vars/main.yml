@@ -15,6 +15,8 @@ server_ports: "{{ [server_port] + ([server_ui_port] if server_ui else []) }}"
 # Every setting that is missing or wrong, as the installer names them: the role stops before it changes anything.
 server_problems: >-
   {{ [
+    "holdfast_fqdn: is required, the server's FQDN, such as backup01.example.com: the URLs, the alerts' sender and the certificates take it"
+      if holdfast_fqdn is not match('^[a-z0-9-]+([.][a-z0-9-]+)+$') else '',
     'holdfast_s3_endpoint: is not a URL: it starts with https://' if holdfast_s3_endpoint is not match('^https?://[^\s]+$') else '',
     'holdfast_s3_bucket: has a space, a quote or a backslash in it' if holdfast_s3_bucket is search('[\s"\x27\\\\]') else '',
     'holdfast_escrow_recipient: give it, or holdfast_recovery_file, not both: a rebuild takes the age key from the recovery file'

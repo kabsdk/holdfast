@@ -1,13 +1,18 @@
 ---
-# Each setting is the installer's (sh install.sh help), in lower case: HOLDFAST_S3_BUCKET is holdfast_s3_bucket. The
-# required ones have no default: holdfast_s3_endpoint, holdfast_s3_bucket, and the gateway and maintenance keys.
-# Files (certificates, the recovery file) are paths on the Ansible controller; they may be vault-encrypted.
+# Each setting is the installer's, in lower case: HOLDFAST_S3_BUCKET is holdfast_s3_bucket
+# (https://kabsdk.github.io/holdfast/#installer-ref). The required ones have no default: holdfast_fqdn,
+# holdfast_s3_endpoint, holdfast_s3_bucket, and the gateway and maintenance keys. Files (certificates, the recovery
+# file) are paths on the Ansible controller; they may be vault-encrypted.
 holdfast_version: latest
 holdfast_download_url: ""
 
+# The server's FQDN, given: the roles read no host name from the machine. The URLs, the alerts' sender and the names in
+# Holdfast's certificates default to it.
+holdfast_fqdn: ""
+
 holdfast_s3_region: ""
-holdfast_public_url: "https://{{ ansible_facts.fqdn }}:8443"
-holdfast_ui_url: "https://{{ ansible_facts.fqdn }}"   # false: no web UI
+holdfast_public_url: "https://{{ holdfast_fqdn }}:8443"
+holdfast_ui_url: "https://{{ holdfast_fqdn }}"   # false: no web UI
 holdfast_zone: ""                                     # empty: this machine's
 holdfast_database_dsn: ""                             # empty: the distribution's PostgreSQL, here
 holdfast_escrow_recipient: ""                         # empty: the role makes the age key, in the recovery file
@@ -21,7 +26,7 @@ holdfast_smtp: ""
 holdfast_smtp_user: ""
 holdfast_smtp_password: ""
 holdfast_smtp_tls: starttls
-holdfast_mail_from: "holdfast@{{ ansible_facts.fqdn }}"
+holdfast_mail_from: "holdfast@{{ holdfast_fqdn }}"
 holdfast_webhook_url: ""
 holdfast_heartbeat_url: ""
 

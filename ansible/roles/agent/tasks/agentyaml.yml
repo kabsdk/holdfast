@@ -1,12 +1,13 @@
 ---
-# The host's own settings in agent.yaml (decision 037): the dumps a dump job may name, and the bounds of what
-# a restore may do here. Only root on the host sets them; the server cannot. The rest of agent.yaml is enroll's.
+# The host's own settings in agent.yaml: the bounds of what a restore may do here, which only root on the host sets;
+# the server cannot. The rest of agent.yaml is enroll's. The dumps of 0.5.0 are taken out: 0.6.0 runs no command on a
+# host (decision 052), and the agent warns while they are there.
 - name: Read agent.yaml
   ansible.builtin.slurp:
     src: /etc/holdfast/agent.yaml
   register: agent_yaml_file
 
-- name: Write the dumps and restore bounds into it, when they differ
+- name: Write the restore bounds into it, and take out the dumps, when that changes it
   ansible.builtin.copy:
     dest: /etc/holdfast/agent.yaml
     content: "{{ agent_yaml_wanted | to_nice_yaml(indent=2, width=1000) }}"
@@ -19,5 +20,5 @@
     agent_yaml_now: "{{ agent_yaml_file.content | b64decode | from_yaml }}"
     agent_yaml_wanted: >-
       {{ agent_yaml_now
-         | combine({'dumps': holdfast_dumps} if holdfast_dumps is not none else {})
+         | dict2items | rejectattr('key', 'equalto', 'dumps') | items2dict
          | combine({'restore': (agent_yaml_now.restore | default({}, true)) | combine(holdfast_restore)} if holdfast_restore is not none else {}) }}

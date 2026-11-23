@@ -7,17 +7,20 @@
 - name: The Holdfast server
   hosts: holdfast_server
   become: true
+  gather_facts: false
   roles:
     - kabsdk.holdfast.server
 
 - name: The hosts Holdfast backs up
   hosts: holdfast_agents
   become: true
+  gather_facts: false
   roles:
     - kabsdk.holdfast.agent
 
 - name: The holdfast command on workstations
   hosts: holdfast_cli
   become: true
+  gather_facts: false
   roles:
     - kabsdk.holdfast.cli

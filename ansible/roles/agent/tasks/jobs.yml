@@ -1,24 +1,19 @@
 ---
 # The jobs the host lacks, made with holdfast job set as root on the server, which checks each as it would from the UI.
 # A job the host has is left as it is: after it is made, Holdfast's UI and CLI change it, with their checks and revisions.
-- name: Read the host's jobs on the server, once its agent reports the dumps a job may name
+# Each job is a mapping of holdfast job set's flags, an underscore for a dash: a list repeats the flag, true gives it
+# alone, false leaves it out.
+- name: Read the host's jobs on the server
   ansible.builtin.command:
     argv: [holdfast, host, show, "{{ holdfast_fqdn }}", --json]
   delegate_to: "{{ holdfast_server_host }}"
   register: agent_host
   changed_when: false
   check_mode: false
-  retries: 30
-  delay: 2
-  until: >-
-    agent_host.rc == 0 and
-    (holdfast_dumps is none
-     or holdfast_dumps | list | difference(((agent_host.stdout | from_json).agent | default({}, true)).dumps | default([], true)) | length == 0)
 
 - name: Make each job it lacks (holdfast job set)
   ansible.builtin.command:
-    cmd: >-
-      holdfast job set {{ holdfast_fqdn | quote }} {{ item.key | quote }} -m 'made by Ansible (kabsdk.holdfast.agent)' {{ item.value }}
+    argv: "{{ ['holdfast', 'job', 'set', holdfast_fqdn, item.key, '-m', 'made by Ansible (kabsdk.holdfast.agent)'] + agent_job_flags }}"
   delegate_to: "{{ holdfast_server_host }}"
   throttle: 1
   changed_when: true
@@ -28,3 +23,4 @@
   when: (agent_host.stdout | from_json).state != 'retired'
   vars:
     agent_has: "{{ (agent_host.stdout | from_json).jobs | default([], true) | map(attribute='id') | list }}"
+    agent_job_flags: "{{ item.value | dict2items | map('kabsdk.holdfast.job_flag') | flatten }}"

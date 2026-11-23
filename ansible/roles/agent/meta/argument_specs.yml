@@ -5,8 +5,9 @@ argument_specs:
     description:
       - Installs the agent and restic, and enrolls it as the installer does, with a code from the server.
       - With the server in the inventory (group holdfast_server), the role adds the host there and gets the code itself.
-      - It gives the host the jobs it lacks, and sets the dumps and restore bounds in agent.yaml, which only root on the
-        host can set.
+      - It gives the host the jobs it lacks, and sets the restore bounds in agent.yaml, which only root on the host can
+        set.
+      - It needs no gathered facts. Give holdfast_fqdn, or set holdfast_hostname_autodetect.
     options:
       holdfast_version:
         type: str
@@ -18,8 +19,16 @@ argument_specs:
         description: A mirror holding VERSION, SHA256SUMS and the packages of one release, over http(s); empty for GitHub.
       holdfast_fqdn:
         type: str
-        default: the fqdn fact
-        description: This host's name in Holdfast.
+        default: ""
+        description:
+          - Required, unless holdfast_hostname_autodetect is true. This host's FQDN, its identity in Holdfast, such as
+            web01.example.com.
+      holdfast_hostname_autodetect:
+        type: bool
+        default: false
+        description:
+          - Take the host's own FQDN (its fqdn fact, what hostname -f says) when holdfast_fqdn is not given.
+          - Off by default, so that a host's identity is always what the inventory says.
       holdfast_server_host:
         type: str
         default: the first host of the group holdfast_server
@@ -45,13 +54,10 @@ argument_specs:
         type: dict
         default: {}
         description:
-          - The jobs the host should have, by name, each as the flags of holdfast job set, such as "--path /etc --path /home".
+          - 'The jobs the host should have, by name. Each is a mapping of the flags of holdfast job set, with an underscore
+            for a dash, such as {path: [/etc, /home], exclude: ["*.tmp"], daily: "02:00", keep_daily: 14d}.'
+          - A list repeats the flag, true gives a flag alone (such as no_spread), and false leaves it out.
           - A job the host lacks is made. One it has is left as it is, for Holdfast's UI and CLI to change.
-      holdfast_dumps:
-        type: dict
-        description:
-          - The dumps a dump job may name, set in agent.yaml (decision 037), by name, each {command, user, filename, env}.
-          - The command is a list whose first item is an absolute path. Unset leaves agent.yaml's as they are.
       holdfast_restore:
         type: dict
         description:

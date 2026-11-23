@@ -1,8 +1,13 @@
 ---
-# Each setting is the installer's (sh install.sh help), in lower case: HOLDFAST_FQDN is holdfast_fqdn.
+# Each setting is the installer's, in lower case: HOLDFAST_FQDN is holdfast_fqdn
+# (https://kabsdk.github.io/holdfast/#installer-ref).
 holdfast_version: latest
 holdfast_download_url: ""
-holdfast_fqdn: "{{ ansible_facts.fqdn }}"
+
+# The host's FQDN, its identity in Holdfast. Required, unless holdfast_hostname_autodetect is true: then the role takes
+# the host's own (its fqdn fact, what hostname -f says).
+holdfast_fqdn: ""
+holdfast_hostname_autodetect: false
 
 # The server's host in the inventory: the role adds the host there, gets its enrollment code and gives it its jobs, with
 # the holdfast command as root on the server. Without one, give holdfast_server and holdfast_code as the installer takes
@@ -13,10 +18,9 @@ holdfast_code: ""
 holdfast_ca_sha256: ""
 holdfast_reenroll: false
 
-# Jobs the host should have, each as the flags of holdfast job set. A job the host lacks is made; one it has is left as
-# it is, for Holdfast's UI and CLI to change.
+# Jobs the host should have, by name, each a mapping of holdfast job set's flags: {path: [/etc], daily: "02:00"}. A job
+# the host lacks is made; one it has is left as it is, for Holdfast's UI and CLI to change.
 holdfast_jobs: {}
 
-# The host's own settings in agent.yaml, which only root on it can change; null leaves them as they are.
-holdfast_dumps: null     # every dump, by name: {command: [...], user, filename, env} (decision 037)
-holdfast_restore: null   # merged over the restore bounds: root, allow_in_place, allow_other_directories, allow_other_hosts
+# Merged over the restore bounds in agent.yaml, which only root on the host can change; null leaves them as they are.
+holdfast_restore: null   # root, allow_in_place, allow_other_directories, allow_other_hosts

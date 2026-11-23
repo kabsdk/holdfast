@@ -139,13 +139,13 @@
 
 - name: Holdfast's own CA, made once; agents pin it
   ansible.builtin.script:
-    cmd: holdfast-tls.sh ca {{ ansible_facts.fqdn | quote }}
+    cmd: holdfast-tls.sh ca {{ holdfast_fqdn | quote }}
     creates: "{{ server_etc }}/tls/ca.key"
   when: not server_own_tls
 
 - name: A certificate from it for the agents' listener, made once
   ansible.builtin.script:
-    cmd: holdfast-tls.sh cert server {{ holdfast_public_url | urlsplit('hostname') | quote }} {{ ansible_facts.fqdn | quote }}
+    cmd: holdfast-tls.sh cert server {{ holdfast_public_url | urlsplit('hostname') | quote }} {{ holdfast_fqdn | quote }}
     creates: "{{ server_etc }}/tls/server.crt"
   when: not server_own_tls
   notify: Restart holdfast-server
@@ -157,7 +157,7 @@
 
 - name: A certificate from it for the UI, made once
   ansible.builtin.script:
-    cmd: holdfast-tls.sh cert ui {{ holdfast_ui_url | urlsplit('hostname') | quote }} {{ ansible_facts.fqdn | quote }}
+    cmd: holdfast-tls.sh cert ui {{ holdfast_ui_url | urlsplit('hostname') | quote }} {{ holdfast_fqdn | quote }}
     creates: "{{ server_etc }}/tls/ui.crt"
   when: server_ui and not server_own_ui_tls and server_ca_key.stat.exists
   notify: Restart holdfast-server

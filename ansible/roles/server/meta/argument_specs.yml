@@ -50,13 +50,19 @@ argument_specs:
         required: true
         no_log: true
         description: Its secret.
+      holdfast_fqdn:
+        type: str
+        default: ""
+        description:
+          - Required. The server's FQDN, such as backup01.example.com. The role reads no host name from the machine.
+          - The URLs, the alerts' sender and the names in Holdfast's certificates default to it.
       holdfast_public_url:
         type: str
-        default: https://<fqdn>:8443
+        default: https://<holdfast_fqdn>:8443
         description: The URL agents use.
       holdfast_ui_url:
         type: raw
-        default: https://<fqdn>
+        default: https://<holdfast_fqdn>
         description: The URL people use; false for no web UI.
       holdfast_zone:
         type: str
@@ -112,7 +118,7 @@ argument_specs:
         description: How to talk to the relay.
       holdfast_mail_from:
         type: str
-        default: holdfast@<fqdn>
+        default: holdfast@<holdfast_fqdn>
         description: The alerts' sender.
       holdfast_webhook_url:
         type: str

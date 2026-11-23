@@ -8,10 +8,11 @@ nothing to do changes nothing.
 | Role | Group in the inventory | What it does |
 | --- | --- | --- |
 | `kabsdk.holdfast.server` | `holdfast_server` (one host) | Installs the server, its PostgreSQL, Holdfast's CA and the recovery file. Writes `server.yaml` from your settings and starts the server. |
-| `kabsdk.holdfast.agent` | `holdfast_agents` | Installs the agent and restic. Adds the host on the server and enrolls the agent. Gives the host the jobs it lacks, and sets its dumps and restore limits. |
+| `kabsdk.holdfast.agent` | `holdfast_agents` | Installs the agent and restic. Adds the host on the server and enrolls the agent. Gives the host the jobs it lacks, and sets its restore limits. |
 | `kabsdk.holdfast.cli` | `holdfast_cli` | Installs the `holdfast` command on a workstation. |
 
-The playbook `kabsdk.holdfast.site` runs the three roles on those groups, server first.
+The playbook `kabsdk.holdfast.site` runs the three roles on those groups, server first. It gathers no facts: the
+roles gather the little they need themselves, so it works with `gathering = explicit` in `ansible.cfg`.
 
 ## Install the collection
 
@@ -44,6 +45,7 @@ all:
     holdfast_server:
       hosts:
         holdfast.example.com:
+          holdfast_fqdn: holdfast.example.com
           holdfast_s3_endpoint: https://s3.example.com
           holdfast_s3_bucket: holdfast
           holdfast_gateway_access_key_id: "{{ vault_gateway_key_id }}"
@@ -56,20 +58,24 @@ all:
     holdfast_agents:
       vars:
         holdfast_jobs:
-          system: --path /etc --path /home
+          system: {path: [/etc, /home], exclude: ["*.tmp"]}
       hosts:
         web01.example.com:
+          holdfast_fqdn: web01.example.com
         db01.example.com:
-          holdfast_dumps:
-            postgres: {command: [/usr/bin/pg_dumpall], user: postgres}
+          holdfast_fqdn: db01.example.com
           holdfast_jobs:
-            system: --path /etc
-            postgres: --dump postgres --daily 01:00
+            system: {path: [/etc]}
+            postgresql: {path: [/var/backups/postgresql], exclude: ["*.tmp"], daily: "02:00"}
 ```
 
 ```
 ansible-playbook -i inventory.yml kabsdk.holdfast.site
 ```
+
+`holdfast_fqdn` is the machine's FQDN, its name in Holdfast. The server and every host need it: the roles read no host
+name from the machine. db01's `postgresql` job backs up the export that a systemd timer on db01 writes, which your own
+play sets up: Holdfast runs no command on a host (see *Databases and other exports* in Holdfast's documentation).
 
 Keep the secrets in Ansible Vault. Pin the release with `holdfast_version: 0.5.0`; without it the roles install the
 latest.
@@ -94,6 +100,11 @@ take a form that suits Ansible better:
 | Certificates, keys, the recovery file | a path on the machine | a path on the Ansible controller (vault-encrypted files work) |
 | `holdfast_mail_to`, `holdfast_admins` | comma-separated | a list |
 | No web UI | `HOLDFAST_UI_URL=off` | `holdfast_ui_url: false` |
+| The machine's FQDN | `HOLDFAST_FQDN` on a host, default `hostname -f`; the server uses `hostname -f` | `holdfast_fqdn`, required on the server and agent roles |
+
+`holdfast_fqdn` is required because the roles read no host name from the machine. On the server, `holdfast_public_url`
+(`https://<holdfast_fqdn>:8443`), `holdfast_ui_url` (`https://<holdfast_fqdn>`), `holdfast_mail_from`
+(`holdfast@<holdfast_fqdn>`) and the names in Holdfast's certificates default to it.
 
 Settings that only the roles have:
 
@@ -102,10 +113,24 @@ Settings that only the roles have:
 | `holdfast_server_yaml` | server | Anything else `server.yaml` takes, merged over what the role writes, such as `{maintenance: {retention: "off"}}`. |
 | `holdfast_firewall` | server | Opens the agents' and the UI's ports in firewalld or ufw when either is on. Default `true`. |
 | `holdfast_server_host` | agent | The server's host in the inventory. Default: the first host in `holdfast_server`. |
-| `holdfast_jobs` | agent | Jobs by name, each as the flags of `holdfast job set`. |
-| `holdfast_dumps` | agent | The dumps a dump job may name, set in `agent.yaml`. |
+| `holdfast_hostname_autodetect` | agent | `true` takes the host's own FQDN (its `fqdn` fact, what `hostname -f` says) when `holdfast_fqdn` is not given. Default `false`, so a host's name is what the inventory says. |
+| `holdfast_jobs` | agent | Jobs by name, each a mapping of the flags of `holdfast job set` (below). |
 | `holdfast_restore` | agent | The host's restore limits in `agent.yaml`, such as `{allow_in_place: true}`. |
 | `holdfast_reenroll` | agent | Enrolls an enrolled host again. Give it once, with `-e`. |
+
+**A job in `holdfast_jobs`** is a mapping of `holdfast job set`'s flags, with an underscore for a dash. A list repeats
+the flag, `true` gives a flag alone, and `false` leaves it out:
+
+```yaml
+holdfast_jobs:
+  etc: {path: [/etc, /home], exclude: ["*.tmp"], daily: "02:00", keep_daily: 14d, keep_monthly: 6mo}
+  logs: {path: [/var/log], every: 4h, from: "01:00", no_spread: true, limit_upload: 20480}
+```
+
+The keys are `path`, `exclude`, `daily`, `every`, `from`, `weekly`, `at`, `spread`, `no_spread`, `zone`,
+`keep_within`, `keep_hourly`, `keep_daily`, `keep_weekly`, `keep_monthly`, `keep_yearly`, `keep_last`, `accept` and
+`limit_upload`, as Holdfast's documentation describes the flags. Quote times, `"02:00"`: unquoted, YAML reads them as
+numbers. The flags string of 0.5.0, such as `--path /etc`, is refused with a message.
 
 ## What the roles keep, and what they leave to Holdfast
 
@@ -121,9 +146,12 @@ Settings that only the roles have:
 - **The roles only make the jobs a host lacks.** A job the host already has is left as it is. After the first run,
   jobs belong to Holdfast's UI and CLI, with their checks and revisions, so a change made there is not undone on the
   next run.
-- **Dumps and restore limits belong to the role.** Only root on the host can set them; the server cannot. When
-  `holdfast_dumps` or `holdfast_restore` is set, the role writes it to `agent.yaml` and restarts the agent. When it is
-  not set, the role leaves them as they are.
+- **Restore limits belong to the role.** Only root on the host can set them; the server cannot. When
+  `holdfast_restore` is set, the role writes it to `agent.yaml` and restarts the agent. When it is not set, the role
+  leaves them as they are.
+- **The role takes 0.5.0's dumps out of `agent.yaml`.** Holdfast 0.6.0 runs no command on a host (decision 052), and
+  the agent ignores a `dumps:` with a warning; the role removes it, and restarts the agent. `holdfast_dumps` is gone,
+  and the role stops with a message while it is set.
 - **The roles remove nothing.** Removing a host is `holdfast host remove`, or **Remove host** in the UI. It never
   deletes data. Deleting a host's backups is an admin's decommission.
 
@@ -132,6 +160,10 @@ Settings that only the roles have:
 Set `holdfast_version` to the new release and run the playbook. It upgrades the server first, then the agents. Each
 host downloads only when its packages are of another release, and checks every package against the release's
 `SHA256SUMS`. The roles do not go back to an older release.
+
+**From 0.5.0**, give the server and every host `holdfast_fqdn`, write each job in `holdfast_jobs` as a mapping, and
+drop `holdfast_dumps`: the roles stop with a message on each until you do. A dump job made by 0.5.0 needs paths
+instead; Holdfast's changelog says how.
 
 ## A lost server
 

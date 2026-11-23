@@ -3,12 +3,13 @@
 # playbook kabsdk.holdfast.site run on machines with systemd (containers, reached with the docker connection), against
 # a real S3 server (MinIO), with the packages `make packages` built in dist/ served over HTTP as a mirror.
 #   - ansible-lint passes with the production profile;
-#   1. the least settings, server on AlmaLinux, agents on Ubuntu and Oracle Linux: the server, its recovery file and UI;
-#      each agent added, enrolled and given its jobs, one of them a dump defined in agent.yaml; backups through the
-#      gateway; run again, nothing changes; a setting changed reaches server.yaml; the server lost and replaced from the
+#   1. the least settings, server on AlmaLinux, agents on Ubuntu and Oracle Linux, with gathering = explicit: the
+#      server, its recovery file and UI; each agent added, enrolled (one by its detected name) and given its jobs from
+#      mappings; backups through the gateway; run again, nothing changes; a setting changed reaches server.yaml; the server lost and replaced from the
 #      recovery file alone, the agents back by themselves; run again, nothing changes;
 #   2. your own age key, UI certificate, OIDC, mail and off-site copies, server on Ubuntu, an agent on AlmaLinux enrolled
-#      with a code given as the installer takes it: run again, nothing changes; enrolled again on purpose.
+#      with a code given as the installer takes it: run again, nothing changes; 0.5.0's dumps in agent.yaml are
+#      ignored, and taken out; enrolled again on purpose.
 # Usage: test/ansible/run.sh     (make ansible-test). KEEP=1 leaves the containers running for a look.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
@@ -117,6 +118,8 @@ ansible-galaxy collection build ansible --output-path "$work" >/dev/null
 ansible-galaxy collection install --no-deps -p "$work/collections" "$work"/kabsdk-holdfast-*.tar.gz >/dev/null
 export ANSIBLE_COLLECTIONS_PATH="$work/collections:$HOME/.ansible/collections:/usr/share/ansible/collections"
 export ANSIBLE_NOCOLOR=1 ANSIBLE_STDOUT_CALLBACK=default ANSIBLE_HOST_KEY_CHECKING=False ANSIBLE_RETRY_FILES_ENABLED=False
+# The roles need no gathered facts: run as a repository with gathering = explicit does.
+export ANSIBLE_GATHERING=explicit
 (cd "$work/collections/ansible_collections/kabsdk/holdfast" && ansible-lint --nocolor -q >"$work/lint.log" 2>&1) || {
 	cat "$work/lint.log" >&2
 	fail "ansible-lint"
@@ -150,6 +153,7 @@ all:
     holdfast_server:
       hosts:
         $srv:
+          holdfast_fqdn: $srv
           holdfast_s3_endpoint: http://hf-ansible-minio:9000
           holdfast_s3_bucket: holdfast-1
           holdfast_gateway_access_key_id: gw1
@@ -161,14 +165,14 @@ all:
     holdfast_agents:
       hosts:
         $a1:
-          holdfast_dumps:
-            hostname: {command: [/usr/bin/cat, /etc/hostname]}
+          holdfast_fqdn: $a1
           holdfast_jobs:
-            etc: --path /etc
-            hostname: --dump hostname --every 12h
+            etc: {path: [/etc]}
+            docs: {path: [/usr/share/doc, /etc/hostname], exclude: ["*.gz"], every: 12h, keep_daily: 7d, accept: [R101], no_spread: true}
         $a2:
+          holdfast_hostname_autodetect: true
           holdfast_jobs:
-            etc: --path /etc --path /usr/share/doc --daily 03:00
+            etc: {path: [/etc, /usr/share/doc], daily: "03:00"}
     holdfast_cli:
       hosts:
         $a1:
@@ -197,12 +201,21 @@ for h in $a1 $a2; do
 	docker exec $srv holdfast job run $h etc >/dev/null || fail "$h: job run"
 	wait_backup $srv $h 0
 done
-docker exec $srv holdfast host show $a1 --json | grep -q '"id": *"hostname"' || fail "$a1 has no dump job"
+show=$(docker exec $srv holdfast host show $a1 --json)
+python3 - "$show" <<'PY' || fail "$a1's docs job is not as its mapping says: $show"
+import json, sys
+job = {j["id"]: j for j in json.loads(sys.argv[1])["jobs"]}["docs"]
+assert job["paths"] == ["/usr/share/doc", "/etc/hostname"], job["paths"]
+assert job["excludes"] == ["*.gz"], job["excludes"]
+assert job["schedule"]["every"]["n"] == 12 and job["schedule"]["every"]["unit"] == "hours", job["schedule"]
+assert not job["schedule"].get("spread", {}).get("enabled"), job["schedule"]
+PY
 before=$(backups $srv $a1)
-docker exec $srv holdfast job run $a1 hostname >/dev/null || fail "$a1: the dump job's run"
+docker exec $srv holdfast job run $a1 docs >/dev/null || fail "$a1: the docs job's run"
 wait_backup $srv $a1 "$before"
+docker exec $srv holdfast host show $a2 --json | grep -q '"state": *"enrolled"' || fail "$a2, with its name detected, is not enrolled"
 docker exec $a1 holdfast --help >/dev/null || fail "the CLI does not run on $a1"
-ok "ubuntu:24.04, oraclelinux:9: each agent added, enrolled, given its jobs and a dump; backups go through the gateway; the CLI"
+ok "ubuntu:24.04, oraclelinux:9: each agent added, enrolled (one by its detected name) and given its jobs from mappings; backups go through the gateway; the CLI"
 
 play again-1 "$work/inv-1.yml"
 unchanged again-1
@@ -251,6 +264,7 @@ machine $srv "$(image_for ubuntu:24.04)"
 machine $a1 "$(image_for almalinux:9)"
 server_vars() {
 	cat <<EOF
+          holdfast_fqdn: $srv
           holdfast_s3_endpoint: http://hf-ansible-minio:9000
           holdfast_s3_bucket: holdfast-2
           holdfast_gateway_access_key_id: gw2
@@ -313,6 +327,7 @@ cat >>"$work/inv-2.yml" <<EOF
     holdfast_agents:
       hosts:
         $a1:
+          holdfast_fqdn: $a1
           holdfast_server: $server
           holdfast_code: $code
           holdfast_ca_sha256: $capin
@@ -328,6 +343,15 @@ ok "almalinux:9: the agent enrolled with a code given as the installer takes it,
 play again-2 "$work/inv-2.yml"
 unchanged again-2
 ok "run again, with the used code still in the inventory: nothing changes"
+
+# An agent.yaml from 0.5.0 with dumps: the agent warns and keeps backing up; the role takes them out.
+docker exec $a1 sh -c 'printf "dumps:\n  pg:\n    command: [/usr/bin/true]\n" >>/etc/holdfast/agent.yaml && systemctl restart holdfast-agent'
+for _ in $(seq 30); do docker exec $a1 journalctl -u holdfast-agent --no-pager | grep -q 'dumps is ignored' && break; sleep 1; done
+docker exec $a1 journalctl -u holdfast-agent --no-pager | grep -q 'dumps is ignored' || fail "the agent does not warn about dumps in agent.yaml"
+play dumps-2 "$work/inv-2.yml"
+if docker exec $a1 grep -q '^dumps:' /etc/holdfast/agent.yaml; then fail "the role left the dumps in agent.yaml"; fi
+docker exec $a1 systemctl is-active -q holdfast-agent || fail "the agent is not running after the role took the dumps out"
+ok "almalinux:9: dumps left in agent.yaml by 0.5.0 are ignored with a warning, and the role takes them out"
 
 play reenroll-2 "$work/inv-2.yml" -e holdfast_reenroll=true -e holdfast_code=
 grep -q 'TASK \[kabsdk.holdfast.agent : Get a new code for the host Holdfast knows' "$work/reenroll-2.log" || fail "the enrollment again did not get a code"
