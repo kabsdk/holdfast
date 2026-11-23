@@ -910,7 +910,7 @@ auth:                    # optional: without it, root logs in with holdfast ui-l
     client_id: holdfast
     client_secret_file: /etc/holdfast/oidc-client-secret
     groups_claim: groups
-  bootstrap_admins: []   # usernames that are admin everywhere, for the first login; each use is audited
+  bootstrap_admins: []   # usernames that are admin everywhere at every login while listed, for the first login; each use is audited
 escrow:
   age_recipient: age1…   # decision 036: an age public key; its private key is in the recovery file, offline
 storage:                 # decision 041: two keys for the bucket; hosts hold none

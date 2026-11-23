@@ -15,7 +15,7 @@ notify:
     # password_file: /etc/holdfast/smtp-password
     from: holdfast@holdfast.example.internal
     to: [backup-team@example.internal]
-  webhook_url: https://chat.example.internal/hooks/…   # a JSON POST; Slack and Mattermost show its "text"
+  webhook_url: https://chat.example.internal/hooks/…   # a JSON POST; Slack and Mattermost show its "text"; Discord: add /slack
   heartbeat_url: https://hc.example.org/ping/…         # called (GET) every minute, for the dead man's switch
   # after: 10m
 ```

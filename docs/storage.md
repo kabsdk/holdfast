@@ -12,6 +12,11 @@ Holdfast tests every rule below with plain S3 calls:
 
 A rule that fails is reported with its code (spec §4.5). The host cannot be added or enroll until the rule is fixed.
 
+**A private CA.** The server checks the S3 endpoint's certificate against the operating system's trusted CAs and has
+no setting of its own for it. For a certificate from a private CA, add the CA to the server's trust store before
+installing (`update-ca-certificates` on Ubuntu and Debian, `update-ca-trust` on the Red Hat family), and restart
+holdfast-server whenever the trust store changes. Hosts never connect to S3, so they need nothing.
+
 ## One bucket, with versioning and a lifecycle rule
 
 - **Make the bucket with an identity of your own, not with either key.** A bucket's owner can change its

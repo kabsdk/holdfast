@@ -1,0 +1,76 @@
+listen: {{ (':' ~ server_port) | to_json }}
+public_url: {{ holdfast_public_url | to_json }}
+tls:
+  cert_file: {{ server_etc }}/tls/server.crt
+  key_file: {{ server_etc }}/tls/server.key
+{% if not server_own_tls %}
+  ca_file: {{ server_etc }}/tls/ca.crt
+  ca_key_file: {{ server_etc }}/tls/ca.key
+{% endif %}
+ca_sha256: {{ server_pin | default('') | to_json }}
+api_socket: /run/holdfast/api.sock
+database_dsn_file: {{ server_etc }}/db.dsn
+credentials_key_file: {{ server_etc }}/credentials.key
+recovery_file: {{ server_recovery_path | to_json }}
+default_zone: {{ server_zone | to_json }}
+{% if holdfast_download_url | length > 0 %}
+download_url: {{ holdfast_download_url | regex_replace('/+$', '') | to_json }}
+{% endif %}
+storage:
+  endpoint: {{ holdfast_s3_endpoint | to_json }}
+  bucket: {{ holdfast_s3_bucket | to_json }}
+{% if holdfast_s3_region | length > 0 %}
+  region: {{ holdfast_s3_region | to_json }}
+{% endif %}
+  maintenance_credentials_file: {{ server_etc }}/maintenance.env
+  gateway_credentials_file: {{ server_etc }}/gateway.env
+escrow:
+  age_recipient: {{ server_recipient | to_json }}
+{% if server_offsite %}
+offsite:
+  endpoint: {{ holdfast_offsite_endpoint | to_json }}
+  bucket: {{ holdfast_offsite_bucket | to_json }}
+{% if holdfast_offsite_region | length > 0 %}
+  region: {{ holdfast_offsite_region | to_json }}
+{% endif %}
+  maintenance_credentials_file: {{ server_etc }}/offsite.env
+{% endif %}
+{% if server_ui %}
+ui:
+  listen: {{ (':' ~ server_ui_port) | to_json }}
+  public_url: {{ holdfast_ui_url | regex_replace('/+$', '') | to_json }}
+  tls:
+    cert_file: {{ server_etc }}/tls/ui.crt
+    key_file: {{ server_etc }}/tls/ui.key
+{% endif %}
+{% if server_oidc %}
+auth:
+  oidc:
+    issuer: {{ holdfast_oidc_issuer | to_json }}
+    client_id: {{ holdfast_oidc_client_id | to_json }}
+    client_secret_file: {{ server_etc }}/oidc-client-secret
+{% if holdfast_oidc_ca_file | length > 0 %}
+    ca_file: {{ server_etc }}/tls/oidc-ca.crt
+{% endif %}
+  bootstrap_admins: {{ holdfast_admins | to_json }}
+{% endif %}
+{% if server_mail or holdfast_webhook_url | length > 0 or holdfast_heartbeat_url | length > 0 %}
+notify:
+{% if server_mail %}
+  mail:
+    smtp: {{ holdfast_smtp | to_json }}
+    tls: {{ holdfast_smtp_tls | to_json }}
+{% if holdfast_smtp_user | length > 0 %}
+    username: {{ holdfast_smtp_user | to_json }}
+    password_file: {{ server_etc }}/smtp-password
+{% endif %}
+    from: {{ holdfast_mail_from | to_json }}
+    to: {{ holdfast_mail_to | to_json }}
+{% endif %}
+{% if holdfast_webhook_url | length > 0 %}
+  webhook_url: {{ holdfast_webhook_url | to_json }}
+{% endif %}
+{% if holdfast_heartbeat_url | length > 0 %}
+  heartbeat_url: {{ holdfast_heartbeat_url | to_json }}
+{% endif %}
+{% endif %}

@@ -1,0 +1,137 @@
+---
+# The distribution's PostgreSQL, with the user and database holdfast, as the installer makes them. The password is made
+# once, into db.dsn; a db.dsn that is there already (a copy of /etc/holdfast put back) keeps its password.
+- name: Install PostgreSQL (Debian, Ubuntu)
+  ansible.builtin.apt:
+    name: postgresql
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  when: ansible_facts.pkg_mgr == 'apt'
+
+- name: Install PostgreSQL (RHEL and its relatives)
+  when: ansible_facts.pkg_mgr != 'apt'
+  block:
+    - name: Read its module streams
+      ansible.builtin.command:
+        argv: [dnf, -q, module, list, postgresql]
+      register: server_pg_streams
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    # RHEL 9 and its relatives offer newer PostgreSQL as module streams; Holdfast is tested with 16.
+    - name: Enable the stream postgresql:16
+      ansible.builtin.command:
+        argv: [dnf, -y, -q, module, enable, "postgresql:16"]
+      changed_when: true
+      when:
+        - server_pg_streams.stdout is search('(?m)^postgresql\s+16\s')
+        - server_pg_streams.stdout is not search('(?m)^postgresql\s+16\s+\[e\]')
+
+    - name: Install PostgreSQL's server
+      ansible.builtin.dnf:
+        name: postgresql-server
+        state: present
+
+    - name: Make its cluster, once
+      ansible.builtin.command:
+        argv: [postgresql-setup, --initdb]
+        creates: /var/lib/pgsql/data/PG_VERSION
+
+    # Its pg_hba.conf lets local TCP logins in by ident; Holdfast logs in with a password.
+    - name: Let local TCP logins in with a password
+      ansible.builtin.replace:
+        path: /var/lib/pgsql/data/pg_hba.conf
+        regexp: '^(host\s+all\s+all\s+(127\.0\.0\.1/32|::1/128)\s+)ident'
+        replace: '\1scram-sha-256'
+      notify: Restart PostgreSQL
+
+- name: Start PostgreSQL, and at every boot
+  ansible.builtin.systemd_service:
+    name: postgresql
+    state: started
+    enabled: true
+
+- name: Restart it now if its settings changed
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for it to answer
+  ansible.builtin.command:
+    argv: [runuser, -u, postgres, --, psql, -X, -q, -c, SELECT 1]
+    chdir: /
+  register: server_pg_up
+  changed_when: false
+  check_mode: false
+  retries: 60
+  delay: 1
+  until: server_pg_up.rc == 0
+
+- name: Make the database's password, once (db.dsn)
+  ansible.builtin.copy:
+    dest: "{{ server_etc }}/db.dsn"
+    content: "postgres://holdfast:{{ server_new_password }}@127.0.0.1:5432/holdfast?sslmode=disable\n"
+    force: false
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  notify: Restart holdfast-server
+  vars:
+    server_new_password: "{{ lookup('ansible.builtin.password', '/dev/null', chars=['ascii_lowercase', 'digits'], length=48) }}"
+
+- name: Read it
+  ansible.builtin.slurp:
+    src: "{{ server_etc }}/db.dsn"
+  register: server_dsn_file
+  no_log: true
+
+- name: Refuse a db.dsn that is not this PostgreSQL's
+  ansible.builtin.assert:
+    that: server_dsn is match('^postgres://holdfast:[0-9a-z]+@127\.0\.0\.1:5432/holdfast\?')
+    fail_msg: >-
+      {{ server_etc }}/db.dsn names another database than the local one the role makes: set holdfast_database_dsn to it,
+      or remove db.dsn
+    quiet: true
+  vars:
+    server_dsn: "{{ server_dsn_file.content | b64decode | trim }}"
+  no_log: true
+
+- name: Try it, as the server logs in
+  ansible.builtin.command:
+    argv: [psql, -X, -tA, -h, 127.0.0.1, -U, holdfast, -d, holdfast, -c, SELECT 1]
+  environment:
+    PGPASSWORD: "{{ server_db_password }}"
+  register: server_db_login
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  no_log: true
+
+- name: Make the user holdfast, with that password (through stdin, not argv)
+  ansible.builtin.command:
+    argv: [runuser, -u, postgres, --, psql, -X, -q, -v, ON_ERROR_STOP=1]
+    chdir: /
+    stdin: |
+      DO $$ BEGIN
+        IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'holdfast') THEN CREATE ROLE holdfast LOGIN; END IF;
+      END $$;
+      ALTER ROLE holdfast PASSWORD '{{ server_db_password }}';
+  changed_when: true
+  no_log: true
+  when: server_db_login.rc != 0
+
+- name: Look for the database holdfast
+  ansible.builtin.command:
+    argv: [runuser, -u, postgres, --, psql, -X, -tA, -c, "SELECT 1 FROM pg_database WHERE datname = 'holdfast'"]
+    chdir: /
+  register: server_db_exists
+  changed_when: false
+  check_mode: false
+
+- name: Make it, owned by holdfast
+  ansible.builtin.command:
+    argv: [runuser, -u, postgres, --, createdb, -O, holdfast, holdfast]
+    chdir: /
+  changed_when: true
+  when: server_db_exists.stdout | trim != '1'

@@ -3,9 +3,10 @@ argument_specs:
   main:
     short_description: The Holdfast server, with its PostgreSQL, CA, recovery file and web UI
     description:
-      - Sets the server up as Holdfast's installer does (sh install.sh help), and keeps server.yaml in step with these
-        settings; a change restarts the server.
-      - Make the bucket and its two keys first (docs/storage.md).
+      - Sets the server up as Holdfast's installer does, and keeps server.yaml in step with these settings; a change
+        restarts the server. Each setting is the installer's, in lower case, as listed in the documentation's
+        Installer settings (https://kabsdk.github.io/holdfast/#installer-ref).
+      - Make the bucket and its two keys first (https://kabsdk.github.io/holdfast/#storage).
       - It writes /root/holdfast-recovery.txt on the first run. Copy it offline, then delete it on the server.
       - With holdfast_recovery_file, a new machine replaces a lost server from the bucket's newest nightly export.
     options:
@@ -142,7 +143,8 @@ argument_specs:
         type: list
         elements: str
         default: []
-        description: User names that are admin everywhere at first login.
+        description: User names that are admin everywhere at every login while they are listed, whatever their groups.
+          Meant for the first login; remove them once your groups work.
       holdfast_offsite_endpoint:
         type: str
         default: ""

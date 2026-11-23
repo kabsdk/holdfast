@@ -1,0 +1,54 @@
+---
+# A lost server's replacement (decision 040): with the recovery file and the settings of the first
+# install, on a new machine. The bucket's newest nightly export gives the database, the agents' certificate and CA;
+# restore-export writes the credentials key from the recovery file once the export has been checked with it. The agents
+# come back by themselves.
+- name: Put the recovery file on the server (root only), where server.yaml names it
+  ansible.builtin.copy:
+    src: "{{ holdfast_recovery_file }}"
+    dest: "{{ server_recovery_path }}"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+
+- name: Read its age key's recipient
+  ansible.builtin.command:
+    argv: [holdfast-server, recovery-file, -recipient, "{{ server_recovery_path }}"]
+  register: server_rebuild_recipient
+  changed_when: false
+
+- name: Write server.yaml, without the pin while there is no certificate yet
+  ansible.builtin.include_tasks: serveryaml.yml
+
+- name: Restore the newest nightly export from the bucket
+  block:
+    - name: Restore it (restore-export -latest)
+      ansible.builtin.command:
+        argv: [holdfast-server, restore-export, -config, "{{ server_etc }}/server.yaml", -identity, "{{ server_recovery_path }}", -latest]
+      register: server_restore
+      changed_when: true
+  rescue:
+    - name: Leave the server not set up, so that the next run tries again
+      ansible.builtin.file:
+        path: "{{ server_etc }}/credentials.key"
+        state: absent
+
+    - name: Say why
+      ansible.builtin.fail:
+        msg: >-
+          restore-export failed: {{ server_restore.stderr | default('') }} {{ server_restore.stdout | default('') }}
+          The database may hold part of the export now: drop it and make it again, empty, before you run this again.
+
+- name: Read whether the export held the agents' certificate
+  ansible.builtin.stat:
+    path: "{{ server_etc }}/tls/server.crt"
+  register: server_restored_cert
+
+- name: Refuse to go on without it
+  ansible.builtin.assert:
+    that: server_restored_cert.stat.exists
+    fail_msg: >-
+      The export holds no certificate for the agents (it was made by a build before the first release): put the old
+      server's {{ server_etc }}/tls back, or give holdfast_tls_cert and holdfast_tls_key from the CA the agents pinned.
+    quiet: true

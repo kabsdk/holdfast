@@ -1,0 +1,54 @@
+---
+# server.yaml from the settings: the pin from the agents' certificate, the age key's recipient from the settings, the
+# recovery file made on this run, or server.yaml as it is.
+- name: Read whether the agents' certificate is here
+  ansible.builtin.stat:
+    path: "{{ server_etc }}/tls/server.crt"
+  register: server_cert
+
+- name: Read the pin agents check, the sha256 of the last certificate in its chain
+  ansible.builtin.shell:
+    cmd: >-
+      set -o pipefail;
+      awk '/-----BEGIN CERTIFICATE-----/ { c = "" } { c = c $0 "\n" } /-----END CERTIFICATE-----/ { last = c } END { printf "%s", last }'
+      {{ server_etc }}/tls/server.crt | openssl x509 -outform DER | sha256sum | cut -c1-64
+    executable: /bin/bash
+  register: server_pin_read
+  changed_when: false
+  check_mode: false
+  when: server_cert.stat.exists
+
+- name: Read server.yaml as it is
+  ansible.builtin.slurp:
+    src: "{{ server_etc }}/server.yaml"
+  register: server_current_yaml
+  failed_when: false
+
+- name: Take the pin and the age key's recipient
+  ansible.builtin.set_fact:
+    server_pin: "{{ server_pin_read.stdout | default('') | trim }}"
+    server_recipient: >-
+      {{ holdfast_escrow_recipient
+         or (server_new_recovery.stdout | default('') | regex_findall('(?m)^recipient (age1[0-9a-z]+)$') | first | default(''))
+         or (server_rebuild_recipient.stdout | default('') | trim)
+         or ((server_current_yaml.content | default('') | b64decode | from_yaml or {}).escrow | default({})).age_recipient | default('') }}
+
+- name: Refuse to write server.yaml without the age key's recipient
+  ansible.builtin.assert:
+    that: server_recipient is match('^age1[0-9a-z]+$')
+    fail_msg: >-
+      This server has its credentials key, but neither server.yaml nor the settings name the recovery file's age key:
+      set holdfast_escrow_recipient to it (holdfast-server recovery-file -recipient <the recovery file> prints it).
+    quiet: true
+
+- name: Write server.yaml (root only)
+  ansible.builtin.copy:
+    dest: "{{ server_etc }}/server.yaml"
+    content: |
+      # Written by Ansible (kabsdk.holdfast.server) from its settings: change them there, not here.
+      # Every setting: /usr/share/holdfast/server.yaml.example
+      {{ server_yaml | to_nice_yaml(indent=2, width=1000) }}
+    owner: root
+    group: root
+    mode: "0600"
+  notify: Restart holdfast-server

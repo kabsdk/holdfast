@@ -290,7 +290,7 @@ figure.shot img { display: block; width: 100%; height: auto; border: 1px solid v
         <tr><td>The CLI</td><td>Packaged for Linux on x86_64, like the rest. On other systems, use the web UI, or the CLI on the server.</td></tr>
         <tr><td>The server's size</td><td>2 vCPUs, 2 GiB of memory and 20 GiB of disk carried 66 MiB/s of backups in the lab. Its network link to the hosts and to S3 is what limits it (<a href="#sizing">Sizing</a>).</td></tr>
         <tr><td>Web UI login</td><td>Nothing, to start: root on the server opens the UI with <code>holdfast ui-login</code>. For people to log in as themselves: an OIDC provider with the authorization code flow, the device flow and a groups claim, such as Authelia, Keycloak, Authentik or Dex. These also put LDAP or Active Directory behind OIDC.</td></tr>
-        <tr><td>Alerts</td><td>An SMTP relay, a webhook URL (Slack, Mattermost, Teams and most chat tools take one), or both; and a heartbeat service outside your site, such as Healthchecks.io or Uptime Kuma. Prometheus is optional.</td></tr>
+        <tr><td>Alerts</td><td>An SMTP relay, a webhook URL that takes Slack's message format (Slack, Mattermost, or Discord at its Slack-compatible URL), or both; and a heartbeat service outside your site, such as Healthchecks.io or Uptime Kuma. Prometheus is optional.</td></tr>
         <tr><td>Offline</td><td>A safe place off the server, such as a password manager, for the recovery file and the settings you installed with (<a href="#offline">What to keep offline</a>).</td></tr>
       </tbody>
     </table></div>
@@ -496,7 +496,7 @@ rm /root/holdfast-recovery.txt /root/holdfast.env</code></pre></div></li>
 holdfast job set web01.example.com system --path /etc --path /home</code></pre></div>
       <p>The job backs up daily at 02:00 and keeps one backup per day for 14 days, per week for 8 weeks, per month for a year and per year for 3 years; <a href="#jobs">Jobs and schedules</a> changes that. <code>host add</code> prints one line, with a code that works once, for 15 minutes; the UI shows the same line.</p></li>
     <li><strong>Run that line on the host</strong>, as root. It installs the agent, enrolls it with the server and starts it:
-      <div class="cmd"><pre><code>curl -sfL https://github.com/kabsdk/holdfast/releases/download/v1.0.0/install.sh | HOLDFAST_SERVER=https://holdfast.example.com:8443 HOLDFAST_FQDN=web01.example.com HOLDFAST_CODE=3DK5-TM2E-28V6 HOLDFAST_CA_SHA256=2315…d08c HOLDFAST_VERSION=0.5.0 sh -</code></pre></div></li>
+      <div class="cmd"><pre><code>curl -sfL https://github.com/kabsdk/holdfast/releases/download/v0.5.0/install.sh | HOLDFAST_SERVER=https://holdfast.example.com:8443 HOLDFAST_FQDN=web01.example.com HOLDFAST_CODE=3DK5-TM2E-28V6 HOLDFAST_CA_SHA256=2315…d08c HOLDFAST_VERSION=0.5.0 sh -</code></pre></div></li>
     <li><strong>Watch the first backup.</strong> It starts as soon as the agent has enrolled; the UI's Add host page follows it from <em>waiting</em> to <em>first backup done</em>. After that the job follows its schedule. In the CLI:
       <div class="cmd"><pre><code>holdfast host events web01.example.com
 holdfast snapshot list web01.example.com</code></pre></div></li>
@@ -650,7 +650,7 @@ holdfast snapshot list web01.example.com</code></pre></div></li>
     <li><strong>Run again, it upgrades.</strong> On a machine that is set up already, it only upgrades the packages, and says that the settings are ignored.</li>
     <li><strong>You can read it first.</strong> <code>curl -sfLO …/install.sh</code>, read it, then <code>sh install.sh server</code>. <code>sh install.sh help</code> lists every setting.</li>
   </ul>
-  <p>Here <code>…/install.sh</code> is <code>https://github.com/kabsdk/holdfast/releases/latest/download/install.sh</code>, the newest release. To pin a release, use <code>https://github.com/kabsdk/holdfast/releases/download/v1.0.0/install.sh</code> and <code>HOLDFAST_VERSION=0.5.0</code>.</p>
+  <p>Here <code>…/install.sh</code> is <code>https://github.com/kabsdk/holdfast/releases/latest/download/install.sh</code>, the newest release. To pin a release, use <code>https://github.com/kabsdk/holdfast/releases/download/v0.5.0/install.sh</code> and <code>HOLDFAST_VERSION=0.5.0</code>.</p>
 
   <div class="sub" id="before">
     <h3>Before you start</h3>
@@ -673,6 +673,7 @@ holdfast snapshot list web01.example.com</code></pre></div></li>
       <li><strong>Make the gateway key</strong> with the policy below. The server's gateway writes every host's backups with it. It may read and add under <code>repos/</code>, delete only lock files, and never delete an old version.</li>
       <li><strong>Make the maintenance key</strong> with the policy below. With it the server reads each repository back after a backup, forgets and prunes, writes and reads the escrow files and the nightly exports, and measures each repository. It may never delete an old version or change the bucket's settings.</li>
     </ol>
+    <p><strong>A private CA.</strong> The server checks the S3 endpoint's certificate against the operating system's trusted CAs, and has no setting of its own for that. If your S3 server's certificate comes from a private CA, add the CA to the server's trust store before you install (<code>update-ca-certificates</code> on Ubuntu and Debian, <code>update-ca-trust</code> on the Red Hat family), and restart <code>holdfast-server</code> whenever the trust store changes. Hosts never connect to S3, so they need nothing.</p>
     <p>The policies use the standard S3 policy language, which AWS, MinIO and Ceph RGW all accept. Replace <code>holdfast</code> with your bucket's name.</p>
     <div class="two">
       <div class="cmd"><pre><code><span class="c">// The gateway key</span>
@@ -831,7 +832,7 @@ every host, for 12 hours:
     <div class="cmd"><pre><code>HOLDFAST_OIDC_ISSUER=https://auth.example.com
 HOLDFAST_OIDC_CLIENT_ID=holdfast
 HOLDFAST_OIDC_CLIENT_SECRET=…
-HOLDFAST_ADMINS=alice                             <span class="c"># optional: admin everywhere at first login</span>
+HOLDFAST_ADMINS=alice                             <span class="c"># optional: admin everywhere while listed, for the first login</span>
 HOLDFAST_OIDC_CA_FILE=/root/internal-ca.crt       <span class="c"># optional: if the provider's certificate is from a private CA</span></code></pre></div>
     <p>Or later, in <code>/etc/holdfast/server.yaml</code>, and restart the server:</p>
     <div class="cmd"><pre><code>auth:
@@ -852,7 +853,7 @@ HOLDFAST_OIDC_CA_FILE=/root/internal-ca.crt       <span class="c"># optional: if
     <div class="cmd"><pre><code>holdfast host add web01.example.com
 holdfast job set web01.example.com system --path /etc --path /home --path /srv --exclude '/home/*/.cache'</code></pre></div>
     <p>The job takes the default schedule and retention unless you give them (<a href="#jobs">Jobs and schedules</a>). <code>host add</code> prints the line to run on the host as root, with everything filled in:</p>
-    <div class="cmd"><pre><code>curl -sfL https://github.com/kabsdk/holdfast/releases/download/v1.0.0/install.sh | HOLDFAST_SERVER=https://holdfast.example.com:8443 HOLDFAST_FQDN=web01.example.com HOLDFAST_CODE=3DK5-TM2E-28V6 HOLDFAST_CA_SHA256=2315…d08c HOLDFAST_VERSION=0.5.0 sh -</code></pre></div>
+    <div class="cmd"><pre><code>curl -sfL https://github.com/kabsdk/holdfast/releases/download/v0.5.0/install.sh | HOLDFAST_SERVER=https://holdfast.example.com:8443 HOLDFAST_FQDN=web01.example.com HOLDFAST_CODE=3DK5-TM2E-28V6 HOLDFAST_CA_SHA256=2315…d08c HOLDFAST_VERSION=0.5.0 sh -</code></pre></div>
     <p>On the host, the installer installs <code>holdfast-restic</code> and <code>holdfast-agent</code> of the server's own version, and runs <code>holdfast-agent enroll</code>. Enrolling checks the server's certificate against the pin, makes the agent a private key and certificate of its own, which never leave the host, and sends the code. The server pins that certificate: from then on it is the host, on every connection. Then the agent starts, fetches its jobs, and keeps its own schedule.</p>
     <p>The UI's <strong>Add host</strong> page does the same in one form, and shows the line with a copy button. A host can also be added with no job, and given one later.</p>
     <p><strong>What a host decides for itself</strong> is in its own <code>/etc/holdfast/agent.yaml</code>, which only root on the host can change, and which enrolling again keeps:</p>
@@ -887,7 +888,7 @@ HOLDFAST_MAIL_TO=backup-team@example.com,oncall@example.com
 HOLDFAST_SMTP=relay.example.com:587                <span class="c"># host:port; STARTTLS unless HOLDFAST_SMTP_TLS=tls (port 465) or none</span>
 HOLDFAST_SMTP_USER=holdfast                        <span class="c"># if the relay wants a login, with HOLDFAST_SMTP_PASSWORD</span>
 HOLDFAST_MAIL_FROM=holdfast@example.com            <span class="c"># default holdfast@&lt;the server&gt;</span>
-<span class="c"># a webhook: a JSON POST with a "text" field, which Slack, Mattermost, Teams and most chat tools show</span>
+<span class="c"># a webhook: a JSON POST with a "text" field, which Slack and Mattermost show (Discord: add /slack to its URL)</span>
 HOLDFAST_WEBHOOK_URL=https://chat.example.com/hooks/…
 <span class="c"># the dead man's switch: called after each look, every minute</span>
 HOLDFAST_HEARTBEAT_URL=https://hc-ping.com/…</code></pre></div>
@@ -903,6 +904,7 @@ HOLDFAST_HEARTBEAT_URL=https://hc-ping.com/…</code></pre></div>
   webhook_url: https://chat.example.com/hooks/…
   heartbeat_url: https://hc-ping.com/…
   after: 10m                                       <span class="c"># how long a problem lasts before it is sent</span></code></pre></div>
+    <p><strong>What is sent.</strong> The webhook is a <code>POST</code> of JSON, in a format that cannot be changed: <code>text</code>, a summary for people; <code>server</code>; <code>url</code>, the UI's, when it is on; and <code>started</code> and <code>ended</code>, the problems, each with its <code>code</code>, <code>severity</code>, <code>host</code>, <code>job_id</code>, <code>message</code> and <code>since</code>. Slack and Mattermost show <code>text</code>. Discord takes it at its Slack-compatible URL, the webhook's URL with <code>/slack</code> added. A tool that wants another format needs a relay in between. The heartbeat is a <code>GET</code> of its URL, with no body. Each counts as delivered when it answers with a 2xx status.</p>
     <p><strong>Test it</strong>: <code>holdfast notify test</code>, or <strong>Send a test alert</strong> on the Settings page, sends one on every channel and says how each went. A channel that fails later is the server's own problem <code>notify</code>, on every page of the UI.</p>
     <p class="warn"><span><strong>Set up the heartbeat.</strong> A server that is down sends nothing, and silence looks like health. At the heartbeat service, expect a ping every minute or so and alert after a few minutes without one. Test it once: stop <code>holdfast-server</code> and check that the alarm arrives.</span></p>
     <h4>With Prometheus (optional)</h4>
@@ -1044,7 +1046,7 @@ openssl x509 -in ca.crt -outform DER | sha256sum                 <span class="c"
         <tr><td>HOLDFAST_OIDC_ISSUER, HOLDFAST_OIDC_CLIENT_ID, HOLDFAST_OIDC_CLIENT_SECRET</td><td>server</td><td><span class="pill plan">all or none</span> Your identity provider, so people log in as themselves. And <code>HOLDFAST_OIDC_CA_FILE</code>, a CA to trust for it.</td></tr>
         <tr><td>HOLDFAST_ADMINS</td><td>server</td><td>User names, comma-separated, that are admin everywhere at login while listed (<code>bootstrap_admins</code>).</td></tr>
         <tr><td>HOLDFAST_MAIL_TO, HOLDFAST_SMTP</td><td>server</td><td><span class="pill plan">both or neither</span> Alerts by mail: addresses, comma-separated, and the relay as <code>host:port</code>. With <code>HOLDFAST_SMTP_TLS</code> (<code>starttls</code>, <code>tls</code> or <code>none</code>), <code>HOLDFAST_SMTP_USER</code> and <code>HOLDFAST_SMTP_PASSWORD</code> (both or neither), and <code>HOLDFAST_MAIL_FROM</code>.</td></tr>
-        <tr><td>HOLDFAST_WEBHOOK_URL</td><td>server</td><td>Alerts by webhook: a JSON POST with a <code>text</code> field.</td></tr>
+        <tr><td>HOLDFAST_WEBHOOK_URL</td><td>server</td><td>Alerts by webhook: a JSON POST in Slack's format, with a <code>text</code> field (<a href="#install-alerts">Alerts</a>).</td></tr>
         <tr><td>HOLDFAST_HEARTBEAT_URL</td><td>server</td><td>Called after each check, every minute, for a dead man's switch outside your site.</td></tr>
         <tr><td>HOLDFAST_OFFSITE_ENDPOINT, _BUCKET, _ACCESS_KEY_ID, _SECRET_ACCESS_KEY</td><td>server</td><td><span class="pill plan">all or none</span> Off-site copies. And <code>HOLDFAST_OFFSITE_REGION</code> if needed.</td></tr>
       </tbody>
@@ -1064,9 +1066,9 @@ openssl x509 -in ca.crt -outform DER | sha256sum                 <span class="c"
     <p><strong>Upgrade the server first.</strong> Then upgrade the agents, one by one, in any order and at any pace. Run the installer again on each machine, with its role and the new version; on a machine that is set up, it only upgrades the packages.</p>
     <div class="cmd"><pre><code><span class="c"># on the server: write a fresh export first, then upgrade</span>
 holdfast export now
-curl -sfL https://github.com/kabsdk/holdfast/releases/download/v1.1.0/install.sh | HOLDFAST_VERSION=0.6.0 sh -s - server
+curl -sfL https://github.com/kabsdk/holdfast/releases/download/v0.6.0/install.sh | HOLDFAST_VERSION=0.6.0 sh -s - server
 <span class="c"># on each host, the same version</span>
-curl -sfL https://github.com/kabsdk/holdfast/releases/download/v1.1.0/install.sh | HOLDFAST_VERSION=0.6.0 sh -</code></pre></div>
+curl -sfL https://github.com/kabsdk/holdfast/releases/download/v0.6.0/install.sh | HOLDFAST_VERSION=0.6.0 sh -</code></pre></div>
     <ul class="plain">
       <li>Pin the version, as above, so a release published between the server's upgrade and a host's cannot make an agent newer than its server. <code>dpkg-query -W holdfast-server</code> or <code>rpm -q holdfast-server</code> on the server shows its version. The line <code>host add</code> prints is pinned to the server's version already.</li>
       <li>The server migrates its database when it starts. Its upgrade restarts it; agents wait meanwhile and carry on. There is no downgrade: to go back, build a new server at the old version from the export you wrote before the upgrade, as for an older export in <a href="#lost-server">A lost server</a>.</li>

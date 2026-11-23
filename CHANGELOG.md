@@ -8,6 +8,12 @@ What each release of Holdfast changes. The Ansible collection has its own notes 
 - The documentation is published at [kabsdk.github.io/holdfast](https://kabsdk.github.io/holdfast/), with six more
   pictures of the web UI: a job's snapshots, Changes, Restore, Restores, Config history and the audit log.
 - Web UI: a long retention reason or audit entry wraps, instead of making the page scroll sideways.
+- Documentation, from a first install by someone using only the docs:
+  - the example lines pin the same release in the URL and in `HOLDFAST_VERSION`;
+  - the webhook's exact JSON, that it takes Slack's format (Discord through its Slack-compatible URL), and that the
+    heartbeat is a GET;
+  - how the server trusts a private CA for S3: the operating system's trust store;
+  - `bootstrap_admins` applies at every login while listed, not only the first.
 
 ## 0.5.0 (2026-11-23)
 

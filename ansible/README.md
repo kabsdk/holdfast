@@ -22,6 +22,16 @@ ansible-galaxy collection install https://github.com/kabsdk/holdfast/releases/do
 It needs ansible-core 2.16 or later, plus `ansible.posix` and `community.general`, which it installs with it. The
 machines need Python 3, systemd, x86_64, and apt or dnf: Ubuntu, Debian, RHEL, Oracle Linux and their relatives.
 
+It goes into the first directory of your `collections_path` (`ansible.cfg`), which is `~/.ansible/collections` unless
+you set one; `-p <dir>` puts it elsewhere. A repository that pins its collections lists it in `requirements.yml`, and
+installs them with `ansible-galaxy collection install -r requirements.yml`:
+
+```yaml
+collections:
+  - name: https://github.com/kabsdk/holdfast/releases/download/v0.5.0/kabsdk-holdfast-0.5.0.tar.gz
+    type: url
+```
+
 ## Quick start
 
 First make the bucket and its two keys, the gateway key and the maintenance key (see *The bucket and its keys* in
