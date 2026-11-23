@@ -31,14 +31,19 @@ pass=0
 ok() { pass=$((pass + 1)); echo "PASS $*"; }
 fail() { echo "FAIL $*" >&2; exit 1; }
 
-# A machine with systemd, Python for Ansible and sudo for become, and nothing of Holdfast's.
+# A machine with systemd, Python for Ansible and sudo for become, and nothing of Holdfast's. Ansible reaches it as
+# root with docker exec; on GitHub's runners sudo's PAM account check then fails ("Authentication service cannot
+# retrieve authentication info"), so the test machines' sudo skips that check. become itself is still used.
 image_for() {
 	local base=$1 tag
 	tag=holdfast-ansible-test:$(echo "$base" | tr ':/' '--')
 	case "$base" in
-	ubuntu* | debian*) printf 'FROM %s\nRUN apt-get update -q && DEBIAN_FRONTEND=noninteractive apt-get install -y -q systemd systemd-sysv python3 sudo curl ca-certificates && apt-get clean && rm -f /etc/dpkg/dpkg.cfg.d/excludes\nSTOPSIGNAL SIGRTMIN+3\nCMD ["/sbin/init"]\n' "$base" ;;
-	*) printf 'FROM %s\nRUN dnf install -y -q systemd procps-ng hostname python3 sudo && dnf clean all\nSTOPSIGNAL SIGRTMIN+3\nCMD ["/sbin/init"]\n' "$base" ;;
-	esac | docker build -q -t "$tag" - >/dev/null
+	ubuntu* | debian*) printf 'FROM %s\nRUN apt-get update -q && DEBIAN_FRONTEND=noninteractive apt-get install -y -q systemd systemd-sysv python3 sudo curl ca-certificates && apt-get clean && rm -f /etc/dpkg/dpkg.cfg.d/excludes\n' "$base" ;;
+	*) printf 'FROM %s\nRUN dnf install -y -q systemd procps-ng hostname python3 sudo && dnf clean all\n' "$base" ;;
+	esac | {
+		cat
+		printf 'RUN echo "Defaults !pam_acct_mgmt" > /etc/sudoers.d/test && chmod 0440 /etc/sudoers.d/test\nSTOPSIGNAL SIGRTMIN+3\nCMD ["/sbin/init"]\n'
+	} | docker build -q -t "$tag" - >/dev/null
 	echo "$tag"
 }
 machine() { # machine NAME IMAGE: a container with systemd as PID 1, on the test network
