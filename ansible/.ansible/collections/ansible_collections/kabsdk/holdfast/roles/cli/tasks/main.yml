@@ -1,7 +1,0 @@
----
-# The holdfast command on a workstation. Then: holdfast login --server <the UI's URL>
-- name: Install the holdfast command
-  ansible.builtin.include_role:
-    name: kabsdk.holdfast.packages
-  vars:
-    packages_names: [cli]

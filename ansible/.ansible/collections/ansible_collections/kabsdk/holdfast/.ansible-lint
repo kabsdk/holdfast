@@ -1,8 +1,0 @@
----
-profile: production
-exclude_paths:
-  - .cache/
-skip_list:
-  # The roles' settings are Holdfast's, shared by every role and named as the installer names them: HOLDFAST_S3_BUCKET is
-  # holdfast_s3_bucket in each role, not server_s3_bucket in one (decision 050).
-  - var-naming[no-role-prefix]
