@@ -1,4 +1,15 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Holdfast documentation</title>
+<meta name="description" content="Holdfast runs restic backups for a fleet of Linux servers from one place: one server, a small agent on each host, your own S3 storage. Free and open source, Apache-2.0.">
+<meta property="og:title" content="Holdfast: restic backups for a fleet of Linux servers">
+<meta property="og:description" content="One server, a small agent on each host, your own S3 storage. Free and open source, Apache-2.0.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://kabsdk.github.io/holdfast/">
+<meta property="og:image" content="https://kabsdk.github.io/holdfast/img/fleet.png">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230e7c74'/%3E%3Cpath d='M10 8v16M22 8v16M10 16h12' stroke='white' stroke-width='3.5' stroke-linecap='round'/%3E%3C/svg%3E">
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -40,6 +51,7 @@ section.chapter { gap: 1.25rem; border-top: 2px solid var(--line); padding-top: 
 .sub { display: grid; gap: 0.9rem; scroll-margin-top: 1rem; min-width: 0 }
 .eyebrow { font-family: var(--mono); font-size: 0.78rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted) }
 .lede { font-size: 1.12rem }
+.links { display: flex; flex-wrap: wrap; gap: 0.4rem 1.2rem; margin: 0; padding: 0; list-style: none; font-weight: 500 }
 code, .mono { font-family: var(--mono); font-size: 0.88em }
 code { background: var(--accent-soft); padding: 0.05em 0.35em; border-radius: 4px; overflow-wrap: anywhere }
 a { color: var(--accent) }
@@ -216,6 +228,13 @@ figure.shot img { display: block; width: 100%; height: auto; border: 1px solid v
   <div class="eyebrow">Holdfast · documentation · November 2026 · Apache-2.0</div>
   <h1>Holdfast documentation</h1>
   <p class="lede">Holdfast runs restic backups for a fleet of Linux servers from one place. You install one Holdfast server, put a small agent on every host, and say what to back up and how long to keep it. The agents make encrypted backups with restic and send them through the server to your own S3 storage. The server keeps the settings and the history, checks that every backup really is in the bucket, cleans up every day under a 7-day safety rule, and tells you by mail or chat when something is wrong.</p>
+  <ul class="links" aria-label="Project links">
+    <li><a href="https://github.com/kabsdk/holdfast">Source on GitHub</a></li>
+    <li><a href="https://github.com/kabsdk/holdfast/releases/latest">Latest release</a></li>
+    <li><a href="https://github.com/kabsdk/holdfast/blob/main/CHANGELOG.md">Changelog</a></li>
+    <li><a href="https://github.com/kabsdk/holdfast/issues">Report a problem</a></li>
+    <li><a href="https://github.com/kabsdk/holdfast/tree/main/docs/decisions">Design decisions</a></li>
+  </ul>
   <div class="status">
     <div><b>Install</b><span>One line per machine, <code>curl … | sh</code>, or the Ansible collection. One program on the server.</span></div>
     <div><b>No storage key on hosts</b><span>The server holds two S3 keys (three with an off-site bucket), whether you have 5 hosts or 500. Hosts hold none.</span></div>
@@ -477,7 +496,7 @@ rm /root/holdfast-recovery.txt /root/holdfast.env</code></pre></div></li>
 holdfast job set web01.example.com system --path /etc --path /home</code></pre></div>
       <p>The job backs up daily at 02:00 and keeps one backup per day for 14 days, per week for 8 weeks, per month for a year and per year for 3 years; <a href="#jobs">Jobs and schedules</a> changes that. <code>host add</code> prints one line, with a code that works once, for 15 minutes; the UI shows the same line.</p></li>
     <li><strong>Run that line on the host</strong>, as root. It installs the agent, enrolls it with the server and starts it:
-      <div class="cmd"><pre><code>curl -sfL https://github.com/kabsdk/holdfast/releases/download/v1.0.0/install.sh | HOLDFAST_SERVER=https://holdfast.example.com:8443 HOLDFAST_FQDN=web01.example.com HOLDFAST_CODE=3DK5-TM2E-28V6 HOLDFAST_CA_SHA256=2315…d08c HOLDFAST_VERSION=1.0.0 sh -</code></pre></div></li>
+      <div class="cmd"><pre><code>curl -sfL https://github.com/kabsdk/holdfast/releases/download/v1.0.0/install.sh | HOLDFAST_SERVER=https://holdfast.example.com:8443 HOLDFAST_FQDN=web01.example.com HOLDFAST_CODE=3DK5-TM2E-28V6 HOLDFAST_CA_SHA256=2315…d08c HOLDFAST_VERSION=0.5.0 sh -</code></pre></div></li>
     <li><strong>Watch the first backup.</strong> It starts as soon as the agent has enrolled; the UI's Add host page follows it from <em>waiting</em> to <em>first backup done</em>. After that the job follows its schedule. In the CLI:
       <div class="cmd"><pre><code>holdfast host events web01.example.com
 holdfast snapshot list web01.example.com</code></pre></div></li>
@@ -512,7 +531,7 @@ holdfast snapshot list web01.example.com</code></pre></div></li>
 
   <div class="sub" id="tour">
     <h3>A tour of the UI</h3>
-    <p>These pictures are taken by Holdfast's own end-to-end test, against a real server with real agents, restic and S3, logged in with <code>holdfast ui-login</code>. Names such as <code>web01.example.com</code> are the test's.</p>
+    <p>These pictures are taken by Holdfast's own end-to-end test, against a real server with real agents, restic and S3, logged in with <code>holdfast ui-login</code>. Names such as <code>web01.example.com</code> and <code>/srv/www</code> are the test's.</p>
     <div class="shots">
       <figure class="shot">
         <img src="img/fleet.png" alt="The Fleet page: four hosts with their jobs, last runs and next runs. files01 is marked as needing attention because a job failed; app02 waits for its agent to enroll. An Add host button is at the top right." loading="lazy">
@@ -527,12 +546,36 @@ holdfast snapshot list web01.example.com</code></pre></div></li>
         <figcaption><strong>A job.</strong> Paths or a dump, excludes, the schedule and, further down, the retention. As you type, the server checks the job and shows what you get: the worst-case data loss, the restore points, the oldest one, when it counts as stale, and the <code>restic forget</code> its retention means. A save needs a message; findings show with their codes to fix or accept, and further down the page the same change as a <code>holdfast job set</code> command.</figcaption>
       </figure>
       <figure class="shot">
+        <img src="img/snapshots.png" alt="A job's snapshot list: two snapshots of web01's system job with the time taken, short ID, file count and size, and the retention rules that keep each; below, a search for a file across all snapshots." loading="lazy">
+        <figcaption><strong>A job's snapshots.</strong> Every snapshot of one job, newest first, with its files, size and the retention rules that keep it, filtered by month. <strong>Find a file in all snapshots</strong> searches names and metadata, like <code>restic find</code>. The page names the same list in the CLI: <code>holdfast snapshot list web01.example.com --job system</code>.</figcaption>
+      </figure>
+      <figure class="shot">
         <img src="img/snapshot.png" alt="A snapshot's page: its host, job, paths, time and ID; Files, Changes and Restore tabs; a folder's files with size, owner, mode and time, each with a Restore only this button; and below, deleting the snapshot." loading="lazy">
-        <figcaption><strong>A snapshot.</strong> Its files, by name and metadata only, never their contents, each with <strong>Restore only this</strong>. <strong>Changes</strong> shows what changed since the job's previous snapshot; <strong>Restore</strong> restores everything or leaves paths out, into a new folder or wherever the host allows. Below, deleting the snapshot, which waits 7 days.</figcaption>
+        <figcaption><strong>A snapshot.</strong> Its files, by name and metadata only, never their contents, each with <strong>Restore only this</strong>. Below, deleting the snapshot, which waits 7 days.</figcaption>
+      </figure>
+      <figure class="shot">
+        <img src="img/changes.png" alt="A snapshot's Changes tab: compared with the previous snapshot, one file added, /srv/www/news.html, and two folders whose metadata changed." loading="lazy">
+        <figcaption><strong>Changes.</strong> What changed between this snapshot and an older one, from <code>restic diff --metadata</code>: added, removed, content changed and metadata only, by path, never the contents. Here <code>news.html</code> was added.</figcaption>
+      </figure>
+      <figure class="shot">
+        <img src="img/restore.png" alt="A snapshot's Restore tab: paths to leave out; the target, a new folder under /var/restore, the original location or another folder, the last two not allowed on this host, or another host; a reason for the audit log; and Dry run and Restore the snapshot buttons." loading="lazy">
+        <figcaption><strong>Restore.</strong> Leave paths out if you want, choose the target, and run it, or try a dry run first. A new root-only folder under <code>/var/restore</code> is always allowed; the original location, another folder or another host only where the host's <code>agent.yaml</code> allows it. The restore runs on the host, through its agent, and the repository's password stays there.</figcaption>
+      </figure>
+      <figure class="shot">
+        <img src="img/restores.png" alt="The Restores page: a host and job picker to start a restore, and the history, with one successful restore of web01's system job into a new folder under /var/restore." loading="lazy">
+        <figcaption><strong>Restores.</strong> Every restore on the hosts you can see, where it went and how it ended. A restore starts from a snapshot: pick the host and the job here to get to one.</figcaption>
       </figure>
       <figure class="shot">
         <img src="img/problems.png" alt="The Problems page, listing a failed backup job on files01 with its error." loading="lazy">
         <figcaption><strong>Problems.</strong> What the server knows is wrong, host by host, each with its severity, code and message, here the error restic gave (<a href="#problems">Problems</a>). This list is what the server's alerts send.</figcaption>
+      </figure>
+      <figure class="shot">
+        <img src="img/history.png" alt="The Config history page: no retention cuts waiting, eight revisions with time, author and message, and a comparison of revisions 7 and 8." loading="lazy">
+        <figcaption><strong>Config history.</strong> Every change is a numbered revision, with who made it, when, its message and any warnings accepted; <strong>Compare</strong> shows what changed between two. Above, retention cuts still waiting out their 7 days; below, past prunes.</figcaption>
+      </figure>
+      <figure class="shot">
+        <img src="img/audit.png" alt="The Audit log page: entries such as restore.requested, auth.login and backup.run_now, each with its time, who did it and from where, the host and job, and the details." loading="lazy">
+        <figcaption><strong>Audit log.</strong> Every action, from the UI, the CLI, the API and the server itself, with who, when, which host and the details, filtered by host or action. It is append-only.</figcaption>
       </figure>
       <figure class="shot">
         <img src="img/add-host.png" alt="The Add host page: an FQDN field, a first job with its ID and paths, a note on the default schedule and retention, and a button to add the host and issue the enrollment code." loading="lazy">
@@ -607,7 +650,7 @@ holdfast snapshot list web01.example.com</code></pre></div></li>
     <li><strong>Run again, it upgrades.</strong> On a machine that is set up already, it only upgrades the packages, and says that the settings are ignored.</li>
     <li><strong>You can read it first.</strong> <code>curl -sfLO …/install.sh</code>, read it, then <code>sh install.sh server</code>. <code>sh install.sh help</code> lists every setting.</li>
   </ul>
-  <p>Here <code>…/install.sh</code> is <code>https://github.com/kabsdk/holdfast/releases/latest/download/install.sh</code>, the newest release. To pin a release, use <code>https://github.com/kabsdk/holdfast/releases/download/v1.0.0/install.sh</code> and <code>HOLDFAST_VERSION=1.0.0</code>.</p>
+  <p>Here <code>…/install.sh</code> is <code>https://github.com/kabsdk/holdfast/releases/latest/download/install.sh</code>, the newest release. To pin a release, use <code>https://github.com/kabsdk/holdfast/releases/download/v1.0.0/install.sh</code> and <code>HOLDFAST_VERSION=0.5.0</code>.</p>
 
   <div class="sub" id="before">
     <h3>Before you start</h3>
@@ -724,7 +767,7 @@ curl -sfL https://github.com/kabsdk/holdfast/releases/latest/download/install.sh
       <li>Opens the agent port, 8443, and the UI's, 443, in firewalld or ufw if one of them runs. Starts <code>holdfast-server</code>, which runs as root, and waits until it answers. SELinux may stay enforcing: the tested servers had it on.</li>
     </ol>
     <p>It ends like this:</p>
-    <div class="cmd"><pre><code>[holdfast] The Holdfast server 1.0.0-1 runs.
+    <div class="cmd"><pre><code>[holdfast] The Holdfast server 0.5.0-1 runs.
   The web UI          https://holdfast.example.com: log in with the link that holdfast ui-login prints, as root here
                       Browsers warn about its certificate until you trust /etc/holdfast/tls/ca.crt, or install with HOLDFAST_UI_TLS_CERT
   Agents connect to   https://holdfast.example.com:8443, and pin 2315269dbd8dcb02b9b627167cd4db94c5a53a7448e10654d39eb45a0d8cd08c
@@ -809,7 +852,7 @@ HOLDFAST_OIDC_CA_FILE=/root/internal-ca.crt       <span class="c"># optional: if
     <div class="cmd"><pre><code>holdfast host add web01.example.com
 holdfast job set web01.example.com system --path /etc --path /home --path /srv --exclude '/home/*/.cache'</code></pre></div>
     <p>The job takes the default schedule and retention unless you give them (<a href="#jobs">Jobs and schedules</a>). <code>host add</code> prints the line to run on the host as root, with everything filled in:</p>
-    <div class="cmd"><pre><code>curl -sfL https://github.com/kabsdk/holdfast/releases/download/v1.0.0/install.sh | HOLDFAST_SERVER=https://holdfast.example.com:8443 HOLDFAST_FQDN=web01.example.com HOLDFAST_CODE=3DK5-TM2E-28V6 HOLDFAST_CA_SHA256=2315…d08c HOLDFAST_VERSION=1.0.0 sh -</code></pre></div>
+    <div class="cmd"><pre><code>curl -sfL https://github.com/kabsdk/holdfast/releases/download/v1.0.0/install.sh | HOLDFAST_SERVER=https://holdfast.example.com:8443 HOLDFAST_FQDN=web01.example.com HOLDFAST_CODE=3DK5-TM2E-28V6 HOLDFAST_CA_SHA256=2315…d08c HOLDFAST_VERSION=0.5.0 sh -</code></pre></div>
     <p>On the host, the installer installs <code>holdfast-restic</code> and <code>holdfast-agent</code> of the server's own version, and runs <code>holdfast-agent enroll</code>. Enrolling checks the server's certificate against the pin, makes the agent a private key and certificate of its own, which never leave the host, and sends the code. The server pins that certificate: from then on it is the host, on every connection. Then the agent starts, fetches its jobs, and keeps its own schedule.</p>
     <p>The UI's <strong>Add host</strong> page does the same in one form, and shows the line with a copy button. A host can also be added with no job, and given one later.</p>
     <p><strong>What a host decides for itself</strong> is in its own <code>/etc/holdfast/agent.yaml</code>, which only root on the host can change, and which enrolling again keeps:</p>
@@ -893,9 +936,9 @@ scrape_configs:
     <h3>Mirrors and closed networks</h3>
     <p>Hosts that cannot reach GitHub can install from a mirror: any directory that holds one release's files as published (<code>install.sh</code>, <code>VERSION</code>, <code>SHA256SUMS</code> and the packages), served over HTTPS or HTTP, or mounted on every host.</p>
     <div class="cmd"><pre><code><span class="c"># the server, from the mirror</span>
-curl -sfL https://mirror.example.com/holdfast/1.0.0/install.sh | HOLDFAST_DOWNLOAD_URL=https://mirror.example.com/holdfast/1.0.0 sh -s - server
+curl -sfL https://mirror.example.com/holdfast/0.5.0/install.sh | HOLDFAST_DOWNLOAD_URL=https://mirror.example.com/holdfast/0.5.0 sh -s - server
 <span class="c"># or from a directory on the machine</span>
-HOLDFAST_DOWNLOAD_URL=file:///srv/holdfast/1.0.0 sh /srv/holdfast/1.0.0/install.sh server</code></pre></div>
+HOLDFAST_DOWNLOAD_URL=file:///srv/holdfast/0.5.0 sh /srv/holdfast/0.5.0/install.sh server</code></pre></div>
     <p>A server installed from a mirror writes <code>download_url</code> into its <code>server.yaml</code>, so the line <code>host add</code> prints fetches from the same mirror. Set or change <code>download_url</code> by hand for a server installed otherwise. The packages are still checked against the mirror's <code>SHA256SUMS</code>.</p>
   </div>
 
@@ -981,7 +1024,7 @@ openssl x509 -in ca.crt -outform DER | sha256sum                 <span class="c"
     <div class="tablebox"><table class="ref">
       <thead><tr><th>Setting</th><th>Role</th><th>Meaning</th></tr></thead>
       <tbody>
-        <tr><td>HOLDFAST_VERSION</td><td>all</td><td>The release to install, such as <code>1.0.0</code>. Default: the latest.</td></tr>
+        <tr><td>HOLDFAST_VERSION</td><td>all</td><td>The release to install, such as <code>0.5.0</code>. Default: the latest.</td></tr>
         <tr><td>HOLDFAST_DOWNLOAD_URL</td><td>all</td><td>A mirror holding one release's files: <code>https://</code>, <code>http://</code> or <code>file:///</code>. Default: the release on GitHub.</td></tr>
         <tr><td>HOLDFAST_SERVER</td><td>agent</td><td><span class="pill x">to enroll</span> The server's URL for agents, such as <code>https://holdfast.example.com:8443</code>.</td></tr>
         <tr><td>HOLDFAST_CODE</td><td>agent</td><td><span class="pill x">to enroll</span> The host's enrollment code. On an enrolled host, a code enrolls it again; without one the packages are only upgraded, and no other setting is needed.</td></tr>
@@ -1021,9 +1064,9 @@ openssl x509 -in ca.crt -outform DER | sha256sum                 <span class="c"
     <p><strong>Upgrade the server first.</strong> Then upgrade the agents, one by one, in any order and at any pace. Run the installer again on each machine, with its role and the new version; on a machine that is set up, it only upgrades the packages.</p>
     <div class="cmd"><pre><code><span class="c"># on the server: write a fresh export first, then upgrade</span>
 holdfast export now
-curl -sfL https://github.com/kabsdk/holdfast/releases/download/v1.1.0/install.sh | HOLDFAST_VERSION=1.1.0 sh -s - server
+curl -sfL https://github.com/kabsdk/holdfast/releases/download/v1.1.0/install.sh | HOLDFAST_VERSION=0.6.0 sh -s - server
 <span class="c"># on each host, the same version</span>
-curl -sfL https://github.com/kabsdk/holdfast/releases/download/v1.1.0/install.sh | HOLDFAST_VERSION=1.1.0 sh -</code></pre></div>
+curl -sfL https://github.com/kabsdk/holdfast/releases/download/v1.1.0/install.sh | HOLDFAST_VERSION=0.6.0 sh -</code></pre></div>
     <ul class="plain">
       <li>Pin the version, as above, so a release published between the server's upgrade and a host's cannot make an agent newer than its server. <code>dpkg-query -W holdfast-server</code> or <code>rpm -q holdfast-server</code> on the server shows its version. The line <code>host add</code> prints is pinned to the server's version already.</li>
       <li>The server migrates its database when it starts. Its upgrade restarts it; agents wait meanwhile and carry on. There is no downgrade: to go back, build a new server at the old version from the export you wrote before the upgrade, as for an older export in <a href="#lost-server">A lost server</a>.</li>
@@ -1876,7 +1919,7 @@ POST   /api/v1/ui-login                       <span class="c"># on the root sock
 
   <div class="sub" id="status">
     <h3>Where it stands</h3>
-    <p>Everything on this page is built and tested. The repository's <code>docs/plan-m*.md</code> record how it got here, milestone by milestone.</p>
+    <p>Everything on this page is built and tested. Each release is in the <a href="https://github.com/kabsdk/holdfast/blob/main/CHANGELOG.md">changelog</a>, and the reason for each choice is in the repository's <a href="https://github.com/kabsdk/holdfast/tree/main/docs/decisions">design decisions</a>.</p>
     <div class="two">
       <div class="panel">
         <h4>How it is tested</h4>

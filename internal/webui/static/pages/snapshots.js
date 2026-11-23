@@ -55,7 +55,7 @@ export function JobSnapshots({ fqdn, job }) {
       <thead><tr><th>Taken</th><th>Snapshot</th><th>Files · size</th><th>Retention</th></tr></thead>
       <tbody>${rows.map((s) => { const f = fate(s); return html`<tr>
         <td>${fmtTime(s.time)}</td><td><${Snap} fqdn=${fqdn} id=${s.id} short=${s.short_id} /></td>
-        <td>${s.total_files ?? '—'} · ${bytes(s.total_bytes)}</td><td>${f.text && html`<${Pill} kind=${f.kind}>${f.text}<//>`}</td></tr>`; })}</tbody>
+        <td>${s.total_files ?? '—'} · ${bytes(s.total_bytes)}</td><td>${f.text && html`<${Pill} kind=${f.kind + ' wrap'}>${f.text}<//>`}</td></tr>`; })}</tbody>
     </table>`} />
     <${FindFile} fqdn=${fqdn} job=${job} />
     <p><a href=${link('hosts', fqdn)}>Back to ${fqdn}</a></p>`;
@@ -138,7 +138,7 @@ function Restore({ fqdn, snap, host, only }) {
   const [dir, setDir] = useState('/srv/recovered');
   const [overwrite, setOverwrite] = useState('');
   const [reason, setReason] = useState('');
-  // Onto another host (plan-m6 §2.2): an admin's. That host reads this one's repository through the gateway, for this
+  // Onto another host: an admin's. That host reads this one's repository through the gateway, for this
   // restore only (decision 041).
   const [toHost, setToHost] = useState('');
   const act = useAction();

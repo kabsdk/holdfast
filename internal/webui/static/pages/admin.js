@@ -20,7 +20,7 @@ export function Audit({ hosts }) {
       <thead><tr><th>When</th><th>Who</th><th>Action</th><th>Host</th><th>Reason and details</th></tr></thead>
       <tbody>${rows.map((a) => html`<tr><td>${fmtTime(a.at)}</td><td>${a.actor} <span class="muted">${a.source}</span></td><td><code>${a.action}</code></td>
         <td>${a.fqdn}${a.job_id ? ' · ' + a.job_id : ''}</td>
-        <td>${a.detail?.message && html`<div>${a.detail.message}</div>`}<span class="muted mono">${JSON.stringify(Object.fromEntries(Object.entries(a.detail || {}).filter(([k]) => k !== 'message')))}</span></td></tr>`)}</tbody>
+        <td>${a.detail?.message && html`<div>${a.detail.message}</div>`}<span class="muted mono wrap">${JSON.stringify(Object.fromEntries(Object.entries(a.detail || {}).filter(([k]) => k !== 'message')))}</span></td></tr>`)}</tbody>
     </table>
     ${rows.length >= 100 && html`<button disabled=${older.busy} onClick=${async () => {
       const more = await older.run(() => api.audit({ host, action, limit: 100, before: rows[rows.length - 1].id }));

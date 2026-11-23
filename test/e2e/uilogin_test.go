@@ -27,7 +27,7 @@ func (e *env) rootLink() string {
 	return l.URL
 }
 
-// The web UI on a server with no identity provider (plan-m10 item 6): the login page says to run holdfast ui-login;
+// The web UI on a server with no identity provider: the login page says to run holdfast ui-login;
 // its link opens the UI as local:root, an admin on every host, once; issuing and using it are audited.
 func TestUILoginWithoutProvider(t *testing.T) {
 	e := newEnvWith(t, envOpts{UI: true})
@@ -76,7 +76,10 @@ func TestScreenshots(t *testing.T) {
 	// alerts go to a webhook that takes everything, so the Settings page shows them.
 	hook := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	t.Cleanup(hook.Close)
-	src := filepath.Join(t.TempDir(), "www")
+	// The hosts back up a small site at /srv/www, as a web server would, so the pictures show real-looking paths.
+	src := "/srv/www"
+	must(t, os.RemoveAll(src))
+	t.Cleanup(func() { os.RemoveAll(src) })
 	for name, body := range map[string]string{"index.html": "<h1>Welcome</h1>\n", "about.html": "<h1>About</h1>\n", "robots.txt": "User-agent: *\n",
 		"css/site.css": "body { margin: 0 }\n", "img/logo.svg": "<svg/>\n"} {
 		must(t, os.MkdirAll(filepath.Dir(filepath.Join(src, name)), 0o755))
@@ -129,9 +132,37 @@ func TestScreenshots(t *testing.T) {
 	waitText(t, ctx, "holdfast job set "+web+" system")
 	shot("configure")
 
+	open(t, ctx, "#/hosts/"+web+"/jobs/system/snapshots")
+	waitText(t, ctx, "system · snapshots")
+	shot("snapshots")
+
 	open(t, ctx, "#/hosts/"+web+"/snapshots/"+snap+"/files?path="+url.QueryEscape(src))
 	waitText(t, ctx, "news.html")
 	shot("snapshot")
+
+	open(t, ctx, "#/hosts/"+web+"/snapshots/"+snap+"/changes")
+	waitText(t, ctx, "news.html")
+	shot("changes")
+
+	open(t, ctx, "#/hosts/"+web+"/snapshots/"+snap+"/restore")
+	waitText(t, ctx, "3 · Run")
+	shot("restore")
+
+	// A restore done, so the Restores page and the audit log have one to show.
+	if ev, err := e.restoreWait(web, snap); err != nil || ev.Status != "success" {
+		t.Fatalf("restore: %+v %v", ev, err)
+	}
+	open(t, ctx, "#/restores")
+	waitText(t, ctx, "/var/restore/")
+	shot("restores")
+
+	open(t, ctx, "#/history")
+	waitText(t, ctx, "Revisions")
+	shot("history")
+
+	open(t, ctx, "#/audit")
+	waitText(t, ctx, "Audit log")
+	shot("audit")
 
 	open(t, ctx, "#/problems")
 	waitText(t, ctx, files)

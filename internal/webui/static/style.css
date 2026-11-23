@@ -64,6 +64,8 @@ dl.facts dd { margin: 0; }
 .pill.ok { background: var(--ok-bg); color: var(--ok); }
 .pill.warning { background: var(--warn-bg); color: var(--warn); }
 .pill.error { background: var(--err-bg); color: var(--err); }
+/* Long text in a table cell (a retention reason, an audit entry's details) wraps instead of widening the page. */
+.wrap, .pill.wrap { white-space: normal; overflow-wrap: anywhere; }
 .banner { border-radius: 8px; padding: .65rem .9rem; margin: .6rem 0; border: 1px solid transparent; }
 .banner.error { background: var(--err-bg); border-color: #f4c2bd; color: #6b1510; }
 .banner.warning { background: var(--warn-bg); border-color: #f1dc9e; color: #5c3d00; }
