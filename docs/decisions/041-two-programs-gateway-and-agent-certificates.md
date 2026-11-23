@@ -1,11 +1,10 @@
 # 041: Two programs: a gateway in the server, agent certificates, off-site copies by the server
 
-Status: accepted, 2026-11-22. You asked me to make the best choice ("you need to make the best decision here"), after
-the study in [research/simpler-architecture.md](../research/simpler-architecture.md) and an independent review of it. It
-is built in M8 ([plan-m8](../plan-m8.md)).
+Status: accepted, 2026-11-22, after a study of a simpler architecture and an independent review of it. It is built
+in M8.
 
 It replaces: the per-host S3 keys of decisions 011 and 029; holdfast-vault (decisions 027 and 039); the part of
-decision 006 that lets a backup run while the server is down; the bearer token of plan-m1 Q3; and CLAUDE.md's rule
+decision 006 that lets a backup run while the server is down; M1's agent bearer token; and CLAUDE.md's rule
 "nothing in site A deletes anything in site B".
 
 ## Decision
@@ -31,8 +30,8 @@ decision 006 that lets a backup run while the server is down; the bearer token o
    - The maintenance key: as today.
    - `holdfast host add` needs no S3 key. Holdfast still never creates S3 users (decision 029's first half stands).
 
-5. **The server makes the off-site copies, and off-site is optional.** `server.yaml` may name a second bucket, off-site
-   (you said so on 2026-11-22: "site B is OPTIONAL"). Without it Holdfast is complete: nothing is copied, no off-site
+5. **The server makes the off-site copies, and off-site is optional.** `server.yaml` may name a second bucket, off-site.
+   Without it Holdfast is complete: nothing is copied, no off-site
    setting or action is shown, and nothing warns about it. With it, after each backup the server copies the new
    snapshots there with `restic copy`, into off-site repositories with passwords of their own, kept under each job's
    off-site retention, behind the same 7-day protection.

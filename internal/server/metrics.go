@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// handleMetrics exposes Prometheus text format (plan-m1 §11). Ages are left to Prometheus
+// handleMetrics exposes Prometheus text format. Ages are left to Prometheus
 // (time() - timestamp), so a frozen server is caught by up == 0, not by stale numbers.
 // Nothing here is a secret. A backup job is labelled job_id, never job: Prometheus owns the job
 // label (the scrape job) and would rename ours to exported_job.
@@ -156,7 +156,7 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(&b, "holdfast_snapshots_not_made_by_holdfast{host=%q} %d\n", h.FQDN, h.NotMadeByHoldfast)
 		fmt.Fprintf(&b, "holdfast_snapshots_disappeared{host=%q} %d\n", h.FQDN, h.Disappeared)
 	}
-	// The server is the storage witness (plan-m10 item 1, in place of holdfast-freshness and decision 008): what the
+	// The server is the storage witness (in place of holdfast-freshness and decision 008): what the
 	// bucket holds, as restic read it with the maintenance key straight from S3, not through the gateway, after every
 	// backup and at least once a day. HoldfastBackupNotInBucket compares it with what the agents reported.
 	gauge("holdfast_storage_newest_snapshot_timestamp_seconds", "Each job's newest snapshot in the bucket, as restic last read the repository.")

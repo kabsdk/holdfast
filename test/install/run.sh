@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The installer's end-to-end test (decisions 044, plan-m10): dist/install.sh run as a person runs it, `curl … | sh`, on
+# The installer's end-to-end test (decisions 044): dist/install.sh run as a person runs it, `curl … | sh`, on
 # machines with systemd, against a real S3 server (MinIO), with the packages `make packages` built in dist/. Each
 # scenario is a server and one or more agents, each a container of its own on one network:
 #   - the installer refuses a server with settings missing, and changes nothing;

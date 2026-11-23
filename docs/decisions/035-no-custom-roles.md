@@ -1,6 +1,6 @@
 # 035: No custom roles
 
-Status: accepted, 2026-11-22 (plan-m4 Q8; you answered "Go"). It decides OQ4.
+Status: accepted, 2026-11-22. It decides whether admins can define custom roles, left open by decision 025.
 
 ## Decision
 
@@ -16,5 +16,5 @@ patterns.
 
 ## Consequences
 
-- OQ4 can be reopened if a real need comes up. A custom role would then be a named set of the existing
+- The question can be reopened if a real need comes up. A custom role would then be a named set of the existing
   permission names, so nothing in the permission checks would change.

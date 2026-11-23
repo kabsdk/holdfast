@@ -10,7 +10,7 @@ import (
 	"github.com/kabsdk/holdfast/internal/server/store"
 )
 
-// Maintenance (decisions 029 and 030, plan-m3):
+// Maintenance (decisions 029 and 030):
 //   - Each agent checks its own repository once a day, right after a backup, in its one-restic-at-a-time
 //     loop. restic check takes an exclusive lock, and there it can never meet the host's own backups.
 //   - The server tests each host's storage contract once a day, with plain S3 calls. That takes no

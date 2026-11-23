@@ -3,7 +3,7 @@
 # lab/lab up m1 brings it up (lab/README.md). The VMs are the storage (MicroCeph with RGW), the Holdfast server
 # with PostgreSQL, and one agent host per family Holdfast supports.
 lab_name: m1
-index: 0                              # each lab has its own network, 10.<79+index>.20.0/24 (Clusterlane has 10.77, 10.78)
+index: 0                              # each lab has its own network, 10.<79+index>.20.0/24 (10.77 and 10.78 are left to other labs)
 
 network:
   subnet: 10.79.20.0/24               # the host is .1, the VMs' gateway and DNS
@@ -30,7 +30,7 @@ images:
     file: ubuntu-24.04-server-cloudimg-amd64-20261017.img
     family: debian
     cpu: x86-64-v2
-  # AlmaLinux 9.8 (CHECKSUM in the same directory); the file Clusterlane's lab is validated with, now in the vault
+  # AlmaLinux 9.8 (CHECKSUM in the same directory); the image the lab is validated with, now in the vault
   # since 9.9 came out, so the URL stays.
   alma9:
     url: https://vault.almalinux.org/9.8/cloud/x86_64/images/AlmaLinux-9-GenericCloud-9.8-20261112.x86_64.qcow2
@@ -79,7 +79,7 @@ postgresql:
 ui:
   port: 443
 
-# Authelia on hfsrv, the lab's OIDC provider for that login (plan-m4 Q9), set up as the e2e tests' is
+# Authelia on hfsrv, the lab's OIDC provider for that login, set up as the e2e tests' is
 # (test/e2e/authelia/setup.sh). The release's tarball, pinned by URL and sha256 (the release's checksums.sha256, and
 # GitHub's digest of the asset), is downloaded once into ~/.cache/holdfast-lab and checked there; its binary and unit
 # are copied to hfsrv. Its users are a file database, user: group; their passwords are made once in the lab's state

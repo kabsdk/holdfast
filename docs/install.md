@@ -1,7 +1,7 @@
 # Installing and upgrading
 
 Holdfast comes as `.deb` and `.rpm` packages for amd64, built by `make packages` into `dist/`. They are not
-signed yet (plan-m5 Q2): check them against `dist/SHA256SUMS` before you install them.
+signed yet: check them against `dist/SHA256SUMS` before you install them.
 
 | Package | Holds | Needs |
 | --- | --- | --- |

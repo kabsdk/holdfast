@@ -162,7 +162,7 @@ func (s *Server) Enroll(ctx context.Context, req proto.EnrollRequest, certificat
 		detail := map[string]any{"agent_version": req.Facts.AgentVersion, "restic_version": req.Facts.ResticVersion,
 			"os": req.Facts.OSID + " " + req.Facts.OSVersion, "hostname_fqdn": req.Facts.HostnameFQDN, "certificate_sha256": certificate}
 		if req.Facts.HostnameFQDN != "" && req.Facts.HostnameFQDN != fqdn {
-			detail["warning"] = "hostname -f does not match the FQDN" // plan-m1 Q9: a warning, not a refusal
+			detail["warning"] = "hostname -f does not match the FQDN" // a warning, not a refusal
 		}
 		return q.Audit(ctx, store.AuditEntry{Actor: "agent:" + fqdn, Source: "agent", Action: "agent.enrolled", FQDN: fqdn, Detail: detail})
 	})
@@ -250,7 +250,7 @@ func (s *Server) Poll(ctx context.Context, fqdn string, req proto.PollRequest, w
 }
 
 // pollAnswer is what the agent gets: its config if it differs, new credentials, and its commands. held says that its
-// config was held back, as it runs a newer revision than a restored server has (plan-m9 Q6).
+// config was held back, as it runs a newer revision than a restored server has.
 func (s *Server) pollAnswer(ctx context.Context, fqdn string, req proto.PollRequest, acked map[string]bool) (resp proto.PollResponse, changed, held bool, err error) {
 	q := s.st.Q()
 	head, err := s.head(ctx, q)
@@ -361,7 +361,7 @@ func (s *Server) Events(ctx context.Context, fqdn string, evs []proto.Event) ([]
 		}
 	}
 	if newSnapshot {
-		s.refreshSoon(fqdn) // the catalogue follows each new snapshot (plan-m2 §3)
+		s.refreshSoon(fqdn) // the catalogue follows each new snapshot
 	}
 	return acked, nil
 }

@@ -9,7 +9,7 @@ import (
 	"github.com/kabsdk/holdfast/internal/server/store"
 )
 
-// Removing a job or a host (spec §3.5, plan-m4 Q7). Neither deletes any data: the snapshots stay, and a
+// Removing a job or a host (spec §3.5). Neither deletes any data: the snapshots stay, and a
 // removed host's repository can still be browsed. Decommission, which deletes a repository, is not built.
 
 // RemoveInput carries the revision message and, optionally, the base revision.

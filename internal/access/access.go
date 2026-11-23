@@ -29,7 +29,7 @@ const (
 	ConfigStorage  = "config.storage"   // add a host, its S3 key, enrollment codes
 	Maintenance    = "maintenance"      // acknowledge changes made outside Holdfast, holdfast check
 	HostRemove     = "host.remove"      // remove a host or a job; never deletes data
-	// HostDecommission deletes a removed host's repository, after a 7-day wait (plan-m5 item 7).
+	// HostDecommission deletes a removed host's repository, after a 7-day wait.
 	HostDecommission = "host.decommission"
 	// RepositoryRollback rolls a host's repository back to a point in time from S3's versions (decision 038).
 	RepositoryRollback = "repository.rollback"

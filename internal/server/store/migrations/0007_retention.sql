@@ -1,4 +1,4 @@
--- M3: retention, Prune now and Delete snapshot (plan-m3 §3).
+-- M3: retention, Prune now and Delete snapshot.
 
 -- M1's maintenance_runs recorded the server's own restic checks. Those moved to the agent (decision 030)
 -- and nothing writes the table any more; it keeps its old rows under another name.
@@ -7,7 +7,7 @@ ALTER SEQUENCE maintenance_runs_id_seq RENAME TO m1_check_runs_id_seq;
 ALTER INDEX maintenance_runs_pkey RENAME TO m1_check_runs_pkey;
 
 -- One row per forget-and-prune on a host: the daily run, Prune now, or Delete now. It is also the list of
--- past prunes (OQ2, plan-m3 Q3). forgotten holds the snapshot IDs restic forgot; freed is what restic said
+-- past prunes (OQ2). forgotten holds the snapshot IDs restic forgot; freed is what restic said
 -- the prune freed, as it printed it.
 CREATE TABLE maintenance_runs (
   id          bigserial   PRIMARY KEY,

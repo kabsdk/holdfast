@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# lab/test-recovery.sh <lab> [<vm>...]: M6's lab tests (plan-m6 §3 and Q8). lab/lab test runs it after the fidelity test,
+# lab/test-recovery.sh <lab> [<vm>...]: M6's lab tests. lab/lab test runs it after the fidelity test,
 # which leaves each agent enrolled and its fixture backed up.
 #   1. The bare-metal runbook's first path (docs/runbooks/bare-metal.md), on HF_REBUILD_VM (default: the first agent
 #      named or of the lab): the fidelity snapshot noted; the fixture moved aside to /root/hf-fixture.orig; the agent's

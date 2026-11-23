@@ -11,7 +11,7 @@ import (
 	"github.com/chromedp/chromedp"
 )
 
-// Login and roles, against a real Authelia (plan-m4 §6, decisions 033 and 034):
+// Login and roles, against a real Authelia (decisions 033 and 034):
 //   - the UI sends a browser to the provider, and back; an admin sees every host, wes only web01;
 //   - holdfast login uses the device flow, approved in a browser, and later commands use that session;
 //   - each role gets exactly what spec §6.2 says, and a host without a binding does not exist.

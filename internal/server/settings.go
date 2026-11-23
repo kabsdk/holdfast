@@ -15,7 +15,7 @@ import (
 )
 
 // Settings is /etc/holdfast/server.yaml. Changing it needs root on the server (spec §3.3). ui and auth are
-// spec §6.4 (decision 034); the rest is operational (plan-m1 §9).
+// spec §6.4 (decision 034); the rest is operational.
 type Settings struct {
 	Listen             string `yaml:"listen"`     // agent protocol, /metrics and /healthz, such as ":8443"
 	APISocket          string `yaml:"api_socket"` // /api/v1 for local root (M1); the directory must be 0700
@@ -27,12 +27,12 @@ type Settings struct {
 	CredentialsKeyFile string `yaml:"credentials_key_file"`
 	StateDir           string `yaml:"state_dir"`
 	ResticBin          string `yaml:"restic_bin"`
-	DefaultZone        string `yaml:"default_zone"` // IANA zone for schedules without one (plan-m1 Q6)
+	DefaultZone        string `yaml:"default_zone"` // IANA zone for schedules without one
 	NodeName           string `yaml:"node_name"`
 	// DownloadURL is where hosts fetch install.sh and the packages of this server's release, for a mirror; empty: the
 	// release on GitHub (decision 044). It goes into the one-line install that host add prints.
 	DownloadURL string `yaml:"download_url"`
-	// RecoveryFile is where the installer wrote the recovery file (plan-m10 item 3). While a file is there, the server
+	// RecoveryFile is where the installer wrote the recovery file. While a file is there, the server
 	// shows the problem recovery_file: it belongs offline.
 	RecoveryFile string `yaml:"recovery_file"`
 
@@ -47,7 +47,7 @@ type Settings struct {
 	// (decision 041). Without it Holdfast keeps one bucket, and shows nothing about off-site copies.
 	Offsite *OffsiteSettings `yaml:"offsite"`
 
-	// Notify is where the server sends its own alerts (plan-m10 item 2): mail, a webhook, and a heartbeat for a dead
+	// Notify is where the server sends its own alerts: mail, a webhook, and a heartbeat for a dead
 	// man's switch. Without it, the Problems page and Prometheus's rules are all there is.
 	Notify NotifySettings `yaml:"notify"`
 
@@ -132,7 +132,7 @@ type TLS struct {
 	CertFile string `yaml:"cert_file"`
 	KeyFile  string `yaml:"key_file"`
 	// CAFile and CAKeyFile are the CA that signed the agent listener's certificate and that agents pin, when the
-	// installer made it (plan-m10 item 3): the nightly export carries them, so a rebuilt server can sign a new
+	// installer made it: the nightly export carries them, so a rebuilt server can sign a new
 	// certificate that agents still trust.
 	CAFile    string `yaml:"ca_file,omitempty"`
 	CAKeyFile string `yaml:"ca_key_file,omitempty"`
@@ -155,7 +155,7 @@ type MaintenanceSettings struct {
 	Check          string `yaml:"check"`
 	CheckCycleDays int    `yaml:"check_cycle_days"` // read-data-subset cycle, default 30
 	// Retention is "daily" (the default): the server forgets and prunes each host once a day, in its quiet
-	// stretch, behind the 7-day protection (plan-m3). "off" forgets nothing by itself; `holdfast retention
+	// stretch, behind the 7-day protection. "off" forgets nothing by itself; `holdfast retention
 	// run`, Prune now and Delete now still work.
 	Retention string `yaml:"retention"`
 }
@@ -327,7 +327,7 @@ func (s Settings) validate() error {
 			errs = append(errs, fmt.Errorf("%s is %q: it is an http(s) URL", name, u))
 		}
 	}
-	// The UI works without an identity provider: root logs in with holdfast ui-login's link (plan-m10 item 6). With
+	// The UI works without an identity provider: root logs in with holdfast ui-login's link. With
 	// one, all three settings are needed.
 	if s.UI.Listen != "" {
 		need(s.UI.PublicURL, "ui.public_url (ui.listen is set)")

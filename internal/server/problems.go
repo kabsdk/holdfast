@@ -6,9 +6,9 @@ import (
 	"time"
 )
 
-// Problems are what the server knows is wrong with a host (plan-m4 Q11): the UI's Problems page and Fleet's
-// "Needs attention", and what the server's own alerts send (notify.go). The server is the storage witness too
-// (plan-m10 item 1): not_in_bucket compares the agents' reports with what restic reads from the bucket.
+// Problems are what the server knows is wrong with a host: the UI's Problems page and Fleet's
+// "Needs attention", and what the server's own alerts send (notify.go). The server is the storage witness too:
+// not_in_bucket compares the agents' reports with what restic reads from the bucket.
 
 // Problem is one thing wrong with a host, or with one of its jobs.
 type Problem struct {
@@ -113,7 +113,7 @@ func problems(v HostView, now time.Time, retentionFailed, escrowOn bool) []Probl
 		add("offsite_copy", "error", "", "the last copy to off-site failed: %s", o.CopyError)
 	}
 	for _, j := range v.Jobs {
-		// The storage witness (plan-m10 item 1): the agent said it backed up, and restic, reading the bucket after the
+		// The storage witness: the agent said it backed up, and restic, reading the bucket after the
 		// report, did not find the snapshot. Whatever the agent says, that backup is not there to restore.
 		if j.InBucket != nil && !*j.InBucket && j.Status != nil {
 			add("not_in_bucket", "error", j.ID, "the agent reported a backup (snapshot %.8s), but the bucket does not hold it: the server read the repository after the report and did not find it", j.Status.LastSnapshotID)

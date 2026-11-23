@@ -693,7 +693,7 @@ EOF
 EOF
 }
 
-# rebuild_from_recovery replaces a lost server (decision 040, plan-m10 item 3): the bucket's newest nightly export,
+# rebuild_from_recovery replaces a lost server (decision 040): the bucket's newest nightly export,
 # opened with the recovery file, gives the database, the agents' certificate and CA, and the credentials key comes from
 # the recovery file. The agents reconnect by themselves.
 rebuild_from_recovery() {

@@ -1,6 +1,6 @@
 # 034: Login, sessions, and where people connect
 
-Status: accepted, 2026-11-22 (plan-m4 Q1, Q3, Q4, Q9 and Q10; you answered "Go"). It builds on decision
+Status: accepted, 2026-11-22. It builds on decision
 024.
 
 ## Decision

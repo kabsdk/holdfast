@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# lab/lab: Holdfast's local test lab on this host's KVM and libvirt, for people and agents alike, in the manner of
-# Clusterlane's lab. The lab is lab/labs/<lab>.yml, Ansible brings it up and provisions it (lab/ansible/,
+# lab/lab: Holdfast's local test lab on this host's KVM and libvirt, for people and agents alike.
+# The lab is lab/labs/<lab>.yml, Ansible brings it up and provisions it (lab/ansible/,
 # community.libvirt), and lab/README.md is the guide.
 # Usage: lab/lab <command> <lab> [arguments]
 #   doctor <lab>             check this host for what the lab needs, and say how to get what lacks

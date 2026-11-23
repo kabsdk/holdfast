@@ -8,7 +8,7 @@ import (
 	"github.com/kabsdk/holdfast/internal/server/store"
 )
 
-// Protocol negotiation (plan-m5 item 1). Every poll carries the agent's protocol version, and every answer
+// Protocol negotiation. Every poll carries the agent's protocol version, and every answer
 // the range this server accepts. A server is upgraded before its agents: it accepts every agent from
 // minProtocol on. An older agent's polls are refused with 426, so it gets no new config and no commands; it
 // keeps backing up on its cached config, and its reports are still taken, so the server still sees its

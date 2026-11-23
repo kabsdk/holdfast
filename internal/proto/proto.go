@@ -1,4 +1,4 @@
-// Package proto defines the protocol between holdfast-agent and holdfast-server (plan-m1 §7).
+// Package proto defines the protocol between holdfast-agent and holdfast-server.
 //
 // Agents always dial out, over HTTPS long-poll, and every poll is also a heartbeat. The server takes
 // the host's identity from the agent's credential, never from a request body.
@@ -16,7 +16,7 @@ import (
 // Base is the path prefix of the agent protocol. It is not part of the user-facing /api/v1.
 const Base = "/agent/v1"
 
-// Protocol is the version of the agent protocol this build speaks (plan-m5 item 1). It goes up only when
+// Protocol is the version of the agent protocol this build speaks. It goes up only when
 // a change needs both sides to know of it; a field the other side may ignore does not change it. Agents
 // before M5 sent none, and speak 1. 2 (M6): dump jobs, restores from another host, pause and resume. 3 (M7):
 // restores of the host's own snapshots from a vault's copies, as M7 made them. 4 (M8, decision 041): the agent is known by its own
@@ -56,7 +56,7 @@ type Facts struct {
 	Timezone      string    `json:"timezone"`
 	Now           time.Time `json:"now"` // the agent's clock, so the server can see skew
 	// RestoreBounds are the host's own limits on restores, from agent.yaml. The server shows them and
-	// refuses early, but the agent decides (decision 030, plan-m2 Q5).
+	// refuses early, but the agent decides (decision 030).
 	RestoreBounds *RestoreBounds `json:"restore_bounds,omitempty"`
 	// Dumps are the names of the dumps agent.yaml defines (decision 037); never their commands.
 	Dumps []string `json:"dumps,omitempty"`
@@ -67,7 +67,7 @@ type RestoreBounds struct {
 	Root                  string `json:"root" yaml:"root"`                                       // new directories go under it
 	AllowInPlace          bool   `json:"allow_in_place" yaml:"allow_in_place"`                   // overwrite the original files
 	AllowOtherDirectories bool   `json:"allow_other_directories" yaml:"allow_other_directories"` // any other target directory
-	// AllowOtherHosts lets an admin restore another host's snapshot here (plan-m6 §2.2), with a read-only key
+	// AllowOtherHosts lets an admin restore another host's snapshot here, with a read-only key
 	// for that host's repository. Off by default.
 	AllowOtherHosts bool `json:"allow_other_hosts" yaml:"allow_other_hosts"`
 }
@@ -77,7 +77,7 @@ type RestoreBounds struct {
 // restore.
 //
 // Both are read through the server's gateway, which lets this host read them for this restore (decision 041): another
-// host's repository (plan-m6 §2.2), or with Offsite this host's own copy off-site (decision 039). The agent reaches
+// host's repository, or with Offsite this host's own copy off-site (decision 039). The agent reaches
 // them at its own server; Repository is only shown.
 type RestoreSource struct {
 	FQDN         string `json:"fqdn"`
@@ -112,7 +112,7 @@ type RestoreSpec struct {
 	Dump bool `json:"dump,omitempty"`
 }
 
-// Paused is what a paused agent reports with every poll (plan-m6 Q3): the pause command, and until when.
+// Paused is what a paused agent reports with every poll: the pause command, and until when.
 type Paused struct {
 	Command string    `json:"command"`
 	Until   time.Time `json:"until"`
@@ -133,7 +133,7 @@ type EnrollResponse struct {
 }
 
 // Applied is what the agent runs: the revision in which its host config last changed, and the
-// sha256 of that host config. Drift is a mismatch with what the server wants (plan-m1 Q8).
+// sha256 of that host config. Drift is a mismatch with what the server wants.
 type Applied struct {
 	Revision int64  `json:"revision"`
 	SHA256   string `json:"sha256"`
@@ -164,7 +164,7 @@ type JobConfig struct {
 	Paths    []string          `json:"paths"`
 	Excludes []string          `json:"excludes,omitempty"`
 	Schedule schedule.Schedule `json:"schedule"`
-	// LimitUploadKiB is restic's --limit-upload, in KiB/s; 0: no limit (plan-m5 item 2).
+	// LimitUploadKiB is restic's --limit-upload, in KiB/s; 0: no limit.
 	LimitUploadKiB int `json:"limit_upload_kib,omitempty"`
 	// Dump names a dump in the host's agent.yaml (decision 037; protocol 2). Paths are then empty.
 	Dump string `json:"dump,omitempty"`
@@ -214,8 +214,8 @@ type Credentials struct {
 const (
 	CommandBackupNow = "backup_now"
 	CommandCheckNow  = "check_now" // `holdfast check`: run the repository check now
-	CommandRestore   = "restore"   // run a restore (plan-m2 §3)
-	// CommandPause stops the agent starting runs until Until, or until CommandResume (plan-m6 Q3; protocol 2).
+	CommandRestore   = "restore"   // run a restore
+	// CommandPause stops the agent starting runs until Until, or until CommandResume (protocol 2).
 	// A run under way finishes first; the agent reports Paused once it is idle.
 	CommandPause  = "pause"
 	CommandResume = "resume"

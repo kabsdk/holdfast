@@ -7,7 +7,7 @@ PG_NAME     ?= holdfast-test-pg
 export HOLDFAST_TEST_PG ?= postgres://postgres:holdfast@127.0.0.1:$(PG_PORT)/postgres?sslmode=disable
 
 # MinIO for the e2e tests. MinIO's community images left Docker Hub; Chainguard rebuilds them from
-# source. Pinned by digest (plan-m1 Q15).
+# source. Pinned by digest.
 MINIO_IMAGE ?= cgr.dev/chainguard/minio@sha256:e9cf6b99c226e9539ed0f14b6f00e37b07da153c7ba1f4f8709c807574b471ec
 MC_IMAGE    ?= cgr.dev/chainguard/minio-client@sha256:94433f625c8057d18c69675dbaa33da6e4864f084f9c44faf30d3eb8e3754e0b
 MINIO_NAME  ?= holdfast-test-minio
@@ -20,7 +20,7 @@ RESTIC_VERSION ?= 0.19.1
 
 PROM_IMAGE  ?= prom/prometheus:v2.53.0
 
-# Packages (plan-m5 item 1): nfpm in a container, pinned by digest. HOLDFAST_VERSION is a release's version,
+# Packages: nfpm in a container, pinned by digest. HOLDFAST_VERSION is a release's version,
 # such as 0.5.0; a build between releases sorts before the next one (scripts/version.sh). Worked out once.
 NFPM_IMAGE ?= goreleaser/nfpm@sha256:f1e9f1adcf452a85ab7765aa7252cdb2f94816ead5363bbd52a4e563087c942b
 ifeq ($(origin HOLDFAST_VERSION),undefined)
@@ -47,7 +47,7 @@ rules-test:
 build:
 	go build -ldflags "$(LDFLAGS)" -o bin/ ./cmd/...
 
-# The .deb and .rpm packages, with SHA256SUMS, in dist/ (packaging/build.sh). Unsigned (plan-m5 Q2).
+# The .deb and .rpm packages, with SHA256SUMS, in dist/ (packaging/build.sh). Unsigned.
 packages: build
 	@HOLDFAST_VERSION='$(HOLDFAST_VERSION)' RESTIC_VERSION=$(RESTIC_VERSION) NFPM_IMAGE=$(NFPM_IMAGE) \
 		RESTIC_BINARY=$$(scripts/fetch-restic.sh $(RESTIC_VERSION)) bash packaging/build.sh

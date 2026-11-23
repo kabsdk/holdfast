@@ -1,7 +1,7 @@
 # 047: One recovery file, and no escrow bundle
 
-Status: accepted, 2026-11-23 (plan-m10 items 3 and 5). Amends decisions 036, 040 and 044. You asked: "why does the
-user need to generate keypairs? Why not just a join token like k3s or something? Is it because of security? Restore?"
+Status: accepted, 2026-11-23. Amends decisions 036, 040 and 044. The question was why an admin had to make key
+pairs at all, instead of using a join token as k3s does, and whether security or restore required it.
 
 ## Decision
 

@@ -19,7 +19,7 @@ import (
 
 // uiExceptions are routes the UI does not call, by spec §3.3.
 var uiExceptions = map[string]string{
-	"POST /api/v1/ui-login": "root's one-time link into the UI exists only on the server's root socket (plan-m10 item 6)",
+	"POST /api/v1/ui-login": "root's one-time link into the UI exists only on the server's root socket",
 }
 
 // norm makes a path comparable: every path parameter becomes {}, and the query string goes.

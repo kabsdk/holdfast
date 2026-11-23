@@ -566,7 +566,7 @@
         mode: "0600"
       no_log: true
 
-# The dump test's database on each agent (plan-m6 §3): the distribution's own PostgreSQL, running, so the test dumps,
+# The dump test's database on each agent: the distribution's own PostgreSQL, running, so the test dumps,
 # restores and loads it as an admin would (lab/test-recovery.sh).
 - name: PostgreSQL on the agents, for the dump test
   hosts: agent
@@ -604,7 +604,7 @@
         state: started
         enabled: true
 
-# The packages (plan-m5 item 1), as an admin installs them: the VM's family's .deb or .rpm files of this build, with no
+# The packages, as an admin installs them: the VM's family's .deb or .rpm files of this build, with no
 # network (dpkg -i, rpm -U). They hold restic in /usr/libexec/holdfast, the binaries and the units, which they do not
 # enable. A build between releases may sort before the one installed, so going back is allowed (rpm --oldpackage).
 - name: Holdfast's packages, and the lab's fidelity tool
@@ -652,7 +652,7 @@
         executable: /bin/bash
       when: is_server and hf_vault_pkg.rc == 0
 
-    # M10 removed holdfast-freshness, the storage witness (plan-m10 item 1): the server reads the bucket itself. On a lab
+    # M10 removed holdfast-freshness, the storage witness: the server reads the bucket itself. On a lab
     # made before M10 its package goes, once; holdfast-server's package conflicts with it.
     - name: Read whether holdfast-freshness is installed
       ansible.builtin.command:
@@ -730,7 +730,7 @@
       ansible.builtin.debug:
         msg: "{{ hf_units | zip(lab_enabled.stdout_lines) | map('join', ': ') | join(', ') }}"
 
-# Authelia on the server, the lab's OIDC provider (plan-m4 Q9, decision 034), set up as the e2e tests' is
+# Authelia on the server, the lab's OIDC provider (decision 034), set up as the e2e tests' is
 # (test/e2e/authelia/setup.sh): the pinned release's binary in /usr/bin and its own authelia.service, run as the system
 # user authelia, with TLS from the lab's CA, the lab's users in a file database, and Holdfast as its one client. Its
 # secrets are files in /etc/authelia/secrets that the unit names (files/authelia-lab.conf), so configuration.yml holds

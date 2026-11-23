@@ -17,14 +17,14 @@ import (
 	"github.com/minio/minio-go/v7"
 )
 
-// M9 (plan-m9 §3, decisions 040 and 042): there is one server and no standby, so a lost one is replaced by a new one
+// Rebuilding the server (decisions 040, 042 and 047): there is one server and no standby, so a lost one is replaced by a new one
 // on the same bucket, from the nightly export.
 //   - the export: written to meta/ in the bucket and the off-site bucket, encrypted to the escrow's age key;
 //   - the database lost, and loaded again with holdfast-server restore-export -latest into an empty one, which it
 //     refuses to do twice, or with another key;
 //   - the agent enrolled before the export reconnects with its certificate, without a new code; it runs a change made
-//     after the export, which the server holds back and shows until the host is changed again (Q6);
-//   - plan-m10: restore-export takes the recovery file, and writes the credentials key from it; the export carries the
+//     after the export, which the server holds back and shows until the host is changed again;
+//   - restore-export takes the recovery file, and writes the credentials key from it; the export carries the
 //     server's files; a host added after the export comes back by itself from its escrow file, with its snapshots,
 //     and enrolls again with a new code.
 func TestRebuildFromExport(t *testing.T) {
@@ -71,7 +71,7 @@ func TestRebuildFromExport(t *testing.T) {
 	dbSnaps := e.snapshotIDs(db)
 
 	// The recovery file of this server, which was set up with its own age key: the credentials key, and the age key
-	// added below it, as the admin does (plan-m10 item 3).
+	// added below it, as the admin does.
 	key := filepath.Join(e.dir, "holdfast-recovery.txt")
 	cmd := exec.Command(filepath.Join(binDir, "holdfast-server"), "recovery-file", "-config", e.cfgPath, key)
 	cmd.Env = e.srvEnv
@@ -148,7 +148,7 @@ func TestRebuildFromExport(t *testing.T) {
 	waitStatus(t, e, web, "data", "success", n+1)
 
 	// db01 was added after the export: restore-export brought it back from its escrow file, with its repository and
-	// password and no job, and it enrolls again with a new code (plan-m10 item 5).
+	// password and no job, and it enrolls again with a new code.
 	if h := e.host(db); h.State != "awaiting_enrollment" || len(h.Jobs) != 0 {
 		t.Fatalf("db01 after the restore: %+v", h)
 	}

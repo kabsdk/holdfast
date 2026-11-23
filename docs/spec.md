@@ -1,19 +1,18 @@
 # Holdfast specification
 
-Status: draft for review, 2026-11-21.
+Status: describes Holdfast 0.5.0 and the main branch after it.
 
-This document describes how Holdfast behaves. When behaviour changes, this file changes in the same PR.
-The reasons behind the decisions are in [decisions/](decisions/). Topics that are not decided are in
-[open-questions.md](open-questions.md), and nothing in this document decides them. The working rules are in
-[../CLAUDE.md](../CLAUDE.md).
+This document describes how Holdfast behaves. When behaviour changes, this file changes in the same pull request.
+The reasons behind the decisions are in [decisions/](decisions/), and the rules every change keeps are in
+[../CONTRIBUTING.md](../CONTRIBUTING.md). The guide for people who run Holdfast is
+[the documentation site](https://kabsdk.github.io/holdfast/).
 
 ---
 
 ## 1. What Holdfast is
 
 Holdfast is a free, open-source, centrally managed backup platform for Linux hosts running Ubuntu,
-Red Hat Enterprise Linux or Oracle Linux. It is a control plane over **restic**, in the same way that
-Clusterlane is a control plane over keepalived and HAProxy.
+Red Hat Enterprise Linux or Oracle Linux. It is a control plane over **restic**.
 
 There are no paid tiers and no feature gating.
 
@@ -162,7 +161,7 @@ There are two programs: holdfast-agent and holdfast-server (decision 041), and t
   - The credentials key never goes into the bucket. age encrypts but does not authenticate, so the maintenance key
     could write an export of its own to `meta/`; that the credentials key opens the export's passwords is what proves
     the export is the server's.
-- **The nightly export** (decision 040, plan-m9), what a new server is restored from (§2.2,
+- **The nightly export** (decision 040), what a new server is restored from (§2.2,
   [runbooks/rebuild-holdfast.md](runbooks/rebuild-holdfast.md)). Every night at 00:30 in the default zone, the server
   writes `meta/<UTC date>.age` to its bucket with the maintenance key: every table of its database, the off-site
   instance's too, as CSV in a gzipped tar with a manifest, encrypted to `escrow.age_recipient`. It leaves out the
@@ -191,17 +190,17 @@ There are two programs: holdfast-agent and holdfast-server (decision 041), and t
     An age key file alone works as the identity too, with the credentials key already in place. The installer's
     server line with `HOLDFAST_RECOVERY_FILE` does all of it and starts the server (§2.4).
   - After a restore, an agent that runs a revision newer than the restored head keeps it: the server sends it no
-    config, and the host shows `ahead`, until a new revision changes the host (plan-m9 Q6).
+    config, and the host shows `ahead`, until a new revision changes the host.
 - Credentials are never shown in the UI.
 - There is no raw restic console.
 
 ### 2.4 Packages and upgrades
 
-- Holdfast ships `.deb` and `.rpm` packages for amd64 (plan-m5 item 1): `holdfast-agent`, `holdfast-server`,
+- Holdfast ships `.deb` and `.rpm` packages for amd64: `holdfast-agent`, `holdfast-server`,
   `holdfast-cli`, and `holdfast-restic`, which holds the pinned restic at
   `/usr/libexec/holdfast/restic` and which the agent and the server need at their own version. The binaries
   are static, so one package runs on every supported distribution. The packages are unsigned for now, with
-  `SHA256SUMS` (plan-m5 Q2). [install.md](install.md) is the guide. `holdfast-freshness`, M1's storage witness, left
+  `SHA256SUMS`. [install.md](install.md) is the guide. `holdfast-freshness`, M1's storage witness, left
   in M10 (decision 045); `holdfast-server` replaces it.
 - Installing enables no service: each needs its config first. Upgrading restarts a service that runs.
   Removing stops and disables it, and never deletes `/etc/holdfast`, state or backups.
@@ -272,7 +271,7 @@ retention. See [decision 013](decisions/013-no-rollback.md).
   - **Off-site copies** (§3.7) are the same UI, API and CLI on the off-site repositories: the pages under
     `#/offsite/`, the API under `/api/v1/offsite/`, the CLI with `--offsite`. UI = API = CLI holds there too.
   - **Restoring an export** is `holdfast-server restore-export`, as root on a rebuilt server, before it starts
-    (plan-m9 Q5): there is no server to ask yet. Writing and listing exports is UI, API and CLI as usual (§2.3).
+: there is no server to ask yet. Writing and listing exports is UI, API and CLI as usual (§2.3).
 - The API comes first. The UI and the CLI are thin clients of the HTTP API, and all logic, validation and
   checks live behind it (decision 028).
 - Every action is recorded in the host's history and in the audit log.
@@ -284,7 +283,7 @@ These rules hold whatever the config says.
 **High-water mark.** Maintenance never prunes a snapshot that any policy in force during the last 7 days
 would keep.
 
-**The daily run** (plan-m3 §3). Once a day per host, the server:
+**The daily run**. Once a day per host, the server:
 1. takes each job's retention policies that were in force during the last 7 days, from the revisions;
 2. asks restic what each one keeps: `restic forget --dry-run --json --tag job=<id> --group-by host`, with
    the policy's flags (decision 030);
@@ -339,18 +338,18 @@ the union, then checks and prunes.
   S3 versioning keeps the old files until the bucket's lifecycle rule expires them. The daily storage test
   reads that rule's days (B011), so the date is the prune's date plus those days.
 
-**Past prunes** (OQ2). `holdfast prunes [<fqdn>]` lists each forget and prune: when, the daily run or Prune
+**Past prunes.** `holdfast prunes [<fqdn>]` lists each forget and prune: when, the daily run or Prune
 now or Delete now, who, the snapshots forgotten, what restic said the prune freed, and when the data is
 really gone. Snapshots Holdfast deleted keep tombstones marked **Deleted by Holdfast**; they never count as
 disappeared (§3.6).
 
 ### 3.5 Removing and decommissioning
 
-- Removing a job or a host never deletes data (plan-m4 Q7).
+- Removing a job or a host never deletes data.
   - A removed job leaves the config. Its snapshots stay, and the daily run no longer touches them.
   - A removed host is retired: its agent's certificate stops working, and its repository stays and can still be
     browsed. Adding the same FQDN again brings it back, with its repository, after a new enrollment.
-- Deleting data is a separate **decommission** action (plan-m5 item 7):
+- Deleting data is a separate **decommission** action:
   - only for a removed (retired) host, only by an admin (`host.decommission`), who types the FQDN:
     `holdfast host decommission <fqdn> --confirm <fqdn>`;
   - it waits 7 days, like every other deletion, and `--cancel` stops it meanwhile. A host waiting for it
@@ -504,7 +503,7 @@ These values are derived from the schedule and shown with it:
 - the worst-case data loss, which is the longest gap plus the spread;
 - the stale alert threshold, which is 2 × the longest gap.
 
-**Run controls** (plan-m5 item 2):
+**Run controls**:
 - A scheduled backup that fails is retried after 5, 15 and 45 minutes, as long as the retry starts before
   the job's next run. Each retry is a run in the history, marked "retry 1 of 3" and so on. A run stopped at
   its timeout is not retried: it already took the whole gap.
@@ -720,7 +719,7 @@ host: those keep the label the host gives a new file (`restic restore --exclude-
 has no label in its snapshot, another host's labels belong to its own policy, and SELinux refuses to remove a
 label, which made restic fail (found in the lab, on el9 and ol9).
 
-**Onto another host** (plan-m6 §2.2): an admin (`restore.in_place` on both hosts) restores host A's snapshot onto
+**Onto another host**: an admin (`restore.in_place` on both hosts) restores host A's snapshot onto
 host B with `holdfast restore A <snapshot> --to-host B`:
 - B must allow it in its own `agent.yaml` (`restore.allow_other_hosts`), and its agent must speak protocol 2;
 - the target is a new or another directory on B, never in place;
@@ -805,7 +804,7 @@ Search finds:
    code and a new enrollment replace it; removing or rotating the host unpins it.
 6. Progress is shown: **waiting → agent connected → first backup done**.
 
-**Import a host from its escrow file** (plan-m9 §2.4, Q7), beside Add host, for an admin on every host:
+**Import a host from its escrow file**, beside Add host, for an admin on every host:
 `holdfast host import <fqdn> --escrow-file <file>`, or `POST /api/v1/hosts/import`. It is for a host a rebuilt
 server does not know, as the export it was restored from was made before the host was added. The decrypted escrow
 file goes to the server once and is never shown back. The server checks that the file is that host's and names this
@@ -867,7 +866,7 @@ A user can have several bindings. They combine per host. **A host you have no bi
 for you:** it is not listed, not searchable and not counted (decision 033). Asking for it answers "not
 found". Revisions and the audit log are cut down to your hosts. Nobody sees file contents.
 
-Actions the table does not name (plan-m4 Q6):
+Actions the table does not name:
 - adding a host, issuing an enrollment code and rotating its password
   (`holdfast host rotate`) need `config.storage`;
 - a restore into another directory needs `restore.in_place`, and a restore onto another host needs it on both;

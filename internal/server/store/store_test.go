@@ -199,7 +199,7 @@ func TestEventsAreStoredOnce(t *testing.T) {
 	}
 }
 
-// TestReportedInBucket is the storage witness's query (plan-m10 item 1): a reported snapshot is judged only by a read
+// TestReportedInBucket is the storage witness's query: a reported snapshot is judged only by a read
 // of the repository that started after the report arrived; one that was there and went later counts as held (it is
 // disappeared instead).
 func TestReportedInBucket(t *testing.T) {

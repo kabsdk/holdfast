@@ -28,7 +28,7 @@ func TestJobChecks(t *testing.T) {
 		want []string
 	}{
 		{"a sound daily job", config.Job{Schedule: daily2, Retention: good}, History{}, nil},
-		{"a daily job with a spread does not lose more than a day's worth (plan-m4 Q12)", config.Job{Schedule: func() schedule.Schedule {
+		{"a daily job with a spread does not lose more than a day's worth", config.Job{Schedule: func() schedule.Schedule {
 			s := daily2
 			s.Spread = schedule.Spread{Enabled: true, Minutes: 20}
 			return s
@@ -71,7 +71,7 @@ func TestDefaultJobPasses(t *testing.T) {
 	j := config.DefaultJob()
 	j.Paths = []string{"/etc"}
 	if fs := Job(j, History{}); len(fs) != 0 {
-		t.Fatalf("the default job must pass every check with no warnings (plan-m4 Q11): %+v", fs)
+		t.Fatalf("the default job must pass every check with no warnings: %+v", fs)
 	}
 }
 

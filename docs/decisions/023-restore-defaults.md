@@ -25,8 +25,6 @@ Status: accepted, 2026-11-21
   files to other users, and it keeps the metadata exactly.
 - **An in-place restore can be undone**, because of the backup taken first.
 
-*The reasons were inferred when the record was written. You accepted them on 2026-11-21, leaving the call to me ("Whatever you recommend").*
-
 ## Consequences
 
 - An in-place restore needs `restore.in_place` (admin only).

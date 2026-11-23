@@ -6,7 +6,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// notifyCmd is the server's own alerts (plan-m10 item 2).
+// notifyCmd is the server's own alerts.
 func notifyCmd() *cobra.Command {
 	c := &cobra.Command{Use: "notify", Short: "The server's own alerts: mail, a webhook, and a heartbeat (notify: in server.yaml)"}
 	c.AddCommand(&cobra.Command{Use: "test", Short: "Send a test alert by every channel that is set, and say how each went (admin)", Args: cobra.NoArgs,

@@ -85,7 +85,7 @@ func DefaultAccess() Access {
 	}}
 }
 
-// DefaultJob is where a new job starts (plan-m4 Q11). With paths, it passes every check with no warnings:
+// DefaultJob is where a new job starts. With paths, it passes every check with no warnings:
 // daily at 02:00 with a 20-minute spread; one per day for 14 days, per week for 8 weeks, per month for 12
 // months and per year for 3 years; and always the newest 3.
 func DefaultJob() Job {

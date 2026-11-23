@@ -7,7 +7,7 @@ import (
 	"github.com/kabsdk/holdfast/internal/proto"
 )
 
-// Removing never deletes data (spec §3.5, plan-m4 Q7).
+// Removing never deletes data (spec §3.5).
 func TestRemoveJobAndHost(t *testing.T) {
 	s, ctx := newTestServer(t), context.Background()
 	q := s.st.Q()

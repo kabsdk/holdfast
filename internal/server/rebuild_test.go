@@ -25,7 +25,7 @@ func serverProblem(ps []Problem, code string) *Problem {
 	return nil
 }
 
-// The nightly export (decision 040, plan-m9 Q3): due at 00:30 in the default zone, at once after a missed one, an
+// The nightly export (decision 040): due at 00:30 in the default zone, at once after a missed one, an
 // hour after a failed one; written encrypted to meta/<date>.age; the newest 30 kept; a failure shown and audited.
 func TestNightlyExport(t *testing.T) {
 	id, _ := age.GenerateX25519Identity()
@@ -125,7 +125,7 @@ func TestNightlyExport(t *testing.T) {
 }
 
 // With off-site copies the export holds the off-site tables too, and is written to both buckets; a failed off-site
-// write leaves the export counted, and is its own problem (plan-m9 Q4).
+// write leaves the export counted, and is its own problem.
 func TestExportOffsite(t *testing.T) {
 	id, _ := age.GenerateX25519Identity()
 	s, off := newOffsitePair(t)
@@ -166,7 +166,7 @@ func TestExportOffsite(t *testing.T) {
 
 // After a restore from an export, an agent that runs a newer revision than the restored head keeps it: the server
 // holds the config back, does not retire the host, and shows it; the first revision that touches the host is sent
-// as usual (plan-m9 Q6).
+// as usual.
 func TestAgentAheadOfARestoredServer(t *testing.T) {
 	s := newTestServer(t)
 	ctx := context.Background()

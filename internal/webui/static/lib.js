@@ -37,7 +37,7 @@ export const offsiteLink = (...parts) => '#/offsite/' + parts.map((p) => enc(p))
 
 /* ---------------- data ---------------- */
 
-// usePoll loads data, and again every interval while the page is open (plan-m4 §5: no live push).
+// usePoll loads data, and again every interval while the page is open (no live push).
 export function usePoll(load, deps, interval = 10000) {
   const [state, setState] = useState({ data: null, error: null, loading: true });
   const alive = useRef(true);
@@ -180,7 +180,7 @@ export function Snap({ fqdn, id, short }) {
   return html`<a class="mono" href=${link('hosts', fqdn, 'snapshots', id)}>${short || (id || '').slice(0, 8)}</a>`;
 }
 
-// can says whether the host's answer lists the action: the server worked it out (§3 of plan-m4).
+// can says whether the host's answer lists the action: the server worked it out.
 export const can = (host, perm) => !!host && (host.actions || []).includes(perm);
 
 export function Findings({ findings, accepted, onAccept, blocking }) {

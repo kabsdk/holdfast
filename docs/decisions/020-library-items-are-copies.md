@@ -24,8 +24,6 @@ the old values (N)** with checkboxes.
 - **Copies make the change visible.** Each job's config says exactly what that job does, and any bulk update
   is explicit, checked per job and recorded in one revision.
 
-*The reasons are inferred. Confirm or correct them.*
-
 ## Consequences
 
 - No job stores a reference to a library item that changes its behaviour.

@@ -1,10 +1,10 @@
-// Package export is the nightly export's file (decision 040, plan-m9 §2.1): a gzipped tar of the server's tables as
+// Package export is the nightly export's file (decision 040): a gzipped tar of the server's tables as
 // CSV, with a manifest, encrypted to the escrow's age recipient. Standard tools open it without Holdfast:
 //
 //	age -d -i key.txt 2026-11-22.age | tar -xz
 //
-// The credentials inside stay sealed with the server's credentials key, so the export alone opens no repository. Since
-// plan-m10 it also holds the agent listener's certificate, key and CA, the UI's certificate and key, and server.yaml
+// The credentials inside stay sealed with the server's credentials key, so the export alone opens no repository. It
+// also holds the agent listener's certificate, key and CA, the UI's certificate and key, and server.yaml
 // without the database's DSN, so a rebuilt server shows agents the certificate they pinned. The S3 keys, the database's
 // password and the OIDC secret are not in it: the admin gives them again.
 package export
@@ -46,7 +46,7 @@ type Manifest struct {
 }
 
 // File is one of the server's files in the export, named by the server.yaml setting that names its path, such as
-// tls.cert_file, so a restore writes it where the new server.yaml says (plan-m10 item 3).
+// tls.cert_file, so a restore writes it where the new server.yaml says.
 type File struct {
 	Name   string `json:"name"`
 	File   string `json:"file"` // in the tar: files/<name>

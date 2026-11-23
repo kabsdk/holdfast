@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # lab/rgw-isolation.sh <lab> <user-policy|bucket-policy> [--maint-policy]: the RGW host-isolation experiment on a ready
-# lab, which decides how Holdfast provisions a host's S3 identity (spec §2.3, decision 011, plan-m1 Q4; lab/README.md,
+# lab, which decides how Holdfast provisions a host's S3 identity (spec §2.3, decision 011; lab/README.md,
 # The RGW experiment). lab/lab isolation <lab> <mechanism> [--maint-policy] runs it, holding the lab's lock, and keeps
 # its transcript in the lab's state (isolation-<mechanism>[-maint-policy].txt).
 #   1. As holdfast-provisioner (caps users=*;user-policy=*), through the Admin Ops API with SigV4-signed requests

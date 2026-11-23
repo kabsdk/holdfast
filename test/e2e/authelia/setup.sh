@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# test/e2e/authelia/setup.sh <state dir> <image>: a real OIDC provider for the e2e tests (plan-m4 Q9).
+# test/e2e/authelia/setup.sh <state dir> <image>: a real OIDC provider for the e2e tests.
 #
 # Makes, once, in <state dir>: a test CA and a certificate for auth.holdfast.test and ui.holdfast.test, the
 # signing key, the client secret, four users with their passwords, and Authelia's configuration; then starts

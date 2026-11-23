@@ -1,4 +1,4 @@
--- M5 (plan-m5): the escrow file in the bucket (decision 036), the repository's size, a rotated password's
+-- M5: the escrow file in the bucket (decision 036), the repository's size, a rotated password's
 -- old key, and decommission.
 ALTER TABLE hosts
   -- escrow/<fqdn>.age: the credentials version it holds (NULL: none written), when, and the last failure.

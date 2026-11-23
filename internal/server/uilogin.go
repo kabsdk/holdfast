@@ -12,7 +12,7 @@ import (
 	"github.com/kabsdk/holdfast/internal/server/store"
 )
 
-// Root's way into the web UI (plan-m10 item 6): `holdfast ui-login`, as root on the server, asks the root socket for a
+// Root's way into the web UI: `holdfast ui-login`, as root on the server, asks the root socket for a
 // one-time link, valid 5 minutes, that opens a browser session as local:root, admin on every host, for 12 hours. It
 // is the UI without an identity provider, and the browser's break-glass login when the provider is down. The link is
 // a bearer secret shown in a terminal; it is worth no more than root on the server, which it needs.

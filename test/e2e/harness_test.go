@@ -231,8 +231,8 @@ type envOpts struct {
 	MaintPolicy   string    // give the server a maintenance key with this policy instead of docs/storage.md's
 	GatewayPolicy string    // give the server a gateway key with this policy instead of docs/storage.md's
 	OIDC          bool      // serve the UI listener on uiAddr, with login through the e2e Authelia (M4)
-	UI            bool      // serve the UI listener on uiAddr with no identity provider: root logs in with ui-login (plan-m10 item 6)
-	Webhook       string    // notify.webhook_url and heartbeat_url: the server's alerts go there (plan-m10 item 2)
+	UI            bool      // serve the UI listener on uiAddr with no identity provider: root logs in with ui-login
+	Webhook       string    // notify.webhook_url and heartbeat_url: the server's alerts go there
 	Offsite       bool      // a second bucket, and offsite: in server.yaml (decision 041)
 }
 
@@ -463,7 +463,7 @@ func (e *env) makeUserWithPolicy(policy string) (accessKey, secret, policyName s
 // which the checks rightly warn about for real jobs (spec §4.5). TestChecks tests the checks themselves.
 const testAccept = "--accept=R006,R101,R102,R103,S002"
 
-// addHost adds a host, then its one job, through the CLI, as people do (plan-m10 item 4), and returns the enrollment
+// addHost adds a host, then its one job, through the CLI, as people do, and returns the enrollment
 // code. A host needs no S3 key (decision 041). Unless jobArgs say otherwise, the job accepts testAccept.
 func (e *env) addHost(fqdn, jobID string, jobArgs ...string) string {
 	e.t.Helper()
@@ -860,7 +860,7 @@ type escrowHost struct {
 }
 
 // escrow reads every host's escrow file from the bucket, escrow/<fqdn>.age, and decrypts it with the recovery key, as
-// someone recovering without Holdfast would (decision 036; plan-m10 item 5: there is no plaintext bundle).
+// someone recovering without Holdfast would (decision 036: there is no plaintext bundle).
 func (e *env) escrow() map[string]escrowHost {
 	e.t.Helper()
 	out := map[string]escrowHost{}

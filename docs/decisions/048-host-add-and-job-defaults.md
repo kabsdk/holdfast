@@ -1,8 +1,7 @@
 # 048: `host add` adds a host, `job set` adds jobs, with defaults
 
-Status: accepted, 2026-11-23 (plan-m10 item 4). You said: "HOST ADD AND job add should be different commands. You can
-add a host without a job and making it a requirement that 'hey, you need to run host add but ONLY THE FIRST TIME' is
-weird."
+Status: accepted, 2026-11-23. Adding a host and adding a job should be different commands: a host can exist without a
+job, and a `host add` that had to carry the host's first job, and only the first, was awkward.
 
 ## Decision
 

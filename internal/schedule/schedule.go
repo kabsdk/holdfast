@@ -4,7 +4,7 @@
 // the next runs, the longest gap, the worst-case data loss and the stale threshold. Both must agree, so
 // this is the only implementation.
 //
-// Wall-clock rules (plan-m1 Q6): a time that does not exist on a given day (spring forward) runs at
+// Wall-clock rules: a time that does not exist on a given day (spring forward) runs at
 // the next valid minute; a time that occurs twice (fall back) runs once, at its first occurrence.
 package schedule
 
@@ -308,7 +308,7 @@ func Day(t time.Time, loc *time.Location) (start, end time.Time) {
 // stretch. A day without runs is quiet all day. ok is false when runs and their spreads leave no quiet
 // time at all; start and end are then the day's bounds.
 //
-// The server places each host's daily restic check in the middle of this stretch (plan-m1 §10): check
+// The server places each host's daily restic check in the middle of this stretch: check
 // takes an exclusive lock, and a backup that meets it waits or fails.
 func QuietWindow(t time.Time, loc *time.Location, runs []Placed) (start, end time.Time, ok bool) {
 	dayStart, dayEnd := Day(t, loc)

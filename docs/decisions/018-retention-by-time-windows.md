@@ -26,4 +26,4 @@ It has also been verified that restic keeps the oldest snapshot when a tier cann
 
 - The PoC's retention model test uses count flags. It has to be rewritten for time windows (M3).
 - The PoC verified "keeps the oldest snapshot" only with a count flag (`--keep-yearly 2`). It must be
-  re-verified for the `--keep-within-*` flags before Holdfast relies on it (plan-m1 L1).
+  re-verified for the `--keep-within-*` flags before Holdfast relies on it.

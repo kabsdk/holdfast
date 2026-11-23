@@ -1,6 +1,6 @@
 // Package creds generates and protects secrets: repository passwords, session tokens and enrollment
-// codes. Secrets at rest are sealed with AES-256-GCM under a key read from a root-only file
-// (plan-m1 Q5). Nothing here logs or returns a secret except to its one caller.
+// codes. Secrets at rest are sealed with AES-256-GCM under a key read from a root-only file.
+// Nothing here logs or returns a secret except to its one caller.
 package creds
 
 import (
@@ -30,7 +30,7 @@ func LoadKeyFile(path string) (*Sealer, error) {
 	return NewSealer(key)
 }
 
-// ReadKeyFile reads the key's bytes, for the recovery file (plan-m10 item 3). The file must not be readable by group
+// ReadKeyFile reads the key's bytes, for the recovery file. The file must not be readable by group
 // or others.
 func ReadKeyFile(path string) ([]byte, error) {
 	fi, err := os.Stat(path)

@@ -13,10 +13,8 @@ Holdfast can only vouch for what it configures, schedules, checks and can restor
 would show a green status for something whose retention, restorability and credentials Holdfast does not
 control. That looks like protection without being protection.
 
-*The reasons were inferred when the record was written. You accepted them on 2026-11-21, leaving the call to me ("Whatever you recommend").*
-
 ## Consequences
 
 - No importers for foreign repositories or for other backup tools' status.
 - What to do with snapshots that appear in a Holdfast repository without a job tag is an open point
-  (plan-m1 Q12).
+.

@@ -38,7 +38,7 @@ func countStatus(evs []event, job, status string) int {
 
 // SIGKILL the agent mid-upload: the next start reports "interrupted" (never silence), removes the
 // stale lock, picks up the revision saved while it was down, and backs up successfully (PoC test 3).
-// Upload is slowed by a throttling proxy in front of S3 (plan-m1 Q11: no product option for it).
+// Upload is slowed by a throttling proxy in front of S3 (no product option for it).
 func TestKilledBackupIsReportedAndRecovered(t *testing.T) {
 	src := filepath.Join(t.TempDir(), "big")
 	must(t, os.MkdirAll(src, 0o755))
@@ -149,7 +149,7 @@ func TestConfigHistoryDriftCheckAndNoLeaks(t *testing.T) {
 	e.waitProgress(fqdn, "first_backup_done", 2*time.Minute)
 	waitFor(t, "in sync", 30*time.Second, func() bool { return e.host(fqdn).InSync })
 
-	// Revision 1 added the host and revision 2 its job (plan-m10 item 4); this is revision 3.
+	// Revision 1 added the host and revision 2 its job; this is revision 3.
 	e.cli("job", "set", fqdn, "system", "--path", src, "--path", other, "--daily", "02:00", "--base", "2", "-m", "two paths", testAccept)
 	if out, err := e.cliErr("job", "set", fqdn, "system", "--path", src, "--daily", "03:00", "--base", "2", "-m", "stale", testAccept); err == nil || !strings.Contains(string(out), "conflict") {
 		t.Fatalf("a save from a stale base must be refused with a conflict: %v %s", err, out)

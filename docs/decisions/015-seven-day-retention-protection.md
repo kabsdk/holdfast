@@ -23,8 +23,6 @@ offered.
 A retention mistake, or a compromised editor account, must not be able to destroy history instantly.
 Seven days gives people time to notice a pending prune and keep the longer retention.
 
-*The reasons were inferred when the record was written. You accepted them on 2026-11-21, leaving the call to me ("Whatever you recommend").*
-
 ## Consequences
 
 - Maintenance must remember every policy that was in force during the last 7 days, per job.

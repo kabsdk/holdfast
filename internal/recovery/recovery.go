@@ -1,4 +1,4 @@
-// Package recovery is the recovery file (plan-m10 item 3): with the bucket and its two S3 keys, it is all a lost server
+// Package recovery is the recovery file: with the bucket and its two S3 keys, it is all a lost server
 // is rebuilt from. It holds the age key that the escrow files and the nightly exports are encrypted to, and the server's
 // credentials key, which seals the repository passwords in its database. The installer makes it on the server; the
 // admin copies it offline and removes it from the server.

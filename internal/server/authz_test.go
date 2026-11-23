@@ -100,7 +100,7 @@ func TestPermissions(t *testing.T) {
 		}
 	}
 
-	// Revisions and the audit log are cut down to your hosts (plan-m4 Q2).
+	// Revisions and the audit log are cut down to your hosts.
 	var revs []struct{ Number int64 }
 	_, body := apiAs(t, h, web, "GET", "/api/v1/revisions", nil)
 	_ = json.Unmarshal(body, &revs)

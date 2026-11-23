@@ -16,17 +16,15 @@ A PostgreSQL-native engine (physical base backups, WAL archiving, PITR) is plann
 ## Why
 
 - Holdfast never re-implements a storage format. Every byte goes through restic, so a repository can still
-  be restored with the plain `restic` binary if Holdfast is gone. (PoC README.)
+  be restored with the plain `restic` binary if Holdfast is gone.
 - A single engine keeps the product small enough to test end to end.
 - The interface exists now because the planned PostgreSQL engine has different capabilities. For example,
   its restore points are a continuous range, not a list of snapshots. The UI must not offer what an engine
   cannot do.
 
-*The reasons were inferred when the record was written. You accepted them on 2026-11-21, leaving the call to me ("Whatever you recommend").*
-
 ## Review
 
-2026-11-21: re-examined in [research/engine-review.md](../research/engine-review.md). No change is proposed.
+2026-11-21: re-examined. No change is proposed.
 restic is the only candidate that passes every gate. rustic (once production-ready) and Kopia (if it gains
 ACL and xattr support) are worth re-checking.
 

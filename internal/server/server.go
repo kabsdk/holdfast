@@ -55,8 +55,8 @@ type Server struct {
 	maintBusy busyHosts   // one forget-or-prune at a time per host
 	repoLock  repoLocks   // a vault's copy, or a forget-or-prune: never both at once
 	oidc      oidcClient  // the server's side of the OIDC provider (decision 034)
-	links     loginLinks  // root's one-time links into the UI (plan-m10 item 6)
-	notes     notifyState // the server's own alerts (plan-m10 item 2)
+	links     loginLinks  // root's one-time links into the UI
+	notes     notifyState // the server's own alerts
 	op        operating   // escrow, size and decommission (operating.go)
 	exp       exporting   // the nightly export (rebuild.go)
 	// minProtocol is the oldest agent protocol accepted (protocol.go): proto.MinProtocol, or a test's.
@@ -199,7 +199,7 @@ func (s *Server) renderHost(doc config.Document, fqdn string) proto.HostConfig {
 	hc := proto.HostConfig{FQDN: fqdn, Repository: gateway.RepoURL(s.set.PublicURL, fqdn), Jobs: []proto.JobConfig{}}
 	h, ok := doc.Hosts[fqdn]
 	if !ok {
-		hc.SHA256 = hc.ComputeSHA256() // a removed host's agent gets this empty config (plan-m4 Q7)
+		hc.SHA256 = hc.ComputeSHA256() // a removed host's agent gets this empty config
 		return hc
 	}
 	ids := make([]string, 0, len(h.Jobs))
@@ -332,7 +332,7 @@ func (e *StorageError) Error() string {
 
 /* ---------------- operations (each is an /api/v1 endpoint) ---------------- */
 
-// AddHostInput adds a host. The API adds the host alone: its jobs are PUT …/jobs/{job} (plan-m10 item 4). JobID, Job
+// AddHostInput adds a host. The API adds the host alone: its jobs are PUT …/jobs/{job}. JobID, Job
 // and Accept add a first job in the same revision, for Go callers only: the tests.
 type AddHostInput struct {
 	FQDN    string      `json:"fqdn"`
@@ -584,7 +584,7 @@ func (s *Server) initRepository(ctx context.Context, fqdn string) error {
 }
 
 // IssueEnrollmentCode gives a host a new 15-minute code and revokes the open one. It also serves
-// re-enrollment of a host that was enrolled before (plan-m1 Q9): the repository and its password stay.
+// re-enrollment of a host that was enrolled before: the repository and its password stay.
 func (s *Server) IssueEnrollmentCode(ctx context.Context, a Actor, fqdn string) (Enrollment, error) {
 	if s.set.IsVault() {
 		return Enrollment{}, fmt.Errorf("no agent enrolls off-site: agents enroll with the server: %w", ErrConflict)
@@ -771,7 +771,7 @@ type JobView struct {
 	StaleAfter     string           `json:"stale_after"`
 	Status         *store.JobStatus `json:"status,omitempty"`
 	Stale          bool             `json:"stale"` // no success for more than StaleAfter
-	// InBucket is the storage witness (plan-m10 item 1): whether the bucket held the snapshot the agent last reported,
+	// InBucket is the storage witness: whether the bucket held the snapshot the agent last reported,
 	// when the server next read the repository with restic. Absent until it has.
 	InBucket *bool `json:"in_bucket,omitempty"`
 	// In a vault (decision 039): the source's retention, Exclude and Retired, and how far the newest copy is behind
@@ -813,7 +813,7 @@ type HostView struct {
 	// Offsite is what the off-site instance reports of the host (vaultsrc.go); nil without offsite:.
 	Offsite *HostOffsite `json:"offsite,omitempty"`
 	// AheadOfServer is the head this server was restored at, when the agent runs a newer revision that no revision
-	// since has replaced (plan-m9 Q6): its config is held back, and the host shows it.
+	// since has replaced: its config is held back, and the host shows it.
 	AheadOfServer *int64 `json:"ahead_of_server,omitempty"`
 }
 

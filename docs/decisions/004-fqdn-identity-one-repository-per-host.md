@@ -18,9 +18,7 @@ Status: accepted, 2026-11-21
 - **Credentials are scoped to one repository.** One repository per host means one repository password and
   one S3 key per host. A compromised host exposes only its own data.
 
-*The reasons were inferred when the record was written. You accepted them on 2026-11-21, leaving the call to me ("Whatever you recommend").*
-
 ## Consequences
 
 - Retention and forget are applied per job, using the `job=<id>` tag.
-- Renaming or re-addressing a host is not designed yet (plan-m1 Q9).
+- Renaming or re-addressing a host is not designed yet.

@@ -12,7 +12,7 @@ import (
 	"github.com/kabsdk/holdfast/internal/server/store"
 )
 
-// Me is who the asker is, and what they may do (plan-m4 §2). The UI builds its menus from it.
+// Me is who the asker is, and what they may do. The UI builds its menus from it.
 type Me struct {
 	access.Principal
 	// AdminEverywhere: admin on every host. Only they see the bindings, the sessions, and what belongs to no

@@ -1,13 +1,13 @@
 # 040: Rebuilding Holdfast
 
-Status: accepted, 2026-11-22 (plan-m7 Q9–Q12; you answered "Continue"). It decides OQ3. It is built in M9
-([plan-m9](../plan-m9.md)): decision 041 put the two-program architecture first, as M8. With no vault, the server
-writes each export to both buckets itself; and agents are known by pinned certificates, not tokens, which the export
-holds just the same. As built (plan-m9 Q1): the export is the tables as CSV, not a PostgreSQL dump, and "the config"
-is the config revisions in the database: `server.yaml` is not in it, as it may hold the database's password, so the
-admin keeps it offline with its key files (docs/runbooks/rebuild-holdfast.md). **Amended by decision 047
-(2026-11-23):** the export now carries the TLS files and `server.yaml` without the database's address, and a rebuild
-needs only the recovery file and the install settings; hosts added after the export come back from `escrow/`.
+Status: accepted, 2026-11-22. It decides how Holdfast is rebuilt if its PostgreSQL database is lost. It is built in
+M9: decision 041 put the two-program architecture first, as M8. With no vault, the server writes each export to
+both buckets itself; and agents are known by pinned certificates, not tokens, which the export holds just the same.
+As built: the export is the tables as CSV, not a PostgreSQL dump, and "the config" is the config revisions in the
+database: `server.yaml` is not in it, as it may hold the database's password, so the admin keeps it offline with its
+key files (docs/runbooks/rebuild-holdfast.md). **Amended by decision 047 (2026-11-23):** the export now carries the
+TLS files and `server.yaml` without the database's address, and a rebuild needs only the recovery file and the
+install settings; hosts added after the export come back from `escrow/`.
 
 ## Decision
 
@@ -24,5 +24,5 @@ needs only the recovery file and the install settings; hosts added after the exp
 ## Why
 
 - **The export is the smallest thing that makes a lost database survivable**, and the escrow already covers each
-  repository on its own. OQ3's `holdfast-meta` bucket with a hash-chained log, and a CA, are more complete and much
-  more work; they remain possible later.
+  repository on its own. A `holdfast-meta` bucket with a hash-chained log, and a CA, as first proposed, are more
+  complete and much more work; they remain possible later.

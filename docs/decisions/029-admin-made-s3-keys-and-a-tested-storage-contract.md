@@ -4,7 +4,7 @@
 > and Holdfast still tests them, but there are two per bucket, the gateway key and the maintenance key. Hosts hold no
 > S3 key, and the provisioner hook is gone.
 
-Status: accepted, 2026-11-21. Answers plan-m1 Q4's first question.
+Status: accepted, 2026-11-21. It answers who makes the hosts' S3 keys.
 
 ## Decision
 
@@ -52,6 +52,6 @@ Status: accepted, 2026-11-21. Answers plan-m1 Q4's first question.
   The UI gets the same field and action in M4.
 - The key passes into the API as input only. It is never in any output, log or revision.
 - The contract test writes a few tiny probe objects under the host's prefix and deletes them again. With
-  versioning on, their old versions stay until the bucket's lifecycle rule expires them (Q4's third
-  question, still open).
-- The vault's reader key (off-site O10) will follow the same pattern.
+  versioning on, their old versions stay until the bucket's lifecycle rule expires them. The rule's expiry
+  is the admin's choice ([storage.md](../storage.md)).
+- The vault's reader key will follow the same pattern.

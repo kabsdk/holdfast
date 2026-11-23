@@ -29,7 +29,7 @@ type Config struct {
 	PollTimeout    time.Duration `yaml:"poll_timeout"`
 	Tick           time.Duration `yaml:"tick"`       // scheduler resolution
 	RetryLock      time.Duration `yaml:"retry_lock"` // how long a backup waits for maintenance's lock
-	// Restore bounds what a restore may do on this host (decision 030, plan-m2 Q5). Only root here can
+	// Restore bounds what a restore may do on this host (decision 030). Only root here can
 	// change them: the server cannot.
 	Restore proto.RestoreBounds `yaml:"restore"`
 	// Dumps are the commands a dump job may name (decision 037). Only root here defines them.

@@ -27,7 +27,7 @@ import (
 	"time"
 )
 
-// PinnedVersion is the restic that Holdfast is tested with (plan-m1 Q10). The agent's package ships it
+// PinnedVersion is the restic that Holdfast is tested with. The agent's package ships it
 // (decision 032), and the server warns about a host that reports another version. Keep it equal to
 // RESTIC_VERSION in the Makefile.
 const PinnedVersion = "0.19.1"
@@ -55,7 +55,7 @@ type Runner struct {
 	Env          []string      // extra variables, e.g. AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY
 	RetryLock    time.Duration // --retry-lock; 0 means fail at once when locked
 	// NoLock reads without creating a lock (--no-lock). The server's reads (snapshot lists, files,
-	// changes, find) use it, so they never wait for an agent's check or delay a backup (plan-m2 Q1).
+	// changes, find) use it, so they never wait for an agent's check or delay a backup.
 	NoLock bool
 	// Options are restic's extended options (-o key=value), such as rclone.program for the vault's source.
 	Options []string
@@ -463,7 +463,7 @@ func (r Runner) Keys(ctx context.Context) ([]RepoKey, error) {
 }
 
 // AddKey adds a password to the repository, read from a file: never from argv. It returns the new key's
-// ID. Only the server's rotation uses it (plan-m5 item 5).
+// ID. Only the server's rotation uses it.
 func (r Runner) AddKey(ctx context.Context, newPasswordFile string) (string, error) {
 	before, err := r.Keys(ctx)
 	if err != nil {
@@ -553,7 +553,7 @@ func (r Runner) Restore(ctx context.Context, snapshot, target string, include []
 }
 
 // ForgetPlan asks restic what a retention policy keeps among the snapshots with the tag, grouped by host
-// only (plan-m3 Q1), without changing anything (--dry-run). It returns the snapshots it would keep and the
+// only, without changing anything (--dry-run). It returns the snapshots it would keep and the
 // ones it would remove. It runs with --no-lock: without it, restic takes an exclusive lock even for a dry run.
 func (r Runner) ForgetPlan(ctx context.Context, tag string, policy []string) (keep, remove []Snapshot, err error) {
 	r.NoLock = true
@@ -641,7 +641,7 @@ func parsePrune(out string) PruneReport {
 	return p
 }
 
-// RestoreOptions describe one restore through the agent (plan-m2 §3).
+// RestoreOptions describe one restore through the agent.
 type RestoreOptions struct {
 	Target    string
 	Include   []string // restore only these

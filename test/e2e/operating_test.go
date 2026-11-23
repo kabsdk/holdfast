@@ -18,7 +18,7 @@ import (
 	"github.com/minio/minio-go/v7/pkg/credentials"
 )
 
-// M5 (plan-m5 §3):
+// M5:
 //   - the escrow file decrypts with the age key and opens the repository with plain restic;
 //   - the repository's size, with S3's old versions;
 //   - rotate, then a backup with the new password, after enrolling again;

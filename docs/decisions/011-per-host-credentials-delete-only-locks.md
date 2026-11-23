@@ -21,10 +21,8 @@ Status: accepted, 2026-11-21
 - **A raw restic console would bypass the protections.** It would get around the checks, the 7-day
   protection and the audit log.
 
-*The reasons were inferred when the record was written. You accepted them on 2026-11-21, leaving the call to me ("Whatever you recommend").*
-
 ## Consequences
 
 - Prune needs an S3 identity that can delete outside `locks/`. Which identity that is, and who creates the
-  per-host keys, is plan-m1 Q4.
-- With versioning on, deletes made by prune free no space until the noncurrent versions expire (plan-m1 Q4).
+  per-host keys, is settled by [decision 029](029-admin-made-s3-keys-and-a-tested-storage-contract.md).
+- With versioning on, deletes made by prune free no space until the noncurrent versions expire.

@@ -18,7 +18,7 @@ import (
 	"github.com/kabsdk/holdfast/internal/server/store"
 )
 
-// Off-site copies (decision 041, plan-m8 part 4). With offsite: in server.yaml, holdfast-server runs a second instance
+// Off-site copies (decision 041). With offsite: in server.yaml, holdfast-server runs a second instance
 // of its own code beside itself: the off-site instance, in the vault role, on the off-site bucket, with its tables in
 // the schema "offsite" of the same database. It is M7's vault, without a program, a token or keys of its own:
 //

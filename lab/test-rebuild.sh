@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# lab/test-rebuild.sh <lab> [<vm>...]: M9's lab test (plan-m9 Q8): docs/runbooks/rebuild-holdfast.md walked on the lab's
+# lab/test-rebuild.sh <lab> [<vm>...]: M9's lab test: docs/runbooks/rebuild-holdfast.md walked on the lab's
 # server. lab/lab test runs it after the M8 test, which leaves each agent enrolled with snapshots. One server and no
 # standby (decision 042): the server is lost and replaced, on the same machine, from the nightly export.
 #   1. holdfast export now; each agent's snapshots listed;

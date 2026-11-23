@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-/* ---------------- retention, Prune now and Delete snapshot (M3, plan-m3 §3) ---------------- */
+/* ---------------- retention, Prune now and Delete snapshot (M3) ---------------- */
 
 // RevisionsInForce returns, oldest first and with their configs, every revision that was in force at some
 // time after since: the newest one saved at or before since, and every one saved after it.

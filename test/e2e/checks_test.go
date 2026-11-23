@@ -87,8 +87,8 @@ func TestChecks(t *testing.T) {
 	}
 }
 
-// A job needs only its paths: the rest comes from the default job, and a later save changes only what it gives
-// (plan-m10 item 4). host add takes no job.
+// A job needs only its paths: the rest comes from the default job, and a later save changes only what it gives.
+// host add takes no job.
 func TestJobDefaults(t *testing.T) {
 	e := newEnv(t)
 	const fqdn = "def01.example.com"

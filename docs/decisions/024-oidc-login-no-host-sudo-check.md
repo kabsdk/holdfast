@@ -17,8 +17,6 @@ the UI with `holdfast ui-login`.
   host's sudoers files, which Holdfast neither controls nor audits. Permissions would be hard to predict, and
   checking them would require the host to be online.
 
-*The reasons were inferred when the record was written. You accepted them on 2026-11-21, leaving the call to me ("Whatever you recommend").*
-
 ## Consequences
 
 - Access is reviewed in one place: the role bindings, which are part of the config and audited.

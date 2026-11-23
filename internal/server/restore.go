@@ -18,11 +18,11 @@ import (
 	"github.com/kabsdk/holdfast/internal/server/store"
 )
 
-// Restore runs on the agent, as a command in its one-restic-at-a-time loop (plan-m2 §3). The server checks
+// Restore runs on the agent, as a command in its one-restic-at-a-time loop. The server checks
 // the request, and the host's bounds as its agent last reported them, but the agent decides: the bounds
 // are in its own config, which only root on the host can change (decision 030).
 
-// RestoreExpiry is how long a queued restore waits for its host (plan-m2 Q6).
+// RestoreExpiry is how long a queued restore waits for its host.
 const RestoreExpiry = 24 * time.Hour
 
 // RestoreInput is a restore request (spec §5.4). Everything is selected unless left out (Exclude), or
@@ -38,7 +38,7 @@ type RestoreInput struct {
 	Overwrite string `json:"overwrite,omitempty"`
 	// Message is why, for the audit log: the "Reason" in the UI.
 	Message string `json:"message,omitempty"`
-	// ToHost restores the snapshot onto another host (plan-m6 §2.2). That host reads this one's repository through
+	// ToHost restores the snapshot onto another host. That host reads this one's repository through
 	// the gateway, which lets it for this restore only, and only to read (decision 041).
 	ToHost string `json:"to_host,omitempty"`
 	// FromOffsite restores the off-site copy of the snapshot (decisions 039 and 041). The snapshot is the copy's ID or
@@ -90,7 +90,7 @@ func (s *Server) Restore(ctx context.Context, a Actor, fqdn, snapshotID string, 
 	if in.ToHost == fqdn {
 		in.ToHost = ""
 	}
-	// The host the restore runs on: this one, or another (plan-m6 §2.2), which is restore.in_place on both.
+	// The host the restore runs on: this one, or another, which is restore.in_place on both.
 	target := fqdn
 	if in.ToHost != "" {
 		target = in.ToHost
@@ -305,7 +305,7 @@ func (s *Server) Restores(ctx context.Context, limit int) (RestoresView, error) 
 }
 
 // expireCommands cancels queued restores whose host did not pick them up in time. Each is reported in the
-// host's history as a failed restore, and audited (plan-m2 Q6).
+// host's history as a failed restore, and audited.
 func (s *Server) expireCommands(ctx context.Context) {
 	now := s.now()
 	expired, err := s.st.Q().ExpireCommands(ctx, now)

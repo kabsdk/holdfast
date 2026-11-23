@@ -15,7 +15,7 @@ import (
 	"github.com/chromedp/chromedp"
 )
 
-// A headless Chrome, driven over the DevTools protocol (plan-m4 §6): the browser tests use the UI as a person
+// A headless Chrome, driven over the DevTools protocol: the browser tests use the UI as a person
 // does, against a real server, a real Authelia, a real restic and a real S3.
 
 // newBrowser returns a fresh browser context: its own cookies, as a private window has.

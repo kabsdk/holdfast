@@ -122,7 +122,7 @@ func (s *Server) endSession(ctx context.Context, r *http.Request) {
 	_ = s.st.Q().DeleteSession(ctx, hash)
 }
 
-// Sessions lists the sessions that have not ended, for admins everywhere (plan-m4 Q3).
+// Sessions lists the sessions that have not ended, for admins everywhere.
 func (s *Server) Sessions(ctx context.Context, a Actor) ([]store.Session, error) {
 	if err := s.requireEverywhere(ctx, a, access.ConfigAccess); err != nil {
 		return nil, err

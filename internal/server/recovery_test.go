@@ -84,7 +84,7 @@ func TestDumpJobChecks(t *testing.T) {
 }
 
 // A dump goes into a new directory only; a restore onto another host needs the other host's opt-in and a new enough
-// agent, its password reaches only that agent, once (plan-m6 §2.2), and that host may read the repository through the
+// agent, its password reaches only that agent, once, and that host may read the repository through the
 // gateway until it reports the restore, and only read it (decision 041).
 func TestRestoreDumpAndOntoAnotherHost(t *testing.T) {
 	s, ctx := newTestServer(t), context.Background()

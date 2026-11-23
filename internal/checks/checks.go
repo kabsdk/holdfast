@@ -2,7 +2,7 @@
 // retention, each with a stable code. The UI, the API and the CLI all get these from the server.
 //
 // Errors block a save. Warnings must be accepted one by one, by code. Info is shown and never blocks.
-// R101, R102 and R103 are estimates from the schedule and the windows (plan-m3 Q4). R104, a retention cut,
+// R101, R102 and R103 are estimates from the schedule and the windows. R104, a retention cut,
 // is decided by restic on the real repository: the server computes both keep sets, and RetentionCut
 // compares them.
 package checks
@@ -131,8 +131,8 @@ func Job(j config.Job, h History) []Finding {
 				add("S002", Warning, "schedule", "runs take up to %s (p95 of the last %d), but come every %s: some will be skipped", human(p.Round(time.Minute)), n, human(shortest))
 			}
 		}
-		// R103 looks at the gap, not the gap plus the spread, so a daily job with a spread does not warn
-		// (plan-m4 Q12). The message still gives the worst-case loss.
+		// R103 looks at the gap, not the gap plus the spread, so a daily job with a spread does not warn.
+		// The message still gives the worst-case loss.
 		if longest > day {
 			add("R103", Warning, "schedule", "runs are up to %s apart, so the worst-case data loss is about %s", human(longest), human(j.Schedule.WorstCaseLoss().Round(time.Minute)))
 		}

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# lab/test-login.sh <lab> [<results file>]: login on the lab's Holdfast server (decision 034, plan-m4 Q9), through
+# lab/test-login.sh <lab> [<results file>]: login on the lab's Holdfast server (decision 034), through
 # Authelia on the same VM, from this host as a person's browser goes but with curl. lab/test-fidelity.sh runs it, after
 # lab/lab test has provisioned the server, and its summary has these checks:
 #   1. Authelia's discovery document, <issuer>/.well-known/openid-configuration, has the issuer that server.yaml names

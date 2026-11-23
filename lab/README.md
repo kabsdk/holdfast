@@ -1,7 +1,6 @@
 # The local test lab
 
-Five VMs on this host's KVM and libvirt, on a private NAT network of their own, in the manner of Clusterlane's lab:
-the lab is data (`lab/labs/<lab>.yml`), Ansible brings it up (`lab/ansible/`, community.libvirt), and `lab/lab` is the
+Five VMs on this host's KVM and libvirt, on a private NAT network of their own. The lab is data (`lab/labs/<lab>.yml`), Ansible brings it up (`lab/ansible/`, community.libvirt), and `lab/lab` is the
 one command. One lab ships, `m1`.
 
 | VM | Role | OS (image) | vCPU | MiB | Disk GiB | Address |
@@ -15,7 +14,7 @@ one command. One lab ships, `m1`.
 hfsrv and the agents have restic 0.19.1 at `/usr/libexec/holdfast/restic`. Each agent has `/usr/bin/holdfast-agent`,
 `holdfast-agent.service` (installed; `lab/lab test` enrolls and starts it) and the lab's fidelity tool
 `/usr/local/bin/hf-fidelity`. On hfsrv, `holdfast-server` runs, configured as an admin would (below), with the UI and
-`/api/v1` for people on port 443 and login through Authelia on port 9091 (below); it is the storage witness too (plan-m10 item 1). Every VM has the others' names in `/etc/hosts`
+`/api/v1` for people on port 443 and login through Authelia on port 9091 (below); it is the storage witness too. Every VM has the others' names in `/etc/hosts`
 (`<vm>.m1.holdfast.test` and `<vm>`). SELinux is enforcing on the EL VMs. The network is `hf-m1` (10.79.20.0/24, bridge
 `hfbr-m1`), and every libvirt object the lab makes is named `hf-m1-*`.
 
@@ -40,8 +39,7 @@ Exit codes: 0 done (status: ready; test: every property kept on every VM and eve
 lab's lock). `up`, `deploy`, `test`, `isolation`, `stop` and `destroy` write `<state>/runs/<UTC time>-<command>/log`.
 
 First time on a host: `ansible-galaxy collection install -r lab/ansible/requirements.yml`, then `lab/lab doctor m1`.
-Its packages are Clusterlane's (libvirt, qemu-img, xorriso, python3-libvirt, python3-lxml, ansible-core, Go). No root
-is needed: libvirt owns every disk and seed in the pool `default`.
+It needs libvirt, qemu-img, xorriso, python3-libvirt, python3-lxml, ansible-core and Go. No root is needed: libvirt owns every disk and seed in the pool `default`.
 
 ## Where things are
 
@@ -72,7 +70,7 @@ is needed: libvirt owns every disk and seed in the pool `default`.
   (0600), as the rebuild runbook says to; a hfsrv rebuilt by `lab/lab up` without it starts with a new database. `server.yaml` has an `offsite:` section,
   so the server copies each host's snapshots to `holdfast-offsite` every 30 seconds; without it the lab would run the
   same, with no off-site copies. `auth.bootstrap_admins` is empty: the default bindings make ada admin.
-- **Authelia:** `https://hfsrv.m1.holdfast.test:9091`, the issuer in `server.yaml` (plan-m4 Q9), set up as the e2e
+- **Authelia:** `https://hfsrv.m1.holdfast.test:9091`, the issuer in `server.yaml`, set up as the e2e
   tests' (`test/e2e/authelia/setup.sh`). Its release tarball `authelia-v4.39.28-linux-amd64.tar.gz` is pinned by URL
   and sha256 in `lab/labs/m1.yml`, downloaded once into `~/.cache/holdfast-lab` and unpacked beside it, and its
   `authelia` and the release's `authelia.service` copied to hfsrv (`/usr/bin`, `/usr/lib/systemd/system`). It runs as
@@ -186,8 +184,8 @@ HOLDFAST_PROBE_EXPECT=B003 go test ./internal/server/storage/ -run TestS3ProberL
 ## The fidelity test through Holdfast: M2's "done when"
 
 `lab/lab test m1` (`lab/test-fidelity.sh`) checks that a backup and a restore made through Holdfast keep all 13
-metadata properties on the three agent VMs, against the lab's Ceph RGW through the server's gateway (docs/plan-m2.md, Q9). It also checks login on
-the UI through Authelia (plan-m4 Q9). It needs a ready lab (`lab/lab up m1`) and no internet on the VMs. It holds the
+metadata properties on the three agent VMs, against the lab's Ceph RGW through the server's gateway. It also checks login on
+the UI through Authelia. It needs a ready lab (`lab/lab up m1`) and no internet on the VMs. It holds the
 lab's lock, and takes about two minutes. It:
 
 1. builds this checkout and deploys it (as `deploy`), and provisions Authelia and the server
@@ -280,7 +278,7 @@ POST /auth/logout ends the session: /api/v1/me 401 again              PASS
 result: PASS, 39 of 39 properties kept on 3 VMs, 5 of 5 login checks passed
 ```
 
-**Result with the packages, 2026-11-22** (M5, plan-m5 item 1): the same 39 of 39 properties and 5 of 5 login
+**Result with the packages, 2026-11-22** (M5): the same 39 of 39 properties and 5 of 5 login
 checks, with Holdfast installed from this checkout's packages (`0.5.0~dev43…`): `holdfast-restic` and
 `holdfast-agent` on ub24 with `dpkg -i`, and on el9 and ol9 with `rpm -U`; `holdfast-restic`, `holdfast-cli`,
 `holdfast-server` and `holdfast-freshness` on hfsrv. The agents run at `Nice=10` and idle I/O priority. Every
@@ -294,7 +292,7 @@ the maintenance policy lacked; MinIO lists versions with `s3:ListBucket` alone, 
 
 ### M6's lab tests: the rebuild and the dump
 
-After the fidelity test, `lab/lab test m1` runs `lab/test-recovery.sh` (plan-m6 §3, Q8). `site.yml --tags agentdb`
+After the fidelity test, `lab/lab test m1` runs `lab/test-recovery.sh`. `site.yml --tags agentdb`
 installs each agent's own PostgreSQL first.
 - **The bare-metal runbook's first path** (`docs/runbooks/bare-metal.md`), on one VM (`HF_REBUILD_VM`, default the
   first agent): the last fidelity snapshot noted; the fixture moved aside; the agent's packages removed and
@@ -320,7 +318,7 @@ SELinux refuses. A dump's restore, and a restore from another host, now leave th
 
 ### M8's lab test: off-site copies
 
-Then `lab/lab test m1` runs `lab/test-offsite.sh` (plan-m8 §2 part 5). Off-site copies are optional; the lab turns
+Then `lab/lab test m1` runs `lab/test-offsite.sh`. Off-site copies are optional; the lab turns
 them on with `offsite:` in hfsrv's `server.yaml`. holdfast-server makes the copies itself (decision 041): there is no
 other program, no database of its own (its tables are in the schema `offsite` of `holdfast`) and nothing to register.
 The lab has one RGW, so **the off-site bucket is a second bucket on it**, `holdfast-offsite`, with its own user
@@ -365,7 +363,7 @@ copier does too, and makes nothing when the test fails. MinIO's policies refuse 
 `s3:CreateBucket`, so the e2e suite could not see it; `internal/restic`'s `TestInitFromTestsTheStorageFirst` covers it.
 `rgw-offsite-layout.sh` makes such a bucket again in the layout.
 
-**What the run found in the product.** Both bugs are fixed; see `docs/plan-m2.md`.
+**What the run found in the product.** Both bugs are fixed:
 - The agent and the server now default `restic_bin` to `/usr/libexec/holdfast/restic`.
 - A repository Holdfast initialises, the first time or again, has its keys recorded as known, and the event is
   audited as `repository.initialised`.
@@ -390,7 +388,7 @@ As found:
 ### M9's lab tests: the server rebuilt, and what one server carries
 
 Then `lab/lab test m1` runs `lab/test-rebuild.sh`, which walks `docs/runbooks/rebuild-holdfast.md` on hfsrv itself
-(plan-m9 Q8). There is one server and no standby (decision 042), so the server is lost and replaced:
+. There is one server and no standby (decision 042), so the server is lost and replaced:
 - `holdfast export now`, and each agent's snapshots noted;
 - the admin's offline copy of `/etc/holdfast` kept in the lab's state (`rebuild/etc-holdfast.tar`);
 - the server lost: holdfast-server stopped, the database `holdfast` dropped and made again empty, the packages
@@ -442,7 +440,7 @@ quarter".
 
 ## Troubleshooting
 
-- **No internet from the VMs:** Docker's FORWARD policy, as in Clusterlane's lab (`lab/lab doctor m1` checks it).
+- **No internet from the VMs:** Docker's FORWARD policy (`lab/lab doctor m1` checks it).
 - **A VM never answers SSH:** `virsh -c qemu:///system console hf-m1-<vm>` shows its boot and cloud-init.
 - **A checksum mismatch:** remove the file from `~/.cache/holdfast-lab/` and run `up` again.
 - **An image gone (404):** AlmaLinux moves old minor releases to `vault.almalinux.org` (already the pinned URL here),

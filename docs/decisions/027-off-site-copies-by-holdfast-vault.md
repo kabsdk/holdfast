@@ -6,10 +6,10 @@
 
 Status: accepted, 2026-11-21. [Decision 030](030-simplify-after-the-architecture-review.md) reopened how
 copies are made, then confirmed `restic copy`: a mirror of the repository files breaks when B keeps other
-snapshots than A. 030 also drops the shared cross-site key (O10) and the "one snapshot, for a limited time"
-restore grant. This decides part of OQ1. A snapshot deleted in site A is marked **Deleted in primary** in
-the vault, and a vault admin can choose **Delete here too** ([decision 031](031-deleting-a-single-snapshot.md)). The remaining points are listed in
-[research/off-site.md](../research/off-site.md) §7.
+snapshots than A. 030 also drops the shared cross-site key and the "one snapshot, for a limited time"
+restore grant. A snapshot deleted in site A is marked **Deleted in primary** in the vault, and a vault admin can
+choose **Delete here too** ([decision 031](031-deleting-a-single-snapshot.md)). The remaining points are decided
+by [decision 039](039-the-vault-in-detail.md).
 
 ## Decision
 
@@ -20,7 +20,7 @@ the vault, and a vault admin can choose **Delete here too** ([decision 031](031-
   `holdfast-server` is unreachable, and finds new snapshots by listing A's repositories itself.
 
 **Who controls what**
-- **Off-site retention is set in holdfast-vault, not in holdfast-server.** This replaces OQ1's earlier
+- **Off-site retention is set in holdfast-vault, not in holdfast-server.** This replaces the earlier
   leaning, which put off-site retention in the protection item.
 - **Each side can view the other's jobs and retention, but not change them.**
 - **Every connection is opened by the vault.**
@@ -59,10 +59,9 @@ the vault, and a vault admin can choose **Delete here too** ([decision 031](031-
 
 - **Off-site settings are an exception to UI = API = CLI across programs.** They exist only in the vault's
   UI, API and CLI, and holdfast-server shows them read-only. spec §3.3 must list this exception when M7
-  lands (M6 until plan-m5 Q1).
+  lands.
 - **The vault's independence from the identity provider depends on how the provider is set up.** If someone
-  can log in as both a Holdfast admin and a vault admin, the storage floor in site B is the backstop
-  (research/off-site.md §4).
+  can log in as both a Holdfast admin and a vault admin, the storage floor in site B is the backstop.
 - **holdfast-server needs a rule for site A:** maintenance must not prune a snapshot that the vault wants but
   has not copied yet.
 - **The vault needs its own revisions and audit log,** on the same model as holdfast-server.

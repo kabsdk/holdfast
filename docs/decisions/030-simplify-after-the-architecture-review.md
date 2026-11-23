@@ -1,6 +1,6 @@
 # 030: Simplify after the architecture review
 
-Status: accepted, 2026-11-21. You accepted the review's recommendations, with two exceptions noted below.
+Status: accepted, 2026-11-21. The review's recommendations are accepted, with two exceptions noted below.
 
 ## The principle
 
@@ -24,8 +24,8 @@ is one example.
    - `storage.md` grants only the actions Holdfast needs, not `s3:*`.
    - New storage checks: the maintenance key cannot delete object versions for good, and cannot change
      versioning, the lifecycle rule or the bucket policy.
-   - Another check: a lifecycle rule for noncurrent versions exists. How long it keeps versions is still
-     Q4's open question.
+   - Another check: a lifecycle rule for noncurrent versions exists. How long it keeps versions is the
+     admin's choice ([storage.md](../storage.md)).
 5. **Enrollment checks the code before it touches storage.**
 6. **Each restic run on the agent has a timeout.**
 7. **The repository check moves to the agent.**
@@ -50,11 +50,10 @@ is one example.
     - **Cut:** the library, profiles and "Jobs with the old values" (M5).
     - **Cut:** `content_view`, which replaces decision 026. No file contents ever leave a host.
     - **Deferred:** the engine abstraction of decision 001, until a second engine exists.
-11. **The 21 decision records whose reasons were inferred** go to you, to confirm or delete. *Done
-    2026-11-21:* three were replaced (010, 020 and 026), and you accepted the reasons of the other 18,
-    leaving the call to me.
+11. **The 21 decision records whose reasons were reconstructed after the fact** are reviewed. *Done
+    2026-11-21:* three were replaced (010, 020 and 026), and the reasons of the other 18 were accepted.
 12. **Off-site corrections:**
-    - No key is shared across sites, which drops O10's "same key on both clusters".
+    - No key is shared across sites, which drops the earlier idea of the same key on both clusters.
     - A restore from site B reads the whole repository. Drop the "one snapshot, for a limited time" grant.
     - A stalled site B blocks site A's prune for a bounded time only.
 13. **Restores are bounded on the host (M2).**
@@ -70,14 +69,14 @@ is one example.
     - restore to another host, and a bare-metal recovery runbook that uses the escrow bundle;
     - rolling a host's prefix back to a point in time from S3 versions;
     - retry within the schedule's gap, plus `Nice=`, `IOSchedulingClass=` and an optional upload limit
-      (this answers Q7's "no retry" and Q11);
+      (this replaces M1's "no retry" and "no extra backup options");
     - repository size and growth, including noncurrent versions;
     - a host-compromise procedure: new S3 key, new restic key, revoked token, last good snapshot;
     - where site B's own hosts back up to, and what they do when the sites are cut off from each other;
     - packaging and upgrades, with protocol version negotiation between agent and server;
     - alerting without Alertmanager, including what to run for the dead man's switch;
     - at host add, the repository password, encrypted to an offline `age` recipient, written to the bucket
-      and to site B (Q5's bundle format).
+      and to site B (the escrow bundle's format; decision 036).
 
 ## Not accepted
 
@@ -85,8 +84,8 @@ is one example.
 
 ## Decided afterwards (2026-11-21): off-site copies use `restic copy`
 
-You left the choice to me ("Whatever you say"). Decision 027 stands: the vault in site B copies each
-new snapshot with `restic copy` into a separate repository in B, which has its own password.
+Decision 027 stands: the vault in site B copies each new snapshot with `restic copy` into a separate
+repository in B, which has its own password.
 
 **Why not the mirror** (copying A's repository files to B as they are):
 - **B's retention breaks it.** B's own forget and prune delete data in B. But the mirror keeps copying in
@@ -103,6 +102,6 @@ new snapshot with `restic copy` into a separate repository in B, which has its o
 
 ## Why
 
-The review found two security holes in M1, and plans that were too large for several hosts. This is
-the complexity you objected to. Each change above either closes a hole, uses restic instead of
-re-implementing it, or removes work that this audience does not need.
+The review found two security holes in M1, and plans that were too large for several hosts. Each change
+above either closes a hole, uses restic instead of re-implementing it, or removes work that this audience
+does not need.

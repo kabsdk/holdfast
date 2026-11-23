@@ -10,7 +10,7 @@ import (
 	"github.com/kabsdk/holdfast/internal/config"
 )
 
-// A job in the API may leave things out (plan-m10 item 4): a new job takes what it does not give from the default job
+// A job in the API may leave things out: a new job takes what it does not give from the default job
 // (daily at 02:00 with a 20-minute spread; one a day for 14 days, a week for 8 weeks, a month for 12 months, a year for
 // 3 years; the newest 3), and an existing job keeps its own. So `holdfast job set web01 system --path /etc` is a whole
 // job, and `holdfast job set web01 system --keep-daily 30d` changes the retention alone.

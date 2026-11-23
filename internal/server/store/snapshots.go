@@ -8,7 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-/* ---------------- the snapshot catalogue (M2, plan-m2 Q2) ---------------- */
+/* ---------------- the snapshot catalogue (M2) ---------------- */
 
 // Snapshot is one row of the catalogue.
 type Snapshot struct {
@@ -283,7 +283,7 @@ type JobNewest struct {
 }
 
 // NewestSnapshots returns, for every job with a snapshot in its repository, the newest one's time, as restic read it
-// from the bucket: the storage witness the server is (plan-m10 item 1).
+// from the bucket: the storage witness the server is.
 func (q *Q) NewestSnapshots(ctx context.Context) ([]JobNewest, error) {
 	rows, err := q.db.Query(ctx, `SELECT fqdn, job_id, max(time) FROM snapshots WHERE gone_at IS NULL AND job_id <> ''
 		GROUP BY fqdn, job_id ORDER BY fqdn, job_id`)
@@ -309,7 +309,7 @@ type ReportedSnapshot struct {
 	InBucket                bool
 }
 
-// ReportedInBucket is the storage witness (plan-m10 item 1): for every job whose last reported snapshot the server has
+// ReportedInBucket is the storage witness: for every job whose last reported snapshot the server has
 // read the repository since, whether restic found it there. The read is the server's, with the maintenance key
 // straight from S3, and the report's arrival is the server's clock, so the agent's clock plays no part. A snapshot
 // that was there and went later stays in the catalogue with gone_at set: it counts as held here, and as disappeared.

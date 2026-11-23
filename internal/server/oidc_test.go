@@ -23,7 +23,7 @@ import (
 
 // fakeProvider is a minimal OIDC provider for the unit tests: the code flow with PKCE, the device flow, and
 // userinfo. Like Authelia 4.39 it puts the username and the groups only in userinfo. The e2e tests use a real
-// Authelia (plan-m4 Q9).
+// Authelia.
 type fakeProvider struct {
 	srv      *httptest.Server
 	key      *rsa.PrivateKey

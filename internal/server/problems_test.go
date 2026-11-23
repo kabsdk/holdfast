@@ -7,7 +7,7 @@ import (
 	"github.com/kabsdk/holdfast/internal/server/store"
 )
 
-// The storage witness's problem (plan-m10 item 1): raised for a job whose reported snapshot the bucket did not hold,
+// The storage witness's problem: raised for a job whose reported snapshot the bucket did not hold,
 // and only for that job.
 func TestProblemNotInBucket(t *testing.T) {
 	now := time.Now()

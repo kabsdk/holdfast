@@ -88,7 +88,7 @@ func (q *Q) ExportState(ctx context.Context) (ExportState, error) {
 	return st, err
 }
 
-// RestoreFromExport is a server restored from an export (plan-m9 Q6).
+// RestoreFromExport is a server restored from an export.
 type RestoreFromExport struct {
 	RestoredAt time.Time `json:"restored_at"`
 	ExportName string    `json:"export_name"`

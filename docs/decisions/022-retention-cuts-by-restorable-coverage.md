@@ -19,8 +19,6 @@ window.
 
 **Coverage is what the operator cares about.** It is the set of restore points that survive.
 
-*The reasons were inferred when the record was written. You accepted them on 2026-11-21, leaving the call to me ("Whatever you recommend").*
-
 ## Consequences
 
 - Cut detection compares the restore points each policy would keep, using the same model as restic. It does

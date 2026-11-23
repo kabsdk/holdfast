@@ -1,7 +1,7 @@
 # 042: Who Holdfast is for, and one replaceable server
 
-Status: accepted, 2026-11-22. You asked to "pick a lane" between full high availability and none, and to choose who
-Holdfast is for, after comparing it with other products; then "Alright, go".
+Status: accepted, 2026-11-22. It chooses between full high availability and none, and says who Holdfast is for,
+after comparing it with other products.
 
 It narrows decision 030's scope rule and withdraws decision 041's "a second gateway is possible later" as a plan.
 
@@ -63,5 +63,5 @@ UrBackup, Bareos and Bacula Enterprise's docs, and Veeam Backup & Replication 13
 
 - CLAUDE.md and spec §1 say who Holdfast is for; spec §1.2 lists high availability as out of scope; spec §2.2 says
   backups wait and the server is replaced.
-- Decision 041 and plan-m8 no longer list a second gateway as possible later.
-- plan-m9 stays the server's whole recovery story, kept small, and gains the sizing measurement.
+- Decision 041 and M8 no longer list a second gateway as possible later.
+- M9 stays the server's whole recovery story, kept small, and gains the sizing measurement.

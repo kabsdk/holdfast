@@ -20,7 +20,7 @@ import (
 	"github.com/kabsdk/holdfast/internal/agent"
 )
 
-// M6 (plan-m6 §3): dumps, a restore onto another host, and rolling a repository back.
+// M6: dumps, a restore onto another host, and rolling a repository back.
 
 // editAgent changes the agent's own config, as root on the host would, while it is stopped.
 func editAgent(t *testing.T, a *agentProc, edit func(c *agent.Config)) {

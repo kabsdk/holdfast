@@ -20,7 +20,7 @@ import (
 	"github.com/kabsdk/holdfast/internal/server/store"
 )
 
-// The server's own alerts (plan-m10 item 2). Every minute it looks at what it knows is wrong, the Problems page's
+// The server's own alerts. Every minute it looks at what it knows is wrong, the Problems page's
 // list and its own problems, and sends, by mail, a webhook or both, the problems that have lasted notify.after and
 // the ones that ended. After each pass it calls notify.heartbeat_url, so a service outside the site notices when the
 // server stops: that is the dead man's switch. Prometheus's metrics and rules stay, for teams that have them.

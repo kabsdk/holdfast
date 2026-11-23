@@ -23,7 +23,7 @@ import (
 	"github.com/kabsdk/holdfast/internal/server/store"
 )
 
-// Operating Holdfast (plan-m5):
+// Operating Holdfast:
 //   - escrow: each host's repository password, encrypted to an offline age key, in escrow/<fqdn>.age in the
 //     bucket (decision 036);
 //   - size: once a day, each host's prefix is listed with its versions;
@@ -36,7 +36,7 @@ const (
 	sizeEach            = 24 * time.Hour
 	sizeRetry           = time.Hour
 	decommissionRetry   = time.Hour
-	DecommissionWait    = 7 * 24 * time.Hour // like every other deletion (CLAUDE.md, plan-m5 Q7)
+	DecommissionWait    = 7 * 24 * time.Hour // like every other deletion (CLAUDE.md)
 	rotateLockWait      = 10 * time.Minute   // how long restic waits for a backup's lock when the old key is removed
 	EscrowFormatVersion = "holdfast-escrow-1"
 )
@@ -225,7 +225,7 @@ type RotateResult struct {
 	Warning string `json:"warning,omitempty"`
 }
 
-// RotateHost is what to do when a host is compromised (plan-m5 item 5):
+// RotateHost is what to do when a host is compromised:
 //  1. a new repository password is added to the repository, and opens it;
 //  2. the server stores it, and the agent's certificate is unpinned, so the host no longer gets anything;
 //  3. the old password's key is removed from the repository;
@@ -375,7 +375,7 @@ type DecommissionInput struct {
 }
 
 // Decommission asks for a removed host's repository to be deleted, after DecommissionWait. Only a retired
-// host can be decommissioned, and only by an admin who types its FQDN (plan-m5 item 7).
+// host can be decommissioned, and only by an admin who types its FQDN.
 func (s *Server) Decommission(ctx context.Context, a Actor, fqdn string, in DecommissionInput) (store.Decommission, error) {
 	if strings.TrimSpace(in.Confirm) != fqdn {
 		return store.Decommission{}, &ValidationError{config.Problems{{Path: "confirm", Message: "type the host's FQDN, " + fqdn + ", to confirm"}}}

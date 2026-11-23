@@ -11,7 +11,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// Operating Holdfast (plan-m5): rotating a compromised host's password, and decommission. The checks and
+// Operating Holdfast: rotating a compromised host's password, and decommission. The checks and
 // the wait are on the server; the CLI only asks.
 
 func hostOperatingCmds() []*cobra.Command {

@@ -22,7 +22,7 @@ tests:
             exp_annotations:
               summary: "No nightly export was written for 2 days: a lost server could only be rebuilt from an older one (holdfast export list)"
 
-  # An export written to the bucket but not off-site raises a ticket after 2 hours (plan-m9 Q4).
+  # An export written to the bucket but not off-site raises a ticket after 2 hours.
   - interval: 1m
     input_series:
       - series: 'holdfast_export_offsite_failed'

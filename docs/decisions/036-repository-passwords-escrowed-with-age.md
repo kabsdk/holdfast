@@ -1,10 +1,9 @@
 # 036: Repository passwords escrowed in the bucket, encrypted with age
 
-Status: accepted, 2026-11-22 (plan-m5 Q3; you answered "Go"). It decides the bundle format left open in
-plan-m1 Q5, and builds decision 030's "at host add, the repository password, encrypted to an offline `age`
-recipient, written to the bucket". **Amended by decision 047 (2026-11-23):** the installer makes the age key unless
-you give one, and keeps it in the recovery file; the plaintext bundle (`holdfast escrow export`) is gone; the
-maintenance key may read `escrow/`.
+Status: accepted, 2026-11-22. It decides the escrow bundle's format, which M1 left open, and builds decision
+030's "at host add, the repository password, encrypted to an offline `age` recipient, written to the bucket".
+**Amended by decision 047 (2026-11-23):** the installer makes the age key unless you give one, and keeps it in the
+recovery file; the plaintext bundle (`holdfast escrow export`) is gone; the maintenance key may read `escrow/`.
 
 ## Decision
 

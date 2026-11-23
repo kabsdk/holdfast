@@ -7,7 +7,7 @@ import (
 	"github.com/kabsdk/holdfast/internal/webui"
 )
 
-// UIHandler serves the UI listener (decision 034): the login endpoints, root's one-time link (plan-m10 item 6),
+// UIHandler serves the UI listener (decision 034): the login endpoints, root's one-time link,
 // /api/v1 behind a session, and the UI's files.
 func (s *Server) UIHandler() http.Handler {
 	mux := http.NewServeMux()

@@ -13,7 +13,7 @@ import (
 	"github.com/kabsdk/holdfast/internal/restic"
 )
 
-// SettingsView is what server.yaml says, without secrets (plan-m4 §5.2). Changing it needs root on the
+// SettingsView is what server.yaml says, without secrets. Changing it needs root on the
 // server (spec §3.3).
 type SettingsView struct {
 	// Role is "server", or "vault" under /api/v1/offsite/: the off-site pages, which are red and show the off-site
@@ -44,7 +44,7 @@ type SettingsView struct {
 		// BootstrapAdmins are shown to admins everywhere only.
 		BootstrapAdmins []string `json:"bootstrap_admins,omitempty"`
 	} `json:"login"`
-	// Notify is where the server sends its own alerts (plan-m10 item 2), without the relay's password.
+	// Notify is where the server sends its own alerts, without the relay's password.
 	Notify struct {
 		MailTo    []string `json:"mail_to,omitempty"`
 		Relay     string   `json:"relay,omitempty"`
@@ -81,7 +81,7 @@ func (s *Server) SettingsFor(ctx context.Context, a Actor) (SettingsView, error)
 	return out, nil
 }
 
-// RetentionCutView is one retention cut that waits out the 7 days (plan-m4 Q11). It comes from the
+// RetentionCutView is one retention cut that waits out the 7 days. It comes from the
 // revisions alone: a change that accepted R104. The host's pending view has the snapshots and their counts.
 type RetentionCutView struct {
 	FQDN         string           `json:"fqdn"`

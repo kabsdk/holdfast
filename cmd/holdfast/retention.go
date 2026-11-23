@@ -11,7 +11,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// The retention commands (M3, plan-m3 §2): each is one /api/v1 call. The 7-day protection, the checks and
+// The retention commands (M3): each is one /api/v1 call. The 7-day protection, the checks and
 // the confirmations are all on the server.
 
 type pendingSnap struct {

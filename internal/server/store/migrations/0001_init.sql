@@ -1,10 +1,10 @@
--- Holdfast M1 schema (plan-m1 §6). Append-only tables refuse UPDATE and DELETE at the database level.
+-- Holdfast M1 schema. Append-only tables refuse UPDATE and DELETE at the database level.
 
 CREATE FUNCTION holdfast_append_only() RETURNS trigger LANGUAGE plpgsql AS
 $$ BEGIN RAISE EXCEPTION '% is append-only', TG_TABLE_NAME; END $$;
 
 -- Config revisions: linear and immutable; never credentials. A save inserts number = base + 1, so a
--- concurrent save from the same base fails on the primary key and is refused (plan-m1 Q8).
+-- concurrent save from the same base fails on the primary key and is refused.
 -- `config` is json, not jsonb, so the exact canonical bytes (and their sha256) are kept.
 CREATE TABLE revisions (
   number         bigint      PRIMARY KEY CHECK (number > 0),

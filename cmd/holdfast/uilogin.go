@@ -8,7 +8,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// uiLoginCmd is root's way into the web UI (plan-m10 item 6): a one-time link from the root socket.
+// uiLoginCmd is root's way into the web UI: a one-time link from the root socket.
 func uiLoginCmd() *cobra.Command {
 	return &cobra.Command{Use: "ui-login", Short: "Root on the server: a one-time link into the web UI, valid 5 minutes, that logs you in as root, an admin on every host",
 		Long: "As root on the server, print a link that opens the web UI logged in as local:root, an admin on every host, for 12\n" +

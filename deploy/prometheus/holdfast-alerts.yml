@@ -1,6 +1,6 @@
-# Holdfast alert rules (plan-m1 §11), for teams with Prometheus; the server also sends its own alerts (plan-m10 item 2).
+# Holdfast alert rules, for teams with Prometheus; the server also sends its own alerts.
 # The server reports two things: what the agents said, and what the bucket holds, as restic reads the repositories with
-# the maintenance key straight from S3 (plan-m10 item 1). When they disagree, the bucket wins. Tested by
+# the maintenance key straight from S3. When they disagree, the bucket wins. Tested by
 # holdfast-alerts.test.yml (make rules-test).
 groups:
   - name: holdfast
@@ -67,7 +67,7 @@ groups:
           summary: "The clock on {{ $labels.host }} is {{ $value }}s off the server's: schedules and snapshot times are skewed"
 
       - alert: HoldfastBackupNotInBucket
-        # The storage witness (plan-m10 item 1): an agent reported a backup, and restic, reading the repository from the
+        # The storage witness: an agent reported a backup, and restic, reading the repository from the
         # bucket with the maintenance key after the report, did not find its snapshot. The server reads the repository
         # after every backup; a snapshot that was there and went later is HoldfastSnapshotsDisappeared.
         expr: holdfast_job_snapshot_in_bucket == 0
@@ -107,8 +107,8 @@ groups:
           summary: "{{ $labels.host }}: a restic password was added to its repository outside Holdfast (holdfast host show {{ $labels.host }})"
 
       - alert: HoldfastRetentionFailing
-        # The host's last forget-and-prune failed. A repository check that fails before the prune blocks it
-        # (plan-m3 Q2), which can mean damage in the repository. The daily run tries again the next day.
+        # The host's last forget-and-prune failed. A repository check that fails before the prune blocks it,
+        # which can mean damage in the repository. The daily run tries again the next day.
         expr: holdfast_retention_last_run_failed == 1
         labels: {severity: ticket}
         annotations:
@@ -177,7 +177,7 @@ groups:
           summary: "No nightly export was written for 2 days: a lost server could only be rebuilt from an older one (holdfast export list)"
 
       - alert: HoldfastExportOffsiteFailed
-        # With offsite: the export is written to the off-site bucket too (plan-m9 Q4). The last one was written to
+        # With offsite: the export is written to the off-site bucket too. The last one was written to
         # the bucket but not off-site; the server tries again every hour.
         expr: holdfast_export_offsite_failed == 1
         for: 2h

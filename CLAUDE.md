@@ -9,29 +9,33 @@ can decide something, such as what retention keeps, let it decide; do not re-imp
 **Who it is for, and how it runs** (decision 042): a small ops team with roughly ten to a few hundred Linux servers
 and S3 storage of its own, who want one place to set up, see and restore restic backups. **One server, no high
 availability**: no clustering, standby, second gateway or Kubernetes deployment. While the server is down, backups
-wait; a lost server is replaced by a new one on the same bucket (M9). Do not propose high-availability work.
+wait; a lost server is replaced by a new one on the same bucket. Do not propose high-availability work.
 
 | What | Where |
 | --- | --- |
 | Behaviour | [docs/spec.md](docs/spec.md) |
 | Decisions and their reasons | [docs/decisions/](docs/decisions/) |
-| Not decided | [docs/open-questions.md](docs/open-questions.md) |
-| The current milestone's plan | `docs/plan-mN.md` |
+| The documentation for people who run it | [website/index.html](website/index.html), published at https://kabsdk.github.io/holdfast/ |
+| Building, testing, releasing | [CONTRIBUTING.md](CONTRIBUTING.md) |
+| What each release changed | [CHANGELOG.md](CHANGELOG.md) |
 
-Read the spec and the current plan before changing anything.
+Read the spec, and the decisions it points to, before changing anything.
 
 ## How to work
 
-1. **Plan before code.** For each milestone, write `docs/plan-mN.md`. List everything that is contradictory
-   or underspecified as questions, then wait for an answer before writing product code.
-2. **Never decide an open question yourself.** That covers the questions in `docs/open-questions.md` and the
-   unanswered ones in a plan. If something seems wrong, say so and argue it. Do not silently work around it.
-3. **Test end to end.** Every feature ships with end-to-end tests that run against real restic (pinned
-   version) and a real S3 server (MinIO in CI). Reuse and extend the PoC's tests in `poc/test/e2e`. They
-   already cover metadata and ACL fidelity, server outage with spooling, SIGKILL mid-upload, the retention
-   model and the storage witness.
-4. **One milestone per PR.** When behaviour changes, update `docs/spec.md` in the same PR. A new decision gets
-   a new `docs/decisions/NNN-*.md` record that gives its reason.
+1. **Plan before code.** For anything larger than a fix, write a plan first: what changes, and everything that is
+   contradictory or underspecified, as questions. Wait for an answer before writing product code. A plan is a
+   working paper: it lives in the issue or the pull request, not in the repository. When the work ships, its answers
+   are in `docs/spec.md`, and the ones that are decisions in `docs/decisions/` (decision 051).
+2. **Never decide an open question yourself.** That covers the unanswered questions in a plan. If something seems
+   wrong, say so and argue it. Do not silently work around it.
+3. **Test end to end.** Every feature ships with end-to-end tests in `test/e2e` that run against real restic (pinned
+   version), a real S3 server (MinIO) and PostgreSQL. They already cover metadata and ACL fidelity, server outage
+   with spooling, SIGKILL mid-upload, retention and the storage witness. The installer and the Ansible collection
+   have their own tests (`make install-test`, `make ansible-test`).
+4. **One change per pull request.** When behaviour changes, update `docs/spec.md` and the documentation in
+   `website/index.html` in the same pull request, and add a line to `CHANGELOG.md`. A new decision gets a new
+   `docs/decisions/NNN-*.md` record that gives its reason.
 
 ## Rules the code must never break
 
@@ -64,29 +68,14 @@ These also follow from the spec:
 - `restic unlock` only ever removes stale locks. Never use `--remove-all`.
 - Only show what the job's engine declares it can do.
 
-## Milestones
-
-| Milestone | Scope | Done when |
-| --- | --- | --- |
-| M1 | Agent and server core: enrollment, config revisions in PostgreSQL, local schedule, backup, event spool, storage witness, Prometheus. | The PoC's e2e tests pass on the real codebase. |
-| M2 | Snapshot catalogue (as a cache), snapshot list, Files, Changes, restore via the agent, and a CLI command for each. | The restore and metadata/ACL tests pass on Ubuntu, RHEL and Oracle Linux test VMs. |
-| M3 | Checks engine, protection items, retention (decided by restic's `forget --dry-run`), the 7-day protection, Prune now, deleting a snapshot (decision 031). | |
-| M4 | API with OIDC and roles, then the UI built from `mockup/App.dc.html`. Every UI action has a matching API call and CLI command. | |
-| M5 | Operating Holdfast (plan-m5): packages and upgrades with protocol version negotiation, run controls, repository size, the repository password in escrow (decision 036), the compromise procedure, alerting without Alertmanager, decommission. | The packages install and upgrade on the Ubuntu, RHEL and Oracle Linux test VMs, and the M5 e2e tests pass. |
-| M6 | Recovering with Holdfast (plan-m6): dumps with commands defined on the host, restore to another host, rolling a repository back from S3 versions, the bare-metal runbook. | The dump, restore-to-another-host and rollback e2e tests pass; the lab's dump test passes on the Ubuntu, RHEL and Oracle Linux VMs; and the bare-metal runbook's first path is walked in the lab. |
-| M7 | Off-site copies (plan-m7): holdfast-vault with `restic copy` (decisions 027, 039), its own retention, "Delete here too" (decision 031), holdfast-server's read-only view and its hold, restores from the other site. No standby failover (decision 030). | |
-| M8 | Two programs (plan-m8, decision 041): agents identified by a pinned certificate, a gateway in holdfast-server in place of per-host S3 keys, off-site copies made by the server, holdfast-vault removed. | The e2e suite passes with no S3 key on any host and no vault, and the lab's fidelity, recovery and off-site tests pass on the Ubuntu, RHEL and Oracle Linux VMs. |
-| M9 | Rebuilding Holdfast (plan-m9, decisions 040, 042): the nightly export, `holdfast host import`, the rebuild runbook, the sizing measurement. A new server on the same bucket picks up; no standby. | |
-| M10 | Simpler to run (plan-m10, decisions 045–049): the server is the storage witness (`holdfast-freshness` removed), it sends its own alerts (mail, webhook, heartbeat), one recovery file, `host add` without a job and job defaults, the web UI without an identity provider (`holdfast ui-login`). | The e2e suite and `make install-test` pass. |
-
 ## Repository
 
-- `poc/` is the proof of concept: Go standard library only, tested against restic 0.18.1. It is the
-  reference for porting, so leave it as it is. The product code lives at the repository root (`cmd/`,
-  `internal/`, `test/e2e/`).
-- `mockup/App.dc.html` is the UI mockup with mock data. Use it as a reference for behaviour, not for pixels.
+- The product is at the repository root: `cmd/`, `internal/`, `test/`, `packaging/`, `deploy/`, `scripts/`, the
+  Ansible collection in `ansible/`, the documentation site in `website/` and the VM lab in `lab/`.
+- Releases are made with `scripts/release.sh <version>`; see CONTRIBUTING.md. The website is published to GitHub
+  Pages from `main` by `.github/workflows/pages.yml`.
 - Holdfast is under Apache-2.0 (decision 043). Anything linked into a program or vendored into the UI must be under a
   licence that allows that: MIT, BSD, ISC, Apache-2.0, MPL-2.0. The GPL family, the SSPL and the BUSL are not allowed;
   `scripts/third-party-notices.sh` stops the package build if one appears.
-- Run the PoC's e2e tests from `poc/`:
-  `sudo -E HOLDFAST_RESTIC=/path/to/restic go test ./test/e2e/ -count=1 -v -timeout 10m`
+- Holdfast was built in ten milestones, M1 to M10, up to 0.5.0, the first release. Decision records and comments
+  still name them; the plans themselves are in the git history (the tag v0.5.0 still has them).

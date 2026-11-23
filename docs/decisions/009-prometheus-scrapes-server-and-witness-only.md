@@ -18,8 +18,6 @@ Prometheus is optional, since the server sends its own alerts.
 - **The alert rules are part of the product.** Their thresholds come from the product's own metrics, such
   as the longest gap, so they are tested and versioned with the code.
 
-*The reasons were inferred when the record was written. You accepted them on 2026-11-21, leaving the call to me ("Whatever you recommend").*
-
 ## Consequences
 
 - An agent's metrics reach Prometheus only through the server, and arrive late when the server is down. The

@@ -16,13 +16,13 @@ import (
 	"github.com/kabsdk/holdfast/internal/server/store"
 )
 
-// Rolling a repository back (decision 038, plan-m6 §2.4). The preview lists the host's prefix with its versions
+// Rolling a repository back (decision 038). The preview lists the host's prefix with its versions
 // and works out what rolling it back to a time changes. Doing it copies each object's version of then over today's,
 // and puts a delete marker in front of each object that was not there then. No version is deleted, so a rollback
 // can be rolled back too. The host's agent is paused and idle meanwhile; then restic check runs, the snapshot list is
 // read again, and the agent resumes.
 
-const pauseFor = 2 * time.Hour // a pause the agent ends by itself if no resume comes (plan-m6 Q3)
+const pauseFor = 2 * time.Hour // a pause the agent ends by itself if no resume comes
 
 // pauseWait is how long a rollback waits for the agent to confirm its pause. Tests shorten it.
 var pauseWait = 5 * time.Minute
@@ -33,7 +33,7 @@ type RollbackPreview struct {
 	To      time.Time `json:"to"`
 	Refused string    `json:"refused,omitempty"` // why it cannot be done; nothing else then counts
 	// Oldest is the earliest time that can be chosen: the lifecycle rule keeps old versions this long. A rotation
-	// after it moves it later (plan-m6 Q2).
+	// after it moves it later.
 	Oldest       time.Time      `json:"oldest"`
 	LastRotation *time.Time     `json:"last_rotation,omitempty"`
 	BringBack    map[string]int `json:"bring_back"` // by kind: data, index, snapshots, keys, config
@@ -114,7 +114,7 @@ func (s *Server) RollbackPreviewFor(ctx context.Context, fqdn string, to time.Ti
 			}
 		}
 	}
-	// Copying a version needs s3:GetObjectVersion: tested here, not by the daily storage test (plan-m6 Q4).
+	// Copying a version needs s3:GetObjectVersion: tested here, not by the daily storage test.
 	if len(p.plan.BringBack) > 0 {
 		st := p.plan.BringBack[0]
 		if err := s.bucket.CanReadVersion(ctx, st.Key, st.VersionID); err != nil {
@@ -156,7 +156,7 @@ func (s *Server) Rollback(ctx context.Context, a Actor, fqdn string, in Rollback
 	if err != nil {
 		return store.Rollback{}, err
 	}
-	// The agent backs up on its own, so it is paused first, unless the host is removed or down (plan-m6 Q3).
+	// The agent backs up on its own, so it is paused first, unless the host is removed or down.
 	pause := h.State == "enrolled"
 	if pause {
 		ag, err := q.GetAgent(ctx, fqdn)

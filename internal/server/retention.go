@@ -16,7 +16,7 @@ import (
 	"github.com/kabsdk/holdfast/internal/server/store"
 )
 
-// Retention (plan-m3 §3; decisions 015, 030, 031 and 032).
+// Retention (decisions 015, 030, 031 and 032).
 //
 //   - restic decides what each policy keeps: `forget --dry-run` per job, grouped by host.
 //   - Holdfast keeps the union over every policy in force during the last 7 days, and forgets the rest by
@@ -112,7 +112,7 @@ func noncurrentDays(h store.Host) int {
 	return h.Storage.NoncurrentDays
 }
 
-// Pending is the pending view (plan-m3 §2): what waits, and until when.
+// Pending is the pending view: what waits, and until when.
 func (s *Server) Pending(ctx context.Context, fqdn string) (RetentionPlan, error) {
 	ctx, cancel := context.WithTimeout(ctx, planTimeout)
 	defer cancel()
@@ -467,7 +467,7 @@ func (s *Server) maintain(ctx context.Context, run *store.MaintenanceRun, pick p
 	if err != nil || !h.PruneNeeded {
 		return err
 	}
-	// A structural check first: a damaged repository is not pruned (plan-m3 Q2).
+	// A structural check first: a damaged repository is not pruned.
 	if err := r.Check(ctx, ""); err != nil {
 		_ = q.Audit(ctx, store.AuditEntry{Actor: run.Actor, Source: "system", Action: "repository.prune_blocked", FQDN: run.FQDN,
 			Detail: map[string]any{"run": run.ID, "error": err.Error()}})
@@ -631,7 +631,7 @@ type PruneNowInput struct {
 }
 
 // PruneNowPlan shows what Prune now would do: forget what the current policy alone drops, ignoring the
-// 7-day union (plan-m3 Q5), then check and prune.
+// 7-day union, then check and prune.
 func (s *Server) PruneNowPlan(ctx context.Context, fqdn string) (PruneNowPreview, error) {
 	ctx, cancel := context.WithTimeout(ctx, planTimeout)
 	defer cancel()

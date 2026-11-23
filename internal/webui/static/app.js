@@ -1,4 +1,4 @@
-// The UI's shell: navigation, the top bar, and the routes (plan-m4 §5). Each page is in pages/.
+// The UI's shell: navigation, the top bar, and the routes. Each page is in pages/.
 import { html, render, useState, useEffect, useRoute, usePoll, go, link, primaryLink, offsiteLink, onOffsite, ErrorBox } from './lib.js';
 import { api } from './api.js';
 import { Fleet, Problems } from './pages/fleet.js';

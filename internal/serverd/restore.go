@@ -28,7 +28,7 @@ import (
 )
 
 // restoreExport is `holdfast-server restore-export`: it loads a nightly export into a new, empty database, on a
-// server rebuilt from its packages, server.yaml, the key files and the credentials key (plan-m9 §2.3, Q5). It runs
+// server rebuilt from its packages, server.yaml, the key files and the credentials key. It runs
 // while holdfast-server is stopped, as root on the server: it is not an API, as there is no server yet.
 func restoreExport(name, defaultConfig string, args []string, out io.Writer) error {
 	fs := flag.NewFlagSet(name+" restore-export", flag.ContinueOnError)
@@ -97,7 +97,7 @@ func restoreExport(name, defaultConfig string, args []string, out io.Writer) err
 	m := c.Manifest
 	fmt.Fprintf(out, "export %s: written %s by Holdfast %s on %s\n", exportName, m.CreatedAt.UTC().Format(time.RFC3339), m.HoldfastVersion, m.Node)
 
-	// The credentials key: the recovery file's, or the one where server.yaml says (plan-m10 item 3). The recovery
+	// The credentials key: the recovery file's, or the one where server.yaml says. The recovery
 	// file's is written there only once the export has been checked with it, below.
 	key, err := creds.ReadKeyFile(set.CredentialsKeyFile)
 	writeKey := false
@@ -220,7 +220,7 @@ func restoreExport(name, defaultConfig string, args []string, out io.Writer) err
 	return nil
 }
 
-// restoreFiles writes the server's files the export holds (plan-m10 item 3) where server.yaml says, and never over a
+// restoreFiles writes the server's files the export holds where server.yaml says, and never over a
 // file that is there. The exported settings go beside server.yaml, to compare.
 func restoreFiles(out io.Writer, set server.Settings, cfgPath string, files map[string][]byte) {
 	paths := server.ServerFiles(set)
@@ -258,7 +258,7 @@ func restoreFiles(out io.Writer, set server.Settings, cfgPath string, files map[
 }
 
 // hostsFromEscrow brings back each host that has an escrow file in the bucket but is not in the export: one added after
-// it (plan-m10 item 5). It is what holdfast host import does, for each: the escrow file decrypted with the recovery
+// it. It is what holdfast host import does, for each: the escrow file decrypted with the recovery
 // file's age key, checked, and the host added with its repository and password, and no job.
 func hostsFromEscrow(ctx context.Context, out io.Writer, set server.Settings, bucket storage.S3Bucket, st *store.Store, sealer *creds.Sealer,
 	maint storage.Key, ids []age.Identity, known []store.Host) []string {
@@ -304,7 +304,7 @@ func hostsFromEscrow(ctx context.Context, out io.Writer, set server.Settings, bu
 		}
 		if err == nil {
 			_, err = srv.ImportHost(ctx, root, server.ImportHostInput{FQDN: fqdn, EscrowFile: string(plain),
-				Message: "Brought back from escrow/ by restore-export: added after the export (plan-m10)"})
+				Message: "Brought back from escrow/ by restore-export: added after the export"})
 		}
 		if err != nil {
 			fmt.Fprintf(out, "%s has an escrow file but could not be brought back: %v; holdfast host import, once the server runs\n", fqdn, err)

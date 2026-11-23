@@ -27,13 +27,13 @@ import (
 // Replacing a lost server (M9, decisions 040 and 042). There is one server and no standby: a new one, given the same
 // bucket, picks up from the nightly export.
 //   - the nightly export: every table of the server, and of its off-site instance, in meta/<date>.age in the bucket,
-//     encrypted to the escrow's age recipient; with off-site copies, in the off-site bucket too (plan-m9 Q4);
+//     encrypted to the escrow's age recipient; with off-site copies, in the off-site bucket too;
 //   - holdfast-server restore-export loads one into a new, empty database (serverd);
-//   - an agent that runs a revision newer than a restored server's head keeps it, and is shown (plan-m9 Q6);
-//   - holdfast host import brings back a host the export does not have, from its escrow file (plan-m9 Q7).
+//   - an agent that runs a revision newer than a restored server's head keeps it, and is shown;
+//   - holdfast host import brings back a host the export does not have, from its escrow file.
 
 const (
-	exportAt    = 30 * time.Minute // after midnight in the default zone (plan-m9 Q3)
+	exportAt    = 30 * time.Minute // after midnight in the default zone
 	exportRetry = time.Hour        // a failed export, or a failed write off-site, is tried again after this
 	ExportKeep  = 30               // the newest exports kept in each bucket; older ones are deleted
 	// ExportStaleAfter is when the lack of a written export is a problem, and an alert.
@@ -96,7 +96,7 @@ func (s *Server) exportDue(ctx context.Context) {
 // ErrNoExport refuses an export without an age recipient to encrypt it to.
 var ErrNoExport = errors.New("no export is written without escrow.age_recipient in server.yaml (decision 040): set it, as for escrow")
 
-// ExportNow writes an export at once (plan-m9 Q3: an admin's, UI, API and CLI).
+// ExportNow writes an export at once (an admin's, UI, API and CLI).
 func (s *Server) ExportNow(ctx context.Context, a Actor) (store.ExportRecord, error) {
 	if s.set.IsVault() {
 		return store.ExportRecord{}, fmt.Errorf("the server exports the off-site tables with its own: %w", ErrNotFound)
@@ -203,7 +203,7 @@ func (s *Server) sealExport(ctx context.Context, now time.Time) ([]byte, int, er
 	return data, n, err
 }
 
-// ServerFiles names the server's files a rebuild needs besides its database (plan-m10 item 3), by the setting that
+// ServerFiles names the server's files a rebuild needs besides its database, by the setting that
 // gives their path: the agent listener's certificate, key and CA, which the agents pin, and the UI's certificate and
 // key. The nightly export carries them, and restore-export writes them where the new server.yaml says.
 func ServerFiles(set Settings) map[string]string {
@@ -286,13 +286,13 @@ func (s *Server) Exports(ctx context.Context) (ExportsView, error) {
 	return v, nil
 }
 
-// serverProblems are the server's own, not a host's: its export (plan-m9 Q3, Q4).
+// serverProblems are the server's own, not a host's: its export.
 func (s *Server) serverProblems(ctx context.Context) []Problem {
 	ps := []Problem{}
 	if s.set.IsVault() {
 		return ps
 	}
-	// The recovery file belongs offline (plan-m10 item 3): while it is on the server, a thief of the server's disk
+	// The recovery file belongs offline: while it is on the server, a thief of the server's disk
 	// gets the key to every backup, and a lost server takes it along.
 	if p := s.set.RecoveryFile; p != "" {
 		if _, err := os.Stat(p); err == nil {
@@ -335,7 +335,7 @@ func (s *Server) serverProblems(ctx context.Context) []Problem {
 /* ---------------- after a restore from an export ---------------- */
 
 // aheadOfRestore says whether an agent's config is held back: the server was restored from an export, the agent runs
-// a revision newer than the head the export had, and no revision since has touched the host (plan-m9 Q6). The agent
+// a revision newer than the head the export had, and no revision since has touched the host. The agent
 // keeps its own config, and the host shows the problem, until the change is made again.
 func (s *Server) aheadOfRestore(ctx context.Context, applied, desired int64) (bool, error) {
 	r, err := s.st.Q().LastRestoreFromExport(ctx)
@@ -347,7 +347,7 @@ func (s *Server) aheadOfRestore(ctx context.Context, applied, desired int64) (bo
 
 /* ---------------- a host back from its escrow file ---------------- */
 
-// ImportHostInput is a host the server does not know, with its escrow file, decrypted (plan-m9 §2.4). The file's
+// ImportHostInput is a host the server does not know, with its escrow file, decrypted. The file's
 // contents are never kept, logged or shown back: only its password, sealed, as for any host.
 type ImportHostInput struct {
 	FQDN       string `json:"fqdn"`
@@ -367,7 +367,7 @@ type ImportHostResult struct {
 }
 
 // ImportHost adds a host back from its escrow file, when there is no export, or the export does not have it. It is an
-// admin's (plan-m9 Q7). It checks that the file is the host's and names this server's repository for it, tests the
+// admin's. It checks that the file is the host's and names this server's repository for it, tests the
 // storage contract, and proves that the password opens the repository before it adds anything.
 func (s *Server) ImportHost(ctx context.Context, a Actor, in ImportHostInput) (ImportHostResult, error) {
 	if s.set.IsVault() {

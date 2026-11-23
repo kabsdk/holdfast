@@ -45,7 +45,7 @@ var (
 	hostPattern = regexp.MustCompile(`^[a-z0-9.*-]+$`)
 )
 
-// ValidFQDN checks a host identity (plan-m1 Q9): lower case, no trailing dot, letters, digits and
+// ValidFQDN checks a host identity: lower case, no trailing dot, letters, digits and
 // hyphens, at least two labels, at most 253 characters.
 func ValidFQDN(s string) error {
 	switch {
@@ -70,7 +70,7 @@ func ValidFQDN(s string) error {
 	return nil
 }
 
-// ValidJobID checks a job ID (plan-m1 Q12): an immutable slug, because it is the restic tag job=<id>.
+// ValidJobID checks a job ID: an immutable slug, because it is the restic tag job=<id>.
 func ValidJobID(s string) error {
 	if !jobIDRE.MatchString(s) {
 		return fmt.Errorf("job ID %q is not valid: use lower-case letters, digits and hyphens, starting with a letter or digit, at most 63 characters", s)

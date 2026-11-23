@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds the .deb and .rpm packages into dist/, with SHA256SUMS (plan-m5 item 1, Q2: unsigned for now).
+# Builds the .deb and .rpm packages into dist/, with SHA256SUMS (unsigned for now).
 # `make packages` runs it after building the binaries; nfpm runs in a container, so the host needs no
 # packaging tools.
 #

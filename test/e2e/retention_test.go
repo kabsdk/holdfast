@@ -190,7 +190,7 @@ func TestRetentionMatchesRestic(t *testing.T) {
 		len(made), len(keep), len(run.Forgotten), run.Freed)
 }
 
-// The 7-day protection, with the server's clock moved 8 days (plan-m3 Q6):
+// The 7-day protection, with the server's clock moved 8 days:
 //   - a cut needs R104, and what it drops waits 7 days, kept by the older revision;
 //   - Keep longer undoes it;
 //   - 8 days later the daily run forgets exactly what waited;
@@ -233,7 +233,7 @@ func TestRetentionCutWaitsSevenDays(t *testing.T) {
 		t.Fatalf("the cut must leave snapshots waiting and none to forget: %+v", p)
 	}
 	for _, x := range p.Pending {
-		// Revision 1 added the host, revision 2 its job (plan-m10 item 4).
+		// Revision 1 added the host, revision 2 its job.
 		if x.Reason != "retention_cut" || x.KeptBy != 2 || time.Until(x.PrunableAt) < 7*24*time.Hour-time.Hour || time.Until(x.PrunableAt) > 7*24*time.Hour+time.Hour {
 			t.Fatalf("a pending snapshot is kept by revision 2 for 7 days: %+v", x)
 		}

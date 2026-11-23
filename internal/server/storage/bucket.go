@@ -15,8 +15,8 @@ import (
 	"github.com/minio/minio-go/v7"
 )
 
-// Bucket is what the server does in the bucket itself, with the maintenance key, besides what restic does
-// (plan-m5): measure a host's repository, write its escrow file, and delete a decommissioned prefix.
+// Bucket is what the server does in the bucket itself, with the maintenance key, besides what restic does:
+// measure a host's repository, write its escrow file, and delete a decommissioned prefix.
 
 // Size is a host's repository as the bucket holds it.
 type Size struct {
@@ -217,8 +217,8 @@ func (b S3Bucket) PutEscrow(ctx context.Context, fqdn string, data []byte) error
 	return nil
 }
 
-// ListEscrow lists the hosts that have an escrow file, for a rebuilt server to bring back the ones its export lacks
-// (plan-m10 item 5). It needs s3:ListBucket.
+// ListEscrow lists the hosts that have an escrow file, for a rebuilt server to bring back the ones its export lacks.
+// It needs s3:ListBucket.
 func (b S3Bucket) ListEscrow(ctx context.Context) ([]string, error) {
 	c, err := b.client()
 	if err != nil {

@@ -1,7 +1,7 @@
 # 045: The server is the storage witness
 
-Status: accepted, 2026-11-23 (plan-m10 item 1). Replaces decision 008 and amends 009. You asked why the witness was a
-separate box and a separate host, and said "Go ahead with what you think is the best choice."
+Status: accepted, 2026-11-23. Replaces decision 008 and amends 009. The question was why the witness had to be a
+separate program on a separate host.
 
 ## Decision
 

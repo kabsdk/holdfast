@@ -492,7 +492,7 @@ func window(s string) (map[string]any, error) {
 }
 
 // job is the part of a job the flags give: the server takes the rest from the job as it is, or from the default job for
-// a new one (plan-m10 item 4). A schedule form (--daily, --every, --weekly) replaces the schedule's form; --spread,
+// a new one. A schedule form (--daily, --every, --weekly) replaces the schedule's form; --spread,
 // --no-spread and --zone change only themselves; any --keep-* flag replaces the whole retention.
 func (f *jobFlags) job(c *cobra.Command) (map[string]any, error) {
 	changed := func(names ...string) bool {

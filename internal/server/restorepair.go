@@ -12,7 +12,7 @@ import (
 	"github.com/kabsdk/holdfast/internal/server/store"
 )
 
-// Restore both versions to diff on the host (spec §5.4, plan-m4 Q11): one path from two snapshots, each into
+// Restore both versions to diff on the host (spec §5.4): one path from two snapshots, each into
 // a new directory only root can read, and the diff -u command to compare them there. Holdfast shows no
 // contents (spec §6.5); the comparison runs on the host.
 

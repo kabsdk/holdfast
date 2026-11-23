@@ -1,4 +1,4 @@
--- M6 (plan-m6): what the agent last reported of its dumps (names only, decision 037) and of a pause.
+-- M6: what the agent last reported of its dumps (names only, decision 037) and of a pause.
 ALTER TABLE agents
   ADD COLUMN dumps          text[]      NOT NULL DEFAULT '{}',
   ADD COLUMN paused_command text        NOT NULL DEFAULT '',

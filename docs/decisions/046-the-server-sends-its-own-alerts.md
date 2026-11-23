@@ -1,6 +1,6 @@
 # 046: The server sends its own alerts
 
-Status: accepted, 2026-11-23 (plan-m10 item 2). You found Holdfast "a VERY complicated product" to run; the review
+Status: accepted, 2026-11-23. Holdfast had become too complicated to run; a review
 showed that being told about a failed backup took Prometheus, its rules, a scrape config, a mail script and a dead
 man's switch.
 

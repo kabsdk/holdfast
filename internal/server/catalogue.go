@@ -15,15 +15,15 @@ import (
 	"github.com/kabsdk/holdfast/internal/server/store"
 )
 
-// The snapshot catalogue and the reads (plan-m2 §3). Reads run on the server with the maintenance key and
-// --no-lock, so they work while a host is offline and never contend with its agent (plan-m2 Q1). Only names
+// The snapshot catalogue and the reads. Reads run on the server with the maintenance key and
+// --no-lock, so they work while a host is offline and never contend with its agent. Only names
 // and metadata come out of them, never file contents.
 
 const (
 	catalogueEach = 24 * time.Hour   // a host's catalogue is read at least this often
 	readTimeout   = 2 * time.Minute  // one directory listing or diff
-	findTimeout   = 5 * time.Minute  // a find over every snapshot (plan-m2 Q8)
-	pageSize      = 1000             // entries per page (plan-m2 Q8)
+	findTimeout   = 5 * time.Minute  // a find over every snapshot
+	pageSize      = 1000             // entries per page
 	refreshLimit  = 10 * time.Minute // one catalogue refresh
 )
 

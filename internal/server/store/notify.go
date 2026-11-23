@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// NotifyRow is a problem the server has seen, for its own alerts (plan-m10 item 2).
+// NotifyRow is a problem the server has seen, for its own alerts.
 type NotifyRow struct {
 	Key       string
 	Severity  string

@@ -1,7 +1,6 @@
 # 038: Rolling a repository back from S3's versions
 
-Status: accepted, 2026-11-22 (plan-m5 Q8, plan-m6 Q1–Q4; you answered "Go", then "Just do whatever, we can always
-revise").
+Status: accepted, 2026-11-22.
 
 ## Decision
 

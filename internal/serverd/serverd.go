@@ -72,7 +72,7 @@ func Main(name, defaultConfig string) {
 }
 
 // clock is the server's clock. The end-to-end tests move it forward with HOLDFAST_TEST_NOW_OFFSET, such as
-// 192h, to see the 7-day protection end (plan-m3 Q6). A server started without -test refuses the variable,
+// 192h, to see the 7-day protection end. A server started without -test refuses the variable,
 // so a production server's clock can never be moved this way.
 func clock(name string, test bool, log *slog.Logger) (func() time.Time, error) {
 	v := os.Getenv("HOLDFAST_TEST_NOW_OFFSET")
@@ -91,7 +91,7 @@ func clock(name string, test bool, log *slog.Logger) (func() time.Time, error) {
 }
 
 // testMinProtocol raises the oldest agent protocol the server accepts, so the end-to-end tests can see an
-// agent that is too old (plan-m5 item 1). Like the test clock, it needs -test.
+// agent that is too old. Like the test clock, it needs -test.
 func testMinProtocol(name string, test bool, log *slog.Logger) (int, error) {
 	v := os.Getenv("HOLDFAST_TEST_MIN_PROTOCOL")
 	if v == "" {

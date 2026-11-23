@@ -21,5 +21,5 @@ was deleted, the injected disagreement showed as a gap of 7194 seconds.
 ## Consequences
 
 - The witness can only judge per host, not per job. It cannot decrypt snapshots, so it cannot read the
-  `job=` tag (plan-m1, later-milestone question L6).
+  `job=` tag (later-milestone question L6).
 - The alerts compare the server's metrics with the witness's metrics (`HoldfastWitnessDisagreement`).

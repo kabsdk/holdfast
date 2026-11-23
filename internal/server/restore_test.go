@@ -10,7 +10,7 @@ import (
 	"github.com/kabsdk/holdfast/internal/server/store"
 )
 
-// TestRestoreRequests (plan-m2 §3, Q5, Q6): a restore is checked, and the host's own bounds as its agent
+// TestRestoreRequests: a restore is checked, and the host's own bounds as its agent
 // reported them are honoured. It is queued for the agent and audited, and it is cancelled and reported
 // when the host does not pick it up within 24 hours.
 func TestRestoreRequests(t *testing.T) {

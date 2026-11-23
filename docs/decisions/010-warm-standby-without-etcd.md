@@ -20,9 +20,6 @@ lock is the second guard. Agents keep backing up during a control-plane outage.
   its own failure modes. Here it would buy little.
 - **PostgreSQL already holds the state** and already replicates it.
 
-*The reasons are inferred. Clusterlane uses etcd, so the difference is deliberate. Confirm or correct the
-reasons.*
-
 ## Consequences
 
 - Split brain is guarded by the VIP and by restic's exclusive lock, not by a quorum.

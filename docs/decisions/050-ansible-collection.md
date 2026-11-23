@@ -1,7 +1,7 @@
 # 050: An Ansible collection, kabsdk.holdfast
 
-Status: accepted, 2026-11-23. You asked for "an ansible collection for the server and agent. Must be idempotent, follow
-best practises, be as simple as possible while retaining all functionality", and for it to be committed and released.
+Status: accepted, 2026-11-23. The aim was an Ansible collection for the server and the agent that is idempotent,
+follows best practice and is as simple as possible while keeping all functionality, released with Holdfast.
 
 ## Decision
 

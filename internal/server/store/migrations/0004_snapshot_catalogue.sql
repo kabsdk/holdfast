@@ -1,4 +1,4 @@
--- M2: the snapshot catalogue (plan-m2 Q2). It is a cache of each repository's `restic snapshots`, plus
+-- M2: the snapshot catalogue. It is a cache of each repository's `restic snapshots`, plus
 -- tombstones: a row whose snapshot is no longer in the repository keeps its gone_at. Everything except the
 -- tombstones can be rebuilt from the repositories.
 CREATE TABLE snapshots (

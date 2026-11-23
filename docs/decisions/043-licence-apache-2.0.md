@@ -1,12 +1,11 @@
 # 043: Holdfast's licence is Apache-2.0
 
-Status: accepted, 2026-11-22. The licence had been open since plan-m1 Q16 ("None is chosen yet") and plan-m5. You
-asked me to choose it: "GO. You decide a suitable license".
+Status: accepted, 2026-11-22. The licence had been open since M1.
 
 ## Decision
 
-1. **Holdfast is under the Apache License, Version 2.0**, all of it: the programs, the UI, the docs, the lab, the PoC
-   and the mockup. `LICENSE` holds the text. `NOTICE` says "Copyright 2026 The Holdfast authors".
+1. **Holdfast is under the Apache License, Version 2.0**, all of it: the programs, the UI, the docs and the
+   lab. `LICENSE` holds the text. `NOTICE` says "Copyright 2026 The Holdfast authors".
 2. **There is no contributor licence agreement.** A contribution comes in under the same licence (Apache-2.0 §5).
    Each author keeps the copyright in what they wrote, and "The Holdfast authors" names them together.
 3. **The packages carry the licences of what they contain.** Each one has `/usr/share/doc/<package>/` with Holdfast's
@@ -51,4 +50,4 @@ asked me to choose it: "GO. You decide a suitable license".
 - The packages: the licence field, `/usr/share/doc/<package>/`, and `scripts/third-party-notices.sh`, which
   `packaging/build.sh` runs. The third-party licence files the module cache does not hold are in `packaging/licenses/`.
 - CLAUDE.md's Repository section says what Holdfast may contain.
-- plan-m1 Q16 and plan-m5 point here. The packages' maintainer field is still open.
+- The packages' maintainer field is still open.

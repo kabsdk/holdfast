@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# lab/test-fidelity.sh <lab> [<vm>...]: M2's "done when" (docs/plan-m2.md Q9): a backup and a restore through Holdfast keep
+# lab/test-fidelity.sh <lab> [<vm>...]: M2's "done when": a backup and a restore through Holdfast keep
 # all 13 metadata properties on each agent VM, against the lab's RGW. lab/lab test <lab> runs it, holding the lab's lock,
 # after building and deploying this checkout and provisioning the server (site.yml --tags binaries,hfserver). For each
 # agent VM, or each one named:

@@ -8,7 +8,7 @@ import (
 	"github.com/kabsdk/holdfast/internal/config"
 )
 
-// A job in the API may leave things out (plan-m10 item 4).
+// A job in the API may leave things out.
 func TestMergeJob(t *testing.T) {
 	def := config.DefaultJob()
 

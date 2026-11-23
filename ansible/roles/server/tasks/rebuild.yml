@@ -1,5 +1,5 @@
 ---
-# A lost server's replacement (decision 040, plan-m10 item 3): with the recovery file and the settings of the first
+# A lost server's replacement (decision 040): with the recovery file and the settings of the first
 # install, on a new machine. The bucket's newest nightly export gives the database, the agents' certificate and CA;
 # restore-export writes the credentials key from the recovery file once the export has been checked with it. The agents
 # come back by themselves.

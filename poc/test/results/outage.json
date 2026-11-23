@@ -1,6 +1,0 @@
-{
-  "events_spooled_at_restart": 7,
-  "outage_seconds": 15,
-  "server_success_runs_after_restart": 9,
-  "snapshots_made_during_outage": 7
-}

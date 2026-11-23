@@ -1,7 +1,6 @@
 // Package fidelity is the metadata fixture and its comparison: every metadata class a Linux file backup
-// must keep, and a check of all 13 properties after a restore. It was ported from
-// poc/test/e2e/fidelity_test.go. The e2e suite uses it, and so does lab/fidelity, which runs it on the lab's
-// Ubuntu, AlmaLinux and Oracle Linux VMs (M2's "done when"). It needs root.
+// must keep, and a check of all 13 properties after a restore. The e2e suite uses it, and so does lab/fidelity,
+// which runs it on the lab's Ubuntu, AlmaLinux and Oracle Linux VMs. It needs root.
 package fidelity
 
 import (

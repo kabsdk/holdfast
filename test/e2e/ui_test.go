@@ -69,7 +69,7 @@ func jsErrors(ctx context.Context) func() []string {
 	return func() []string { mu.Lock(); defer mu.Unlock(); return append([]string{}, errs...) }
 }
 
-// The UI, page by page, as an admin (plan-m4 §5): every page renders without a JavaScript error, and one
+// The UI, page by page, as an admin: every page renders without a JavaScript error, and one
 // action per page is carried out for real, against the real server, restic and S3.
 func TestUIPages(t *testing.T) {
 	src := smallSource(t)

@@ -1,6 +1,6 @@
 # 032: Changes made outside Holdfast are shown, and only Holdfast's own files are repaired
 
-Status: accepted, 2026-11-21. You left the details to me ("Do whatever you recommend").
+Status: accepted, 2026-11-21.
 
 ## Decision
 

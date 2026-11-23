@@ -1,7 +1,7 @@
 # 049: The web UI without an identity provider; no LDAP, no local users
 
-Status: accepted, 2026-11-23 (plan-m10 item 6). Amends decisions 024 and 044. You asked: "Maybe the webui should also
-support ldap?" and "should we have a break glass user? I think a mandatory login is mandatory."
+Status: accepted, 2026-11-23. Amends decisions 024 and 044. The questions were whether the web UI should also support
+LDAP, and whether it needs a break-glass user; a login stays mandatory.
 
 ## Decision
 

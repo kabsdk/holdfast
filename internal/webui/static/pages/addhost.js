@@ -14,7 +14,7 @@ function Progress({ fqdn }) {
 }
 
 // Adding a host is one API call, and its first job another (PUT …/jobs/{job}), the same two as holdfast host add and
-// holdfast job set (plan-m10 item 4). The job takes the default schedule and retention; Configure changes them.
+// holdfast job set. The job takes the default schedule and retention; Configure changes them.
 export function AddHost({ me }) {
   const [fqdn, setFqdn] = useState('');
   const [withJob, setWithJob] = useState(true);
@@ -60,7 +60,7 @@ function Enroll({ fqdn, done }) {
   </div>`;
 }
 
-// A host back from its escrow file, when the server was rebuilt without an export that has it (plan-m9 §2.4, Q7).
+// A host back from its escrow file, when the server was rebuilt without an export that has it.
 // The file's contents go to the server once, and are never shown back.
 function ImportHost() {
   const [fqdn, setFqdn] = useState('');

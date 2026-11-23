@@ -1,4 +1,4 @@
-// Package store is holdfast-server's PostgreSQL state (plan-m1 §6).
+// Package store is holdfast-server's PostgreSQL state.
 //
 // Every method lives on *Q, which wraps either the pool or a transaction, so a caller can make
 // several changes atomically with Store.InTx (for example: a revision, a host row, an enrollment
@@ -114,7 +114,7 @@ func (s *Store) InTx(ctx context.Context, fn func(q *Q) error) error {
 func (s *Store) Migrate(ctx context.Context) error { return s.MigrateTo(ctx, 0) }
 
 // MigrateTo applies the migrations that have not run yet up to version max, or all of them when max is 0. Restoring an
-// export migrates to the export's version first, loads it, then migrates on (plan-m9 §2.3).
+// export migrates to the export's version first, loads it, then migrates on.
 func (s *Store) MigrateTo(ctx context.Context, max int) error {
 	names, err := fs.Glob(migrationFS, "migrations/*.sql")
 	if err != nil {
@@ -548,12 +548,12 @@ type Agent struct {
 	AppliedSHA256      string               `json:"applied_sha256"`
 	AppliedAt          *time.Time           `json:"applied_at,omitempty"`
 	CredentialsVersion int                  `json:"credentials_version"`
-	RestoreBounds      *proto.RestoreBounds `json:"restore_bounds,omitempty"` // the host's own limits (plan-m2 Q5)
+	RestoreBounds      *proto.RestoreBounds `json:"restore_bounds,omitempty"` // the host's own limits
 	// Protocol is the agent protocol it last reported; 0 from an agent before M5, which speaks 1.
 	Protocol int `json:"protocol"`
 	// Dumps are the names of the dumps its agent.yaml defines (decision 037).
 	Dumps []string `json:"dumps"`
-	// Paused is set while the agent reports a pause, and idle (plan-m6 Q3).
+	// Paused is set while the agent reports a pause, and idle.
 	Paused *proto.Paused `json:"paused,omitempty"`
 }
 
@@ -928,7 +928,7 @@ type Command struct {
 	CreatedBy string          `json:"created_by"`
 	Payload   json.RawMessage `json:"payload,omitempty"`    // a restore's spec, or a pause's end
 	ExpiresAt *time.Time      `json:"expires_at,omitempty"` // not sent once this has passed
-	// Sealed is a command's secrets, sealed (a restore from another host, plan-m6 §2.2). Never in an answer;
+	// Sealed is a command's secrets, sealed (a restore from another host). Never in an answer;
 	// cleared once the agent has the command.
 	Sealed []byte `json:"-"`
 }
@@ -974,7 +974,7 @@ func (q *Q) PendingCommands(ctx context.Context, fqdn string) ([]Command, error)
 }
 
 // ExpireCommands cancels the commands whose time ran out before their agent picked them up, and returns
-// them (plan-m2 Q6).
+// them.
 func (q *Q) ExpireCommands(ctx context.Context, now time.Time) ([]Command, error) {
 	rows, err := q.db.Query(ctx, `UPDATE commands SET cancelled_at = $1, sealed = NULL WHERE acked_at IS NULL AND cancelled_at IS NULL
 		AND expires_at IS NOT NULL AND expires_at <= $1 RETURNING `+commandCols, now)

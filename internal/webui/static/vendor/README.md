@@ -1,6 +1,6 @@
 # Vendored files
 
-The UI has no build step (plan-m4 Q5). Its one dependency is vendored here, at a pinned version:
+The UI has no build step. Its one dependency is vendored here, at a pinned version:
 
 | File | What | From | sha256 | Licence |
 | --- | --- | --- | --- | --- |

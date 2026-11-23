@@ -43,14 +43,14 @@ type jobState struct {
 	NextDelayS  int       `json:"next_delay_s"` // spread for NextSlot, drawn once and kept over restarts
 	LastAttempt time.Time `json:"last_attempt"`
 	LastStatus  string    `json:"last_status"`
-	// A failed scheduled backup is retried before the job's next slot (plan-m5 Q4): Retries made so far,
+	// A failed scheduled backup is retried before the job's next slot: Retries made so far,
 	// and when the next one is due; zero: none is.
 	Retries   int       `json:"retries,omitempty"`
 	RetryAt   time.Time `json:"retry_at,omitzero"`
 	retryable bool      // the last run failed in a way a retry can fix: not stopped by its timeout
 }
 
-// RetryAfter are the waits before each retry of a failed scheduled backup (plan-m5 Q4).
+// RetryAfter are the waits before each retry of a failed scheduled backup.
 var RetryAfter = []time.Duration{5 * time.Minute, 15 * time.Minute, 45 * time.Minute}
 
 type runMarker struct {
@@ -86,7 +86,7 @@ type Agent struct {
 
 	warnedNewer bool // logged once: the server is older than this agent (only the poll loop sets it)
 
-	// paused is set by a pause command (plan-m6 Q3), under mu: no run starts until it ends.
+	// paused is set by a pause command, under mu: no run starts until it ends.
 	paused *proto.Paused
 
 	wake     chan struct{}
@@ -161,7 +161,7 @@ func (a *Agent) load() {
 	}
 }
 
-// maxPause is the longest a pause lasts: then the agent resumes by itself (plan-m6 Q3).
+// maxPause is the longest a pause lasts: then the agent resumes by itself.
 const maxPause = 2 * time.Hour
 
 // pause stops runs starting until until, at most maxPause from now. A run under way has finished: the
@@ -325,7 +325,7 @@ func (a *Agent) call(ctx context.Context, path, query string, body []byte, out a
 	return json.NewDecoder(resp.Body).Decode(out)
 }
 
-// tooOldError is the server's answer to an agent older than it accepts (plan-m5 item 1). The agent goes on
+// tooOldError is the server's answer to an agent older than it accepts. The agent goes on
 // backing up from its cached config, and asks again now and then.
 type tooOldError struct{ error }
 
@@ -680,7 +680,7 @@ func (a *Agent) plan(j proto.JobConfig, now time.Time) *jobState {
 	st := a.sched[j.ID]
 	sha := scheduleSHA(j.Schedule)
 	if st == nil {
-		// A job that never ran runs at once (first backup right after enrollment, plan-m1 Q7).
+		// A job that never ran runs at once (first backup right after enrollment).
 		st = &jobState{ScheduleSHA: sha}
 		a.sched[j.ID] = st
 		return st
@@ -705,13 +705,13 @@ func (a *Agent) plan(j proto.JobConfig, now time.Time) *jobState {
 }
 
 // due returns the most overdue job, if any. A slot missed while the agent was down is due at once and runs
-// once, however many slots were missed (plan-m1 Q7).
+// once, however many slots were missed.
 func (a *Agent) due(now time.Time) (proto.JobConfig, *jobState, bool) {
 	j, st, _, ok := a.dueRun(now)
 	return j, st, ok
 }
 
-// dueRun is due, and says whether the run is a retry of a failed slot (plan-m5 Q4).
+// dueRun is due, and says whether the run is a retry of a failed slot.
 func (a *Agent) dueRun(now time.Time) (proto.JobConfig, *jobState, bool, bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -797,7 +797,7 @@ func (a *Agent) workLoop(ctx context.Context) {
 		case <-t.C:
 		case <-a.wake:
 		}
-		// One restic process per host (plan-m1 Q7): commands first, then due jobs, one at a time. While paused,
+		// One restic process per host: commands first, then due jobs, one at a time. While paused,
 		// only pause and resume run; due slots wait, and are caught up once it ends.
 		for ctx.Err() == nil {
 			paused := a.isPaused()
@@ -897,7 +897,7 @@ func (a *Agent) execCommand(ctx context.Context, c proto.Command) {
 }
 
 // runScheduled runs a due job and then advances its schedule. Slots of this job that came due
-// while it ran are skipped and reported (plan-m1 Q7).
+// while it ran are skipped and reported.
 func (a *Agent) runScheduled(ctx context.Context, j proto.JobConfig, st *jobState) {
 	var slot *time.Time
 	a.mu.Lock()
@@ -1015,7 +1015,7 @@ func (a *Agent) runBackup(ctx context.Context, j proto.JobConfig, commandID stri
 	a.mu.Unlock()
 	a.mark(runMarker{Kind: proto.KindBackup, JobID: j.ID, CommandID: commandID, Started: started, Revision: rev})
 
-	// The agent's own state (restic cache, spool, its key) is never backed up (plan-m1 Q13).
+	// The agent's own state (restic cache, spool, its key) is never backed up.
 	excludes := append(append([]string(nil), j.Excludes...), a.cfg.StateDir)
 	opts := restic.BackupOptions{Paths: j.Paths, Excludes: excludes, Host: a.cfg.FQDN, Tags: []string{"job=" + j.ID},
 		LimitUploadKiB: j.LimitUploadKiB}

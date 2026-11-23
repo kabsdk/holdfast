@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# lab/test-sizing.sh <lab> [<vm>...]: what one server's gateway carries (plan-m9 part 6, decision 042). Backup traffic
+# lab/test-sizing.sh <lab> [<vm>...]: what one server's gateway carries (decision 042). Backup traffic
 # passes through the server, so install.md says how much one carried in the lab. On each agent VM, or each one named:
 #   1. a fixture of HF_SIZING_MIB (default 256) MiB of new random data in /srv/hf-sizing, which restic cannot
 #      deduplicate or compress, and a job "sizing" for it;

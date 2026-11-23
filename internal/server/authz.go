@@ -17,7 +17,7 @@ import (
 	"github.com/kabsdk/holdfast/internal/server/store"
 )
 
-// Who may do what (spec §6.2, plan-m4 §4). Every /api/v1 route declares the permission it needs on the host
+// Who may do what (spec §6.2). Every /api/v1 route declares the permission it needs on the host
 // in its path, and the guard checks it before the handler runs. Routes without a host in their path check in
 // the handler, or cut their answer down to the hosts the actor can see (decision 033).
 
@@ -99,7 +99,7 @@ func (s *Server) auditDenied(ctx context.Context, a Actor, perm, fqdn string) {
 		Detail: map[string]any{"permission": perm}})
 }
 
-// Route is one /api/v1 endpoint. The parity test reads them (plan-m4 §6).
+// Route is one /api/v1 endpoint. The parity test reads them.
 type Route struct {
 	Method string
 	Path   string
@@ -173,7 +173,7 @@ func (s *Server) Routes() []Route {
 		r("GET", "/api/v1/exports", "", s.apiExports),
 		r("POST", "/api/v1/exports", "", s.apiExportNow),      // admin everywhere, in ExportNow
 		r("POST", "/api/v1/notify/test", "", s.apiNotifyTest), // admin everywhere, in NotifyTest
-		// Root's one-time link into the UI (plan-m10 item 6): on the root socket only.
+		// Root's one-time link into the UI: on the root socket only.
 		{Method: "POST", Path: "/api/v1/ui-login", Local: true, h: s.apiUILogin},
 	}
 }
@@ -310,7 +310,7 @@ func touched(before, after config.Document) []string {
 }
 
 // visibleRevisions returns up to limit revisions, newest first, that changed a host the actor can see. An
-// admin everywhere sees them all (plan-m4 Q2).
+// admin everywhere sees them all.
 func (s *Server) visibleRevisions(ctx context.Context, v viewer, limit int) ([]store.Revision, error) {
 	q := s.st.Q()
 	if v.everywhere() {

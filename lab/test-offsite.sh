@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# lab/test-offsite.sh <lab> [<vm>...]: M8's off-site lab test (plan-m8 §2 part 5). lab/lab test runs it after the M6
+# lab/test-offsite.sh <lab> [<vm>...]: M8's off-site lab test. lab/lab test runs it after the M6
 # tests, which leave each agent enrolled with its fidelity snapshot. The off-site bucket is a second bucket on the lab's
 # RGW, holdfast-offsite (lab/rgw-offsite-layout.sh, which lab/test-fidelity.sh runs), and holdfast-server copies into it
 # itself (offsite: in its server.yaml, decision 041): there is no other program and nothing to register.

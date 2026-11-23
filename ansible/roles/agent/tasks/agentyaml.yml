@@ -1,5 +1,5 @@
 ---
-# The host's own settings in agent.yaml (decision 037, plan-m2 Q5): the dumps a dump job may name, and the bounds of what
+# The host's own settings in agent.yaml (decision 037): the dumps a dump job may name, and the bounds of what
 # a restore may do here. Only root on the host sets them; the server cannot. The rest of agent.yaml is enroll's.
 - name: Read agent.yaml
   ansible.builtin.slurp:

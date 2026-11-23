@@ -1,7 +1,6 @@
 # 037: Dump commands are defined on the host
 
-Status: accepted, 2026-11-22 (plan-m5 Q5, plan-m6 Q5; you answered "Go", then "Just do whatever, we can always
-revise").
+Status: accepted, 2026-11-22.
 
 ## Decision
 

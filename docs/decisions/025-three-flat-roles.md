@@ -18,8 +18,6 @@ is no inheritance between them (spec §6.2).
 - **What a role can do is in one list.** There is no need to follow an inheritance chain.
 - **Per-host bindings fit how teams own hosts.**
 
-*The reasons were inferred when the record was written. You accepted them on 2026-11-21, leaving the call to me ("Whatever you recommend").*
-
 ## Consequences
 
-- Whether admins can define custom roles was open question OQ4. Decision 035 says no.
+- Whether admins can define custom roles was left open. Decision 035 says no.

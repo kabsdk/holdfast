@@ -1,6 +1,0 @@
-{
-  "server": "https://holdfast.example.internal",
-  "host": "web01",
-  "enroll_code": "one-time-code-web01",
-  "state_dir": "/var/lib/holdfast-agent"
-}

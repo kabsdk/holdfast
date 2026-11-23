@@ -91,7 +91,7 @@ machine, and `/etc/holdfast` put back with `restore-export`; each time the agent
 
 ## Walked in the lab
 
-`lab/lab test m1` walks the `/etc/holdfast` path on the lab's server (`lab/test-rebuild.sh`, plan-m9 Q8): the
+`lab/lab test m1` walks the `/etc/holdfast` path on the lab's server (`lab/test-rebuild.sh`): the
 server's database dropped, `/etc/holdfast` and its state removed, the packages removed and installed again,
 `/etc/holdfast` put back from the lab's state, the export restored, and the three agents back by themselves.
 `lab/README.md` has its results.

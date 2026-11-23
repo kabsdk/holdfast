@@ -21,7 +21,7 @@ const restoreTimeout = 24 * time.Hour
 
 var unsafeName = regexp.MustCompile(`[^a-z0-9._-]+`)
 
-// runRestore runs a restore the server asked for (plan-m2 §3), within this host's own bounds. Those come
+// runRestore runs a restore the server asked for, within this host's own bounds. Those come
 // from agent.yaml, which only root here can change (decision 030). A refusal is reported with its reason.
 // It returns false if the agent is shutting down.
 func (a *Agent) runRestore(ctx context.Context, c proto.Command) bool {
@@ -50,7 +50,7 @@ func (a *Agent) runRestore(ctx context.Context, c proto.Command) bool {
 	a.mu.Unlock()
 	defer func() { a.mu.Lock(); a.running = nil; a.mu.Unlock() }()
 
-	// Another host's snapshot (plan-m6 §2.2): only if this host allows it, never in place, and with that
+	// Another host's snapshot: only if this host allows it, never in place, and with that
 	// host's password and read-only key, which live in root-only files for this one restore.
 	// A source with this host's own name is its own off-site copy (decisions 039 and 041): that is no other host's
 	// data, so allow_other_hosts does not apply, but it is still never restored in place.
@@ -133,7 +133,7 @@ func (a *Agent) runRestore(ctx context.Context, c proto.Command) bool {
 	}
 	ev.Detail["directory"] = target
 
-	// In place: first back up what will be replaced, so the restore can be undone (decision 023, plan-m2 Q4).
+	// In place: first back up what will be replaced, so the restore can be undone (decision 023).
 	if spec.Target == proto.TargetInPlace && !spec.DryRun {
 		pre, err := a.safetyBackup(ctx, r, c, spec, sn)
 		if ctx.Err() != nil {

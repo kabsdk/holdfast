@@ -7,7 +7,7 @@ import (
 	"github.com/kabsdk/holdfast/internal/server/storage"
 )
 
-// M5 (plan-m5): the escrow file in the bucket, the repository's size, rotating a host's password, and
+// M5: the escrow file in the bucket, the repository's size, rotating a host's password, and
 // decommission.
 
 // HostEscrow is a host's escrow/<fqdn>.age (decision 036).

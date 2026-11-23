@@ -15,4 +15,6 @@ Databases will be protected by an engine that understands them (decision 001). T
 
 ## Consequences
 
-- Whether this exclusion is enforced, and how, is a question in [plan-m1.md](../plan-m1.md) (Q13).
+- No built-in exclude enforces it: the agent always leaves out only the restic cache and its own state. A database is
+  protected by a dump job, which backs up the output of the database's own dump command
+  ([decision 037](037-dump-commands-defined-on-the-host.md)).

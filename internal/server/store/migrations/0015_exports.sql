@@ -1,6 +1,6 @@
--- M9 (decision 040, plan-m9): the nightly export of the server's tables to meta/<date>.age in the bucket, and with
+-- M9 (decision 040): the nightly export of the server's tables to meta/<date>.age in the bucket, and with
 -- off-site copies (decision 041) to the off-site bucket too. One row per attempt: when, by whom, what was written,
--- and how each write went. A failed off-site write leaves the primary export counted (plan-m9 Q4).
+-- and how each write went. A failed off-site write leaves the primary export counted.
 CREATE TABLE exports (
   id             bigserial   PRIMARY KEY,
   started_at     timestamptz NOT NULL,
@@ -14,7 +14,7 @@ CREATE TABLE exports (
 );
 CREATE INDEX exports_started ON exports (started_at DESC);
 
--- A server restored from an export (plan-m9 Q6): the head revision it was restored at. An agent that reports a newer
+-- A server restored from an export: the head revision it was restored at. An agent that reports a newer
 -- revision ran a change the export does not have.
 CREATE TABLE restores_from_export (
   id          bigserial   PRIMARY KEY,

@@ -1,5 +1,5 @@
 # /etc/authelia/configuration.yml on {{ inventory_hostname }}, Authelia {{ authelia.version }}, the lab {{ lab }}'s OIDC
-# provider for Holdfast's login (decision 034, plan-m4 Q9): written by lab/ansible/site.yml (do not edit here; a change is
+# provider for Holdfast's login (decision 034): written by lab/ansible/site.yml (do not edit here; a change is
 # made there and lab/lab up applies it). The same setup as the e2e tests' (test/e2e/authelia/setup.sh). No secret is in
 # this file: the unit names each secret's file in /etc/authelia/secrets (AUTHELIA_*_FILE, authelia-lab.conf), and the
 # template filter (X_AUTHELIA_CONFIG_FILTERS) reads the signing key. The client secret and the passwords are digests.

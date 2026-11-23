@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-// Root's one-time link into the UI (plan-m10 item 6): only on the root socket, once, within 5 minutes, and it opens a
+// Root's one-time link into the UI: only on the root socket, once, within 5 minutes, and it opens a
 // session that is admin everywhere, without an identity provider.
 func TestUILoginLink(t *testing.T) {
 	s := newTestServer(t)
@@ -62,7 +62,7 @@ func TestUILoginLink(t *testing.T) {
 	}
 }
 
-// The server sends its own alerts (plan-m10 item 2): a problem once when it starts, once when it ends, and the
+// The server sends its own alerts: a problem once when it starts, once when it ends, and the
 // heartbeat after each pass.
 func TestNotify(t *testing.T) {
 	var mu sync.Mutex

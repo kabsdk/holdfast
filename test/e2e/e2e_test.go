@@ -17,7 +17,7 @@ import (
 
 // The first backup runs right after enrollment. Its snapshot, restored with plain restic from the
 // escrow bundle alone (as after losing Holdfast), keeps every metadata class (PoC test 1). Restore
-// through the agent is M2 (plan-m1 Q1).
+// through the agent is M2.
 func TestBackupFidelityAndEscrow(t *testing.T) {
 	requireRoot(t)
 	src := filepath.Join(t.TempDir(), "data")
@@ -166,7 +166,7 @@ func TestGatewayIsolation(t *testing.T) {
 	}
 }
 
-// The server is the storage witness (plan-m10 item 1): it reads each repository from the bucket with restic and the
+// The server is the storage witness: it reads each repository from the bucket with restic and the
 // maintenance key, not through the gateway, and reports each job's newest snapshot there. It agrees with the agents'
 // reports while healthy, and shows the gap when the newest snapshot disappears from storage behind Holdfast's back (PoC
 // test 5). The alert thresholds themselves are checked by the promtool rule tests.

@@ -1,4 +1,4 @@
--- M7: holdfast-vault (decisions 027 and 039, plan-m7).
+-- M7: holdfast-vault (decisions 027 and 039).
 
 -- On holdfast-server: the vaults that copy its hosts, each with its token, the read-only key it reads with, and
 -- its latest report.

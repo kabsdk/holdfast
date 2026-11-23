@@ -15,12 +15,12 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// The nightly export's tables (decision 040, plan-m9 §2.1): each one as CSV with a header, read with COPY in one
+// The nightly export's tables (decision 040): each one as CSV with a header, read with COPY in one
 // consistent snapshot, and loaded back with COPY into a new, empty database. Plain CSV, so restoring needs no pg_dump
 // of a matching version, and the files can be read without Holdfast.
 
-// exportSkip are left out of an export (plan-m9 Q2): the sessions, stale after a rebuild, whose users log in again;
-// the gateway's grants, each of which lasts one restore, which a rebuild ends; the alerts sent (plan-m10 item 2),
+// exportSkip are left out of an export: the sessions, stale after a rebuild, whose users log in again;
+// the gateway's grants, each of which lasts one restore, which a rebuild ends; the alerts sent,
 // which a rebuilt server sends again for what is still wrong; and the migrations' own table, which restoring makes
 // again.
 var exportSkip = map[string]bool{"sessions": true, "gateway_grants": true, "notify_state": true, "schema_migrations": true}
@@ -59,7 +59,7 @@ func (s *Store) SchemaVersion(ctx context.Context) (int, error) {
 	return v, err
 }
 
-// Empty says whether the store's schema holds no table: restoring an export refuses anything else (plan-m9 Q5).
+// Empty says whether the store's schema holds no table: restoring an export refuses anything else.
 func (s *Store) Empty(ctx context.Context) (bool, error) {
 	var n int
 	err := s.pool.QueryRow(ctx, `SELECT count(*) FROM information_schema.tables WHERE table_schema = current_schema()`).Scan(&n)

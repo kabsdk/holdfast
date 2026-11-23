@@ -15,7 +15,7 @@ import (
 	"github.com/kabsdk/holdfast/internal/server/creds"
 )
 
-// recoveryFile is `holdfast-server recovery-file` (plan-m10 item 3):
+// recoveryFile is `holdfast-server recovery-file`:
 //
 //	recovery-file -new -credentials-key <key file> <path>   the installer: a new age key and credentials key (the
 //	                                                         key file is made unless it exists), the recovery file,

@@ -28,8 +28,6 @@ files.
 - **The default mode bits limit what can be shown.** Requiring world-readable means only files that every
   user on the host could already read.
 
-*The reasons are inferred. Confirm or correct them.*
-
 ## Consequences
 
 - Restore is how you see contents: on the host, by root.

@@ -15,7 +15,7 @@ restore:
   root: /var/restore
   allow_in_place: false          # over the original files, after a safety backup
   allow_other_directories: false # into any other directory
-  allow_other_hosts: false       # another host's snapshot, with a read-only key an admin made (plan-m6 §2.2)
+  allow_other_hosts: false       # another host's snapshot, with a read-only key an admin made
 
 # The commands a dump job may name (decision 037, spec §4.6). No shell: the first item is an absolute path. Each runs
 # as its user, with only PATH, LANG and its env.

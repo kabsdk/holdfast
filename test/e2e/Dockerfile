@@ -1,4 +1,4 @@
-# The e2e suite's image (plan-m6 Q6): Go, plus PostgreSQL's client tools for the dump test. make e2e builds it
+# The e2e suite's image: Go, plus PostgreSQL's client tools for the dump test. make e2e builds it
 # once; Docker's cache makes later builds instant.
 ARG GO_IMAGE=golang:1.26
 FROM ${GO_IMAGE}

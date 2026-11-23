@@ -8,7 +8,7 @@ Type=exec
 ExecStart=/usr/bin/holdfast-agent run --config /etc/holdfast/agent.yaml
 # Runs as root: reading every file and restoring owners, ACLs and SELinux labels needs it.
 # No ProtectHome and no PrivateTmp: a job may back up /home, /root, /tmp or /var/tmp, and an
-# in-place restore (M2) must be able to write there (plan-m1 P15).
+# in-place restore (M2) must be able to write there.
 StateDirectory=holdfast-agent
 StateDirectoryMode=0700
 UMask=0077
@@ -18,7 +18,7 @@ RestartSec=10
 # SIGTERM leaves the run marker; the next start reports the run as "interrupted".
 KillMode=control-group
 TimeoutStopSec=30
-# A backup gives way to the host's own work (plan-m5 item 2): the agent, and the restic it runs, have low
+# A backup gives way to the host's own work: the agent, and the restic it runs, have low
 # CPU and I/O priority.
 Nice=10
 IOSchedulingClass=idle

@@ -1,7 +1,6 @@
 # 033: What each role sees
 
-Status: accepted, 2026-11-21. You left it to me ("You decide, continue"). It refines decision 025 and spec
-§6.2, and lands in M4 with the roles.
+Status: accepted, 2026-11-21. It refines decision 025 and spec §6.2, and lands in M4 with the roles.
 
 ## Decision
 

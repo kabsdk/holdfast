@@ -20,10 +20,8 @@ worst-case data loss (gap + spread), and the stale alert threshold (2 × the lon
   stale threshold and checks R001, S001 and R103. A structured form makes this exact.
 - **Cron strings are easy to get wrong** and hard to review.
 
-*The reasons were inferred when the record was written. You accepted them on 2026-11-21, leaving the call to me ("Whatever you recommend").*
-
 ## Consequences
 
 - The agent and the server use the same schedule evaluator, so the runs Holdfast shows are the runs that
   happen.
-- The time zone and the handling of daylight-saving changes need a decision (plan-m1 Q6).
+- The time zone and the handling of daylight-saving changes need a decision.

@@ -1,7 +1,7 @@
 # 044: A one-line install
 
-Status: accepted, 2026-11-23. You asked for installation "in a zerobyte-way (curl some sh script, like k3s as well)",
-and left it to me whether it should stop on missing settings. **Amended the same day by M10:** the witness role is
+Status: accepted, 2026-11-23. Installation should be one `curl … | sh` command, as with Zerobyte and k3s.
+**Amended the same day by M10:** the witness role is
 gone (decision 045); the escrow recipient is optional, as the installer makes the age key and the recovery file, which
 also rebuilds a lost server (decision 047); the web UI is on by default and needs no OIDC (decision 049); alerts are
 settings of the install (decision 046).
