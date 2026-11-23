@@ -5,6 +5,24 @@ What each release of Holdfast changes. The Ansible collection has its own notes 
 
 ## Unreleased
 
+Breaking:
+
+- **Dump jobs are removed** (decision 052): Holdfast runs no command on a host, and gets no pre-backup hooks either.
+  `dumps:` in `agent.yaml`, the `--dump` flag of `holdfast job set`, the UI's "A dump the host defines" and the API's
+  `dump` in a job are gone. The checks D001, D002 and I002 are retired. Instead, a systemd service and timer on the
+  host write the export, such as `pg_dumpall`'s, to a temporary name renamed only when it succeeded, and a paths job
+  backs up its directory; the host's monitoring watches the unit
+  ([Databases and other exports](https://kabsdk.github.io/holdfast/#dumps)). To upgrade:
+  - after upgrading the server, give each dump job paths (`holdfast job set <fqdn> <job> --path …`) or remove it.
+    Until then the server refuses to save the config, and a 0.6.0 agent fails the job's runs;
+  - take `dumps:` out of `agent.yaml`. An agent that still finds it ignores it, and logs so;
+  - snapshots that dump jobs made can still be restored, into a new directory only.
+- **The Ansible collection** needs `holdfast_fqdn` on the server and every host, takes each job in `holdfast_jobs` as
+  a mapping of `holdfast job set`'s flags, and no longer takes `holdfast_dumps`
+  ([ansible/CHANGELOG.md](ansible/CHANGELOG.md)).
+
+Other changes:
+
 - The documentation is published at [kabsdk.github.io/holdfast](https://kabsdk.github.io/holdfast/), with six more
   pictures of the web UI: a job's snapshots, Changes, Restore, Restores, Config history and the audit log.
 - Web UI: a long retention reason or audit entry wraps, instead of making the page scroll sideways.

@@ -40,50 +40,60 @@ func enrolled(t *testing.T, s *Server, fqdn string, f proto.Facts) {
 	}
 }
 
-// Decision 037: a dump job names a dump the host defines; an agent that does not know dumps cannot get one.
-func TestDumpJobChecks(t *testing.T) {
+// Decision 052: Holdfast runs no command on a host, so a job that names a dump is refused, with the reason, from
+// host add and from job set alike.
+func TestDumpJobsAreRefused(t *testing.T) {
 	s, ctx := newTestServer(t), context.Background()
 	j := dumpJob("postgresql")
+	refused := func(what string, err error) {
+		t.Helper()
+		var ve *ValidationError
+		if !errors.As(err, &ve) || !strings.Contains(ve.Error(), "decision 052") {
+			t.Fatalf("%s: a dump job must be refused, citing decision 052: %v", what, err)
+		}
+	}
+	_, err := s.AddHost(ctx, root, AddHostInput{FQDN: "new01.example.com", JobID: "pg", Job: &j})
+	refused("host add", err)
+	enrolled(t, s, "db01.example.com", proto.Facts{Protocol: proto.Protocol})
+	_, err = s.SetJob(ctx, root, "db01.example.com", "pg", SetJobInput{Job: j})
+	refused("job set", err)
+	both := dumpJob("postgresql")
+	both.Paths = []string{"/etc"}
+	_, err = s.SetJob(ctx, root, "db01.example.com", "both", SetJobInput{Job: both})
+	refused("paths and a dump", err)
 
-	// Before any agent: noted, not blocking.
-	res, err := s.AddHost(ctx, root, AddHostInput{FQDN: "new01.example.com", JobID: "pg", Job: &j})
+	// A dump job left in the config by 0.5.0 stops nothing else: other jobs and hosts still change, and saving it
+	// with paths makes it a paths job.
+	head, err := s.st.Q().Head(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Contains(codes(res.Findings), "I002") {
-		t.Fatalf("before any agent: %v", codes(res.Findings))
+	doc := head.Config
+	h := doc.Hosts["db01.example.com"]
+	if h.Jobs == nil {
+		h.Jobs = map[string]config.Job{}
 	}
-
-	// An agent before M6.
-	enrolled(t, s, "old01.example.com", proto.Facts{Protocol: 1})
-	var ce *ChecksError
-	if _, err := s.SetJob(ctx, root, "old01.example.com", "pg", SetJobInput{Job: j}); !errors.As(err, &ce) || !slices.Contains(codes(ce.Blocking), "D002") {
-		t.Fatalf("a protocol 1 agent: %v", err)
-	}
-
-	// An agent with dumps: a name it lacks is D001; one it has is fine, and reaches the agent.
-	enrolled(t, s, "db01.example.com", proto.Facts{Protocol: 2, Dumps: []string{"postgresql"}})
-	if _, err := s.SetJob(ctx, root, "db01.example.com", "my", SetJobInput{Job: dumpJob("mysql")}); !errors.As(err, &ce) || !slices.Contains(codes(ce.Blocking), "D001") {
-		t.Fatalf("an unknown dump: %v", err)
-	}
-	if _, err := s.SetJob(ctx, root, "db01.example.com", "pg", SetJobInput{Job: j}); err != nil {
+	left := dumpJob("postgresql")
+	left.Engine = config.EngineRestic
+	h.Jobs["pg"] = left
+	doc.Hosts["db01.example.com"] = h
+	if _, err := s.st.Q().SaveRevision(ctx, store.SaveRevision{Base: head.Number, Actor: "local:root", Source: "cli", Message: "a dump job from 0.5.0", Config: doc}); err != nil {
 		t.Fatal(err)
 	}
-	p, err := s.Poll(ctx, "db01.example.com", proto.PollRequest{Facts: proto.Facts{Protocol: 2, Dumps: []string{"postgresql"}}}, 0)
-	if err != nil || p.Config == nil || len(p.Config.Jobs) != 1 || p.Config.Jobs[0].Dump != "postgresql" || len(p.Config.Jobs[0].Paths) != 0 {
-		t.Fatalf("the agent's job: %+v %v", p.Config, err)
+	if _, err := s.SetJob(ctx, root, "db01.example.com", "etc", SetJobInput{Job: *job("/etc")}); err != nil {
+		t.Fatalf("another job, with a dump job left in the config: %v", err)
 	}
-
-	// Paths and a dump together are refused.
-	both := dumpJob("postgresql")
-	both.Paths = []string{"/etc"}
-	var ve *ValidationError
-	if _, err := s.SetJob(ctx, root, "db01.example.com", "both", SetJobInput{Job: both}); !errors.As(err, &ve) {
-		t.Fatalf("paths and a dump: %v", err)
+	if _, err := s.AddHost(ctx, root, AddHostInput{FQDN: "web01.example.com"}); err != nil {
+		t.Fatalf("another host, with a dump job left in the config: %v", err)
+	}
+	_, err = s.SetJob(ctx, root, "db01.example.com", "pg", SetJobInput{Job: dumpJob("postgresql")})
+	refused("the left dump job, unchanged", err)
+	if _, err := s.SetJob(ctx, root, "db01.example.com", "pg", SetJobInput{Job: *job("/var/backups/postgresql")}); err != nil {
+		t.Fatalf("the left dump job given paths: %v", err)
 	}
 }
 
-// A dump goes into a new directory only; a restore onto another host needs the other host's opt-in and a new enough
+// A snapshot that a dump job made before 0.6.0 goes into a new directory only; a restore onto another host needs the other host's opt-in and a new enough
 // agent, its password reaches only that agent, once, and that host may read the repository through the
 // gateway until it reports the restore, and only read it (decision 041).
 func TestRestoreDumpAndOntoAnotherHost(t *testing.T) {

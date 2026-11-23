@@ -1,6 +1,8 @@
 # 037: Dump commands are defined on the host
 
-Status: accepted, 2026-11-22.
+Status: superseded by [decision 052](052-holdfast-runs-no-commands-on-hosts.md), 2026-11-23: Holdfast runs no command
+on a host, and dump jobs are removed in 0.6.0. A snapshot a dump job made before is still restored into a new directory
+only. Accepted 2026-11-22.
 
 ## Decision
 

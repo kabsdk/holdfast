@@ -78,14 +78,6 @@ func ValidJobID(s string) error {
 	return nil
 }
 
-// ValidDumpName checks a dump's name (decision 037), as agent.yaml and a job both write it.
-func ValidDumpName(s string) error {
-	if !jobIDRE.MatchString(s) {
-		return fmt.Errorf("dump name %q is not valid: use lower-case letters, digits and hyphens, at most 63 characters", s)
-	}
-	return nil
-}
-
 // Validate returns every structural problem in the document. The checks engine (M3) adds the
 // R, S and I codes on top of this.
 func (d Document) Validate() Problems {
@@ -109,14 +101,12 @@ func (d Document) Validate() Problems {
 				add(jp+".engine", "engine %q is not supported; restic is the only engine", j.Engine)
 			}
 			switch {
-			case j.IsDump() && (len(j.Paths) > 0 || len(j.Excludes) > 0):
-				add(jp+".dump", "a job backs up either paths or a dump, not both")
 			case j.IsDump():
-				if err := ValidDumpName(j.Dump); err != nil {
-					add(jp+".dump", "%v", err)
-				}
+				// A dump job from before 0.6.0 (decision 052) stays valid here, so one left behind does not stop the
+				// rest of the config from changing. Saving it is refused (the server's errDumpJob), and agents fail
+				// its runs.
 			case len(j.Paths) == 0:
-				add(jp+".paths", "at least one path is needed, or a dump")
+				add(jp+".paths", "at least one path is needed")
 			}
 			for _, p := range j.Paths {
 				if err := validPath(p); err != nil {

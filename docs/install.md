@@ -84,7 +84,8 @@ The collection `kabsdk.holdfast` (decision 050), released beside the packages, d
 roles `server`, `agent` and `cli`. It takes the same settings, in lower case: `HOLDFAST_S3_BUCKET` is
 `holdfast_s3_bucket`. The roles keep the machines that way: a run with nothing to do changes nothing, and a changed
 setting reaches `server.yaml`. The agent role also adds each host on the server, enrolls it, and gives it the jobs it
-lacks.
+lacks. Unlike the installer, the roles read no host name from the machine: give the server and every host its
+FQDN as `holdfast_fqdn`. They need no gathered facts.
 
 ```
 ansible-galaxy collection install https://github.com/kabsdk/holdfast/releases/download/v0.5.0/kabsdk-holdfast-0.5.0.tar.gz
@@ -160,6 +161,16 @@ primary has. The vault's old bucket keeps its copies, with the passwords in its 
 - scripts that ran `host add` with a job's flags run `holdfast job set` after it (decision 048);
 - for alerts without Prometheus, add `notify:` to `server.yaml` (decision 046). For the web UI without an OIDC
   provider, set `ui:` and log in with `holdfast ui-login` (decision 049). An upgrade does not change `server.yaml`.
+
+**From 0.5.0**, dump jobs are gone (decision 052): Holdfast runs no command on a host.
+- Before upgrading, have each host that had a dump write the export itself, with a systemd timer, as *Databases and
+  other exports* in the documentation shows.
+- After upgrading the server, give each dump job paths, such as `holdfast job set db01.example.com pg --path
+  /var/backups/postgresql --exclude '*.tmp'`, or remove it. Until no dump job is left, the server refuses to save the
+  config, with that reason. An agent of 0.6.0 fails a dump job's runs; one still at 0.5.0 runs it until it is upgraded.
+- Take `dumps:` out of each host's `/etc/holdfast/agent.yaml`. The agent ignores it, and logs so, until you do.
+- With Ansible, give the server and every host `holdfast_fqdn`, write each job in `holdfast_jobs` as a mapping of
+  `holdfast job set`'s flags, and drop `holdfast_dumps` (`ansible/README.md`).
 
 **Otherwise, upgrade the server first, then the agents, in any order and at any pace.** The agent sends its protocol
 version with every poll, and the server answers with the range it accepts:

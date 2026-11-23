@@ -36,7 +36,7 @@ backups up, see them, restore from them and be alerted, instead of cron jobs and
 - **Kubernetes**, including PostgreSQL on CloudNativePG. Those clusters keep CloudNativePG's own Barman
   Cloud plugin backups.
 - **Database files on hosts.** A file copy of a running database is not a backup. For example,
-  `/var/lib/pgsql` is excluded.
+  `/var/lib/pgsql` is excluded. A database is backed up from an export the host writes (§4.6).
 - **High availability of Holdfast itself** (decision 042): no clustering, standby, active/passive pair or second
   gateway. One server; a lost one is replaced (§2.2).
 - **Windows and macOS machines, service providers backing up many customers, and fleets of thousands** (decision 042).
@@ -67,6 +67,7 @@ supports.
 
 **Agent** (`holdfast-agent`, Go, one per host, runs as root)
 - Has a local scheduler and runs restic itself. restic encrypts on the host.
+- Runs no other command for a job: no dump, and no hook before or after a backup (decision 052).
 - Spools events to disk until the server has acknowledged them.
 - Connects to the server by HTTPS long-poll. The agent always dials out.
 - Is known to the server by its own key and a self-signed certificate, which it makes at enrollment and the server
@@ -218,18 +219,22 @@ There are two programs: holdfast-agent and holdfast-server (decision 041), and t
   does with the same settings in lower case, as the roles `server`, `agent` and `cli`. It differs from the installer
   in what it keeps:
   - `server.yaml` follows the settings on every run.
+  - The roles read no host name from the machine: the server and agent roles require `holdfast_fqdn`, unless an agent
+    sets `holdfast_hostname_autodetect`, which takes `hostname -f`. They need no gathered facts.
   - The agent role adds the host and enrolls it with the `holdfast` command as root on the server.
-  - It makes the jobs a host lacks, and never changes or removes one.
-  - It sets the host-only dumps and restore limits in `agent.yaml` when they are given.
+  - It makes the jobs a host lacks, each given as a mapping of `holdfast job set`'s flags, and never changes or removes
+    one.
+  - It sets the host-only restore limits in `agent.yaml` when they are given, and takes out a `dumps:` that 0.5.0 left
+    there (§4.6).
 
   A run with nothing to do changes nothing.
 - **The agent and the server agree on a protocol version.** The agent sends its own with every poll (an agent
   before M5 sends none and speaks 1), and the server answers with the range it accepts. The server accepts
   every agent from its minimum on, so it is upgraded first, and agents after it, one by one. Protocol 2 (M6)
-  adds dump jobs, restores from another host, and pause and resume; protocol 3 (M7) added restores from a vault's
-  copy; protocol 4 (M8, decision 041) is the agent's own certificate in place of a token, backups through the
-  gateway, and restores from off-site through it. An agent before 4 cannot log in at all: it enrolls again after its
-  upgrade. A feature an agent does not speak is refused for it (D002), and the rest goes on.
+  added dump jobs (removed in 0.6.0, decision 052), restores from another host, and pause and resume; protocol 3 (M7)
+  added restores from a vault's copy; protocol 4 (M8, decision 041) is the agent's own certificate in place of a token,
+  backups through the gateway, and restores from off-site through it. An agent before 4 cannot log in at all: it
+  enrolls again after its upgrade. A feature an agent does not speak is refused for it, and the rest goes on.
 - An agent older than the server accepts is refused with 426 and the range. It logs that it must be
   upgraded, keeps backing up on its cached config, and the server still takes its reports. It gets no new
   config and no commands meanwhile. The host shows the `agent_too_old` problem, and
@@ -542,7 +547,7 @@ makes a job, and the request may leave things out:
   the default's form only, and over `--every 1m` it would fail S001;
 - an existing job keeps its own values for what is not given. A schedule that names a form (daily, every, weekly)
   replaces the form and keeps the spread and zone unless it gives them; a spread or a zone alone changes only that. A
-  retention, when given, is replaced whole. Giving paths drops a dump, and giving a dump drops the paths (§4.6).
+  retention, when given, is replaced whole. Giving paths to a dump job from before 0.6.0 makes it a paths job (§4.6).
 
 So `holdfast job set web01 system --path /etc` is a whole job, and `holdfast job set web01 system --daily 03:00`
 moves its time and keeps the rest; any `--keep-*` flag gives the whole retention. The checks (§4.5) run on the job as
@@ -585,14 +590,10 @@ The UI, the API and the CLI use the same checks engine, and every check has a st
 | Code | Condition |
 | --- | --- |
 | I001 | There is no yearly tier. |
-| I002 | A dump job on a host whose agent has not enrolled yet: whether it defines the dump is not known. |
 
-**Dump checks** (decision 037), errors:
-
-| Code | Condition |
-| --- | --- |
-| D001 | The host's `agent.yaml` defines no dump of that name. |
-| D002 | The host's agent does not know dump jobs (protocol 1): upgrade it first. |
+D001, D002 and I002 checked dump jobs (decision 037), which 0.6.0 removed (decision 052). D001 was a dump that
+`agent.yaml` did not define, D002 an agent too old for dump jobs, and I002 a dump job on a host whose agent had not
+enrolled. The codes are retired, and not used again.
 
 **Storage checks** test the S3 server, not the config (decision 029, [storage.md](storage.md)). They are
 errors that cannot be accepted. A host whose storage fails one cannot be added or enroll. Hosts hold no S3 key
@@ -629,27 +630,34 @@ used again. B013 was never used. The off-site bucket passes B004, B008–B012 an
   what the old one keeps. Removing a tier is therefore not a cut if a finer tier keeps the same snapshots.
   A job with no snapshots yet has nothing to cut. If restic cannot be asked, the change counts as a cut.
 
-### 4.6 Dumps
+### 4.6 Databases and other exports
 
-A dump job backs up what a command prints, such as a database dump, as one file in the snapshot (decision 037).
-- **The command is the host's own**, in its `agent.yaml`, under a name; root on the host defines it. A job only
-  names it: `holdfast job set <fqdn> <job> --dump postgresql …`. A job backs up either paths or a dump.
+Holdfast runs no command on a host (decision 052): no dump, and no hook before or after a backup. A database, a
+directory server or anything else whose files are not a backup while it runs (§1.2) is backed up from an export the
+host writes itself:
+- a systemd service and timer on the host make the export, with a margin before the job's time (`OnCalendar=`, and
+  `TimeoutStartSec=`, `SuccessExitStatus=` and `OnFailure=` as needed);
+- the export writes to a temporary name, and is renamed only when it succeeded, so a running or failed export never
+  replaces the last good file;
+- a paths job backs up the export's directory;
+- the host's own monitoring watches the unit. If an export fails, the job backs up the previous good file again, which
+  costs nothing as restic deduplicates it, and the failed unit is what alerts.
 
-  ```yaml
-  dumps:
-    postgresql:
-      command: [/usr/bin/pg_dumpall, --clean]   # the first item an absolute path; no shell
-      user: postgres                            # run as this user; default root
-      filename: postgresql.sql                  # the file's name in the snapshot; default <name>.dump
-      env: {PGHOST: /run/postgresql}            # optional, on top of PATH and LANG
-  ```
+Holdfast does not order the job after the export, and does not check the file's age; that is deliberate (decision 052).
+The documentation site's *Databases and other exports* has an example for PostgreSQL.
 
-- The agent runs it with `restic backup --stdin-from-command`, as its user, with a clean environment: it never
-  sees restic's. A command that exits non-zero, or is not there, fails the run,
-  and no snapshot is made. The snapshot is tagged `dump=<name>` beside `job=<id>`.
-- Schedule, retention, retries, the upload limit and the checks are those of any job, and D001 and D002 (§4.5).
-  The agent reports its dumps' names, never their commands.
-- `deploy/examples/agent.yaml` has examples for PostgreSQL and MySQL/MariaDB.
+**Dump jobs from before 0.6.0.** Until 0.6.0 a dump job backed up what a command in the host's `agent.yaml` printed
+(decision 037). What is left of them:
+- `holdfast job set` has no `--dump`, the UI's job form has paths only, and the API refuses a job given a `dump`,
+  citing decision 052.
+- A dump job left in the config is refused on the next save, with a message that says to give it paths. Every save
+  checks the whole config, so until no dump job is left, any save is refused so. Giving it paths (`holdfast job set
+  <fqdn> <job> --path …`) makes it a paths job; removing it is the other way. An agent of 0.6.0 fails its runs with the
+  same reason, so it shows as a problem.
+- An `agent.yaml` that still has `dumps:` loads: the agent logs that it is ignored, and the host's other jobs keep
+  running. Agents no longer report dump names.
+- A snapshot a dump job made is tagged `dump=<name>` beside `job=<id>`, and is restored into a new directory only
+  (§5.4).
 
 ---
 
@@ -711,10 +719,10 @@ host.
   with counts and the target directory, is in the host's history and in the Restores tab (§5.5).
 - A restore that the host has not picked up within 24 hours is cancelled, and the cancellation is reported.
 
-**A dump** (§4.6) is one file: it is restored into a new directory only. Loading it is the admin's job, on the
-host.
+**A dump snapshot**, made by a dump job before 0.6.0 (§4.6), is one file: it is restored into a new directory only.
+Loading it is the admin's job, on the host.
 
-**SELinux labels** are restored as the snapshot has them, except for a dump's file and a restore from another
+**SELinux labels** are restored as the snapshot has them, except for a dump snapshot's file and a restore from another
 host: those keep the label the host gives a new file (`restic restore --exclude-xattr security.selinux`). A dump
 has no label in its snapshot, another host's labels belong to its own policy, and SELinux refuses to remove a
 label, which made restic fail (found in the lab, on el9 and ol9).

@@ -176,6 +176,12 @@ type ValidationError struct{ Problems config.Problems }
 
 func (e *ValidationError) Error() string { return "the change is not valid: " + e.Problems.Error() }
 
+// errDumpJob refuses to save a job that names a dump (decision 052). A dump job left from before 0.6.0 stays in the
+// config as it is, so the rest of the config can still change; the agent fails its runs, and saving it with paths
+// makes it a paths job.
+var errDumpJob = &ValidationError{config.Problems{{Path: "dump", Message: "dump jobs were removed in 0.6.0: Holdfast " +
+	"runs no command on a host (decision 052); give the job the paths the export is written to, or remove it"}}}
+
 // ErrNotFound and ErrConflict are returned as 404 and 409.
 var (
 	ErrNotFound = store.ErrNotFound
@@ -437,10 +443,13 @@ func (s *Server) AddHost(ctx context.Context, a Actor, in AddHostInput) (AddHost
 		if in.Job.Engine == "" {
 			in.Job.Engine = config.EngineRestic
 		}
+		if in.Job.IsDump() {
+			return AddHostResult{}, errDumpJob
+		}
 		if p := withJob(config.New(), in.FQDN, in.JobID, *in.Job).Validate(); len(p) > 0 {
 			return AddHostResult{}, &ValidationError{p}
 		}
-		fs = append(checks.Job(*in.Job, checks.History{}), s.dumpFindings(ctx, in.FQDN, *in.Job)...)
+		fs = checks.Job(*in.Job, checks.History{})
 		checks.Sort(fs)
 		if blocking := checks.Blocking(fs, in.Accept); len(blocking) > 0 {
 			return AddHostResult{}, &ChecksError{Findings: fs, Blocking: blocking}
@@ -631,6 +640,9 @@ type SetJobResult struct {
 func (s *Server) SetJob(ctx context.Context, a Actor, fqdn, jobID string, in SetJobInput) (SetJobResult, error) {
 	if in.Job.Engine == "" {
 		in.Job.Engine = config.EngineRestic
+	}
+	if !s.set.IsVault() && in.Job.IsDump() {
+		return SetJobResult{}, errDumpJob
 	}
 	if strings.TrimSpace(in.Message) == "" {
 		in.Message = fmt.Sprintf("Set job %s on %s", jobID, fqdn)

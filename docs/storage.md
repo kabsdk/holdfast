@@ -130,11 +130,16 @@ On some S3 servers, an object belongs to the user who uploaded it, and other use
 bucket's owner. Ceph RGW without accounts works like this, and so do AWS buckets that predate S3 Object
 Ownership. restic cannot ask for the bucket owner to get access, so the fix is on the storage side:
 
+This bites when the policies are each user's own policy, outside an account. Two fixes:
+
 - **Put both of Holdfast's users in one account.** On Ceph RGW that is an RGW account, from Squid on.
   Objects then belong to the account, and each user's policy decides access.
-- **Or add a bucket-policy statement** that gives the maintenance user the maintenance key's object actions
-  on `repos/*`: `s3:GetObject`, `s3:PutObject` and `s3:DeleteObject`, with the deny above. Do not grant
-  `s3:*`. That would fail B009 and B010.
+- **Or give the policies as one bucket policy**, set by the bucket's owner, with each statement's `Principal`
+  set to its user. The maintenance statement then already covers `repos/*`; nothing needs adding. If B003
+  still fails with a bucket policy, the policy is not in force: check that the bucket's owner set it and that
+  each `Principal` names the right user.
+
+Do not grant `s3:*`: that would fail B009 and B010.
 
 Both were verified against Ceph Squid 19.2.3 in the lab (`lab/README.md`).
 

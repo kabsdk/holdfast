@@ -223,10 +223,6 @@ type BackupOptions struct {
 	Time     *time.Time // restic --time; the e2e tests use it to inject a clock
 	// LimitUploadKiB is restic's --limit-upload in KiB/s; 0: none.
 	LimitUploadKiB int
-	// StdinCommand, for a dump (decision 037), is run by restic, and its output stored as StdinFilename:
-	// --stdin-from-command. A command that fails makes no snapshot. Paths and Excludes are then unused.
-	StdinCommand  []string
-	StdinFilename string
 }
 
 // BackupResult is restic's JSON summary.
@@ -260,13 +256,8 @@ func (r Runner) Backup(ctx context.Context, o BackupOptions) (BackupResult, erro
 	if o.LimitUploadKiB > 0 {
 		args = append(args, "--limit-upload", strconv.Itoa(o.LimitUploadKiB))
 	}
-	if len(o.StdinCommand) > 0 {
-		args = append(args, "--stdin-from-command", "--stdin-filename", o.StdinFilename, "--")
-		args = append(args, o.StdinCommand...)
-	} else {
-		args = append(args, "--")
-		args = append(args, o.Paths...)
-	}
+	args = append(args, "--")
+	args = append(args, o.Paths...)
 
 	out, err := r.run(ctx, args...)
 	res, perr := parseSummary(out)

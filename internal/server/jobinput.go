@@ -40,8 +40,8 @@ func (s *Server) jobFrom(ctx context.Context, fqdn, jobID string, given json.Raw
 // mergeJob lays the fields given over base. A schedule that names no form (daily, every, weekly) changes only what it
 // gives, such as the spread or the zone. One that names a form replaces the form; an existing job keeps its spread and
 // zone unless it gives them, while a new one (fresh, base the default job) takes the schedule given whole, as the
-// default's spread suits the default's form only. The retention, when given, is replaced whole. Giving a dump drops
-// base's paths, and giving paths drops its dump: a job backs up one or the other.
+// default's spread suits the default's form only. The retention, when given, is replaced whole. Giving paths drops a
+// dump, so a dump job from before 0.6.0 becomes a paths job (decision 052); a job given a dump is refused.
 func mergeJob(base config.Job, given json.RawMessage, fresh bool) (config.Job, error) {
 	var g map[string]json.RawMessage
 	if len(bytes.TrimSpace(given)) > 0 && !bytes.Equal(bytes.TrimSpace(given), []byte("null")) {

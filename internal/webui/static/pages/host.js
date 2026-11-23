@@ -112,7 +112,7 @@ function JobCard({ host, job, cuts, onDone, vault }) {
       </div>
     </div>
     ${vault ? html`<${VaultJobFacts} host=${host} job=${job} />` : html`<dl class="facts">
-      ${job.dump ? html`<dt>Dump</dt><dd><span class="mono">${job.dump}</span> <span class="muted">· defined in the host's agent.yaml</span></dd>`
+      ${job.dump ? html`<dt>Dump</dt><dd><span class="mono">${job.dump}</span> <span class="muted">· no longer run since 0.6.0 (decision 052): edit the job to give it paths</span></dd>`
         : html`<dt>Paths</dt><dd class="mono">${(job.paths || []).join('  ')}${job.excludes?.length ? html` <span class="muted">· excludes ${job.excludes.join(' ')}</span>` : ''}</dd>`}
       <dt>Schedule</dt><dd>${scheduleText(job.schedule)} · longest gap ${dur(job.longest_gap)} · stale after ${dur(job.stale_after)}</dd>
       <dt>Retention</dt><dd>${retentionText(job.retention)}</dd>

@@ -566,43 +566,8 @@
         mode: "0600"
       no_log: true
 
-# The dump test's database on each agent: the distribution's own PostgreSQL, running, so the test dumps,
-# restores and loads it as an admin would (lab/test-recovery.sh).
-- name: PostgreSQL on the agents, for the dump test
-  hosts: agent
-  gather_facts: false
-  tags: [agentdb]
-  vars_files:
-    - "../labs/{{ lab }}.yml"
-    - lab-vars.yml
-  vars:
-    is_debian: "{{ images[vms[inventory_hostname].image].family == 'debian' }}"
-  tasks:
-    - name: PostgreSQL from Ubuntu
-      ansible.builtin.apt:
-        name: postgresql
-        state: present
-        update_cache: true
-        cache_valid_time: 86400
-      when: is_debian
-
-    - name: PostgreSQL from AppStream
-      ansible.builtin.dnf:
-        name: postgresql-server
-        state: present
-      when: not is_debian
-
-    - name: Its data directory, made once (EL)
-      ansible.builtin.command:
-        argv: [postgresql-setup, --initdb]
-        creates: /var/lib/pgsql/data/PG_VERSION
-      when: not is_debian
-
-    - name: Running
-      ansible.builtin.systemd:
-        name: postgresql
-        state: started
-        enabled: true
+# The agents have no PostgreSQL of their own: it was there for M6's dump test, which went with dump jobs in 0.6.0
+# (decision 052). A lab made before keeps it, unused.
 
 # The packages, as an admin installs them: the VM's family's .deb or .rpm files of this build, with no
 # network (dpkg -i, rpm -U). They hold restic in /usr/libexec/holdfast, the binaries and the units, which they do not

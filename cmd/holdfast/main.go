@@ -432,7 +432,6 @@ type jobFlags struct {
 	keepLast                                   int
 	accept                                     []string
 	limitUpload                                int
-	dump                                       string
 }
 
 // finding is one check that fired (spec §4.5).
@@ -473,7 +472,6 @@ func (f *jobFlags) register(c *cobra.Command) {
 	c.Flags().IntVar(&f.keepLast, "keep-last", 3, "always keep the newest N")
 	c.Flags().StringSliceVar(&f.accept, "accept", nil, "accept these warning codes, such as R102,R104 (errors cannot be accepted)")
 	c.Flags().IntVar(&f.limitUpload, "limit-upload", 0, "cap the backup's upload, in KiB/s (restic --limit-upload); 0 for none")
-	c.Flags().StringVar(&f.dump, "dump", "", "back up a dump the host's agent.yaml defines, by name, instead of paths (decision 037)")
 }
 
 func window(s string) (map[string]any, error) {
@@ -509,9 +507,6 @@ func (f *jobFlags) job(c *cobra.Command) (map[string]any, error) {
 	}
 	if changed("exclude") {
 		j["excludes"] = f.excludes
-	}
-	if changed("dump") {
-		j["dump"] = f.dump
 	}
 	if changed("limit-upload") {
 		j["limit_upload_kib"] = f.limitUpload
@@ -573,7 +568,7 @@ func jobCmd() *cobra.Command {
 	var msg string
 	var base int64
 	set := &cobra.Command{Use: "set <fqdn> <job>", Short: "Create or change a job (a new revision): a new job takes what you do not give from the default job, an existing one keeps its own",
-		Long: "Create or change a job, as a new revision.\n\nA new job needs --path (or --dump); the rest comes from the default job unless you give it: daily at\n" +
+		Long: "Create or change a job, as a new revision.\n\nA new job needs --path; the rest comes from the default job unless you give it: daily at\n" +
 			"02:00 with a 20-minute spread; one backup per day for 14 days, per week for 8 weeks, per month for 12 months\n" +
 			"and per year for 3 years; always the newest 3. An existing job keeps what you do not give: --daily, --every or\n" +
 			"--weekly replace its schedule, any --keep-* flag replaces its whole retention.",

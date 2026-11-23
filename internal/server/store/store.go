@@ -551,8 +551,9 @@ type Agent struct {
 	RestoreBounds      *proto.RestoreBounds `json:"restore_bounds,omitempty"` // the host's own limits
 	// Protocol is the agent protocol it last reported; 0 from an agent before M5, which speaks 1.
 	Protocol int `json:"protocol"`
-	// Dumps are the names of the dumps its agent.yaml defines (decision 037).
-	Dumps []string `json:"dumps"`
+	// Dumps held the dumps an agent before 0.6.0 reported; no agent reports them since dump jobs were removed
+	// (decision 052). The column stays, empty, and is not shown.
+	Dumps []string `json:"-"`
 	// Paused is set while the agent reports a pause, and idle.
 	Paused *proto.Paused `json:"paused,omitempty"`
 }

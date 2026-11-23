@@ -3,46 +3,31 @@ package agent
 import (
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 )
 
-// Decision 037: the dump runs with a clean environment, as its user, and agent.yaml is checked.
-func TestDumpCommand(t *testing.T) {
-	got := dumpCommand(Dump{Command: []string{"/usr/bin/pg_dumpall", "--clean"}, User: "postgres", Env: map[string]string{"PGPORT": "5433", "PGHOST": "/run/pg"}})
-	want := []string{"/usr/bin/env", "-i", "PATH=/usr/sbin:/usr/bin:/sbin:/bin", "LANG=C.UTF-8", "PGHOST=/run/pg", "PGPORT=5433",
-		"runuser", "-u", "postgres", "--", "/usr/bin/pg_dumpall", "--clean"}
-	if !slices.Equal(got, want) {
-		t.Fatalf("dump command:\n got %v\nwant %v", got, want)
-	}
-	if got := dumpCommand(Dump{Command: []string{"/usr/bin/mariadb-dump"}, User: "root"}); slices.Contains(got, "runuser") {
-		t.Fatalf("root needs no runuser: %v", got)
-	}
-
+// Decision 052: Holdfast runs no command on a host. An agent.yaml from before 0.6.0 with dumps still loads, so the
+// host's other jobs keep running, and the agent warns that dumps are ignored.
+func TestLegacyDumpsAreIgnored(t *testing.T) {
 	dir := t.TempDir()
-	write := func(s string) string {
-		p := filepath.Join(dir, "agent.yaml")
-		if err := os.WriteFile(p, []byte("server: https://h.example.test\nfqdn: web01.example.com\n"+s), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		return p
-	}
-	c, err := LoadConfig(write("dumps:\n  postgresql:\n    command: [/usr/bin/pg_dumpall]\n    user: postgres\n"))
-	if err != nil {
+	p := filepath.Join(dir, "agent.yaml")
+	body := "server: https://h.example.test\nfqdn: web01.example.com\ndumps:\n  postgresql:\n    command: [/usr/bin/pg_dumpall]\n"
+	if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if c.Dumps["postgresql"].Filename != "postgresql.dump" || !slices.Equal(c.DumpNames(), []string{"postgresql"}) {
-		t.Fatalf("defaults: %+v", c.Dumps)
+	c, err := LoadConfig(p)
+	if err != nil {
+		t.Fatalf("an agent.yaml with dumps must still load: %v", err)
 	}
-	for _, bad := range []string{
-		"dumps:\n  pg:\n    command: [pg_dumpall]\n",                           // not an absolute path
-		"dumps:\n  Bad_Name:\n    command: [/usr/bin/true]\n",                  // not a name
-		"dumps:\n  pg:\n    command: [/usr/bin/true]\n    filename: ../x\n",    // not a file name
-		"dumps:\n  pg:\n    command: [/usr/bin/true]\n    env: {\"A B\": x}\n", // not a variable
-	} {
-		if _, err := LoadConfig(write(bad)); err == nil || !strings.Contains(err.Error(), "dumps.") {
-			t.Errorf("accepted %q: %v", bad, err)
-		}
+	if w := c.Warnings(); len(w) != 1 || !strings.Contains(w[0], "dumps is ignored") {
+		t.Fatalf("warnings: %v", w)
+	}
+
+	if err := os.WriteFile(p, []byte("server: https://h.example.test\nfqdn: web01.example.com\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if c, err := LoadConfig(p); err != nil || len(c.Warnings()) != 0 {
+		t.Fatalf("without dumps, no warning: %v %v", c.Warnings(), err)
 	}
 }

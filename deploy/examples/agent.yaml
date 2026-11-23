@@ -1,5 +1,5 @@
-# /etc/holdfast/agent.yaml, written by `holdfast-agent enroll`. Enrolling again keeps restore: and dumps:, which
-# are the host's own: only root here sets them, and the server cannot.
+# /etc/holdfast/agent.yaml, written by `holdfast-agent enroll`. Enrolling again keeps restore:, which is the host's
+# own: only root here sets it, and the server cannot.
 server: https://holdfast.example.internal:8443
 fqdn: web01.example.com
 ca_sha256: ""
@@ -15,15 +15,7 @@ restore:
   root: /var/restore
   allow_in_place: false          # over the original files, after a safety backup
   allow_other_directories: false # into any other directory
-  allow_other_hosts: false       # another host's snapshot, with a read-only key an admin made
+  allow_other_hosts: false       # another host's snapshot, which the gateway lets this host read for that restore
 
-# The commands a dump job may name (decision 037, spec §4.6). No shell: the first item is an absolute path. Each runs
-# as its user, with only PATH, LANG and its env.
-# dumps:
-#   postgresql:
-#     command: [/usr/bin/pg_dumpall, --clean]
-#     user: postgres
-#     filename: postgresql.sql
-#   mariadb:
-#     command: [/usr/bin/mariadb-dump, --all-databases, --single-transaction, --routines, --events]
-#     filename: mariadb.sql        # as root, over the socket: no password needed
+# Holdfast runs no command on a host (decision 052): there is no dumps: any more. A database is backed up from the
+# export a systemd timer on the host writes, with a paths job (spec §4.6).

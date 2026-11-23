@@ -211,7 +211,7 @@ func (s *Server) Poll(ctx context.Context, fqdn string, req proto.PollRequest, w
 	if err := q.RecordHeartbeat(ctx, fqdn, store.Heartbeat{AgentVersion: req.Facts.AgentVersion, ResticVersion: req.Facts.ResticVersion,
 		OSID: req.Facts.OSID, OSVersion: req.Facts.OSVersion, HostnameFQDN: req.Facts.HostnameFQDN, Timezone: req.Facts.Timezone,
 		ClockOffsetMS: offset, AppliedRevision: req.Applied.Revision, AppliedSHA256: req.Applied.SHA256, CredentialsVersion: req.CredentialsVersion,
-		RestoreBounds: req.Facts.RestoreBounds, Protocol: req.Facts.Protocol, Dumps: req.Facts.Dumps, Paused: req.Paused}, now); err != nil {
+		RestoreBounds: req.Facts.RestoreBounds, Protocol: req.Facts.Protocol, Paused: req.Paused}, now); err != nil {
 		return proto.PollResponse{}, err
 	}
 	if err := q.AckCommands(ctx, fqdn, req.AckedCommands, now); err != nil {

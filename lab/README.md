@@ -27,7 +27,7 @@ hfsrv and the agents have restic 0.19.1 at `/usr/libexec/holdfast/restic`. Each 
 | `lab/lab status m1 [--json]` | absent, off, ready or broken, with what each VM answered and why it is not ready |
 | `lab/lab ssh m1 <vm> [command]` | SSH as root with the lab's key |
 | `lab/lab deploy m1` | builds this checkout's packages and installs them on hfsrv and the agents, restarting any Holdfast service that runs |
-| `lab/lab test m1 [<vm>...]` | M2's "done when", the fidelity test through Holdfast (below): builds and deploys, provisions the server and Authelia, checks login on the UI through Authelia, then backs up and restores the metadata fixture on each agent VM (or those named) and compares the 13 properties; then M6's rebuild and dump tests, M8's off-site test and M9's server rebuild (below) |
+| `lab/lab test m1 [<vm>...]` | M2's "done when", the fidelity test through Holdfast (below): builds and deploys, provisions the server and Authelia, checks login on the UI through Authelia, then backs up and restores the metadata fixture on each agent VM (or those named) and compares the 13 properties; then M6's rebuild test, M8's off-site test and M9's server rebuild (below) |
 | `lab/lab sizing m1 [<vm>...]` | what one server's gateway carries: every agent backs up new random data at once, timed (below) |
 | `lab/lab isolation m1 account` | the RGW-accounts test (below) |
 | `lab/lab isolation m1 <user-policy\|bucket-policy> [--maint-policy]` | the same question without accounts |
@@ -290,17 +290,17 @@ The run found one gap: **measuring a repository's size needs `s3:ListBucketVersi
 the maintenance policy lacked; MinIO lists versions with `s3:ListBucket` alone, so the e2e suite did not see it.
 `docs/storage.md` and `rgw-documented-layout.sh` now grant it, and the size error names it.
 
-### M6's lab tests: the rebuild and the dump
+### M6's lab test: the rebuild
 
-After the fidelity test, `lab/lab test m1` runs `lab/test-recovery.sh`. `site.yml --tags agentdb`
-installs each agent's own PostgreSQL first.
-- **The bare-metal runbook's first path** (`docs/runbooks/bare-metal.md`), on one VM (`HF_REBUILD_VM`, default the
-  first agent): the last fidelity snapshot noted; the fixture moved aside; the agent's packages removed and
-  `/etc/holdfast` and `/var/lib/holdfast-agent` deleted; the packages installed again; a new code; the agent enrolled
-  with `restore.allow_in_place`; the snapshot restored in place; and `hf-fidelity compare` of the restored fixture with
-  the one moved aside.
-- **The dump test** on each agent: a database of 1000 rows, a dump in `agent.yaml` (`pg_dump` as `postgres`), a dump job,
-  a backup, a restore into a new directory, the file loaded into a fresh database as `postgres`, and its rows counted.
+After the fidelity test, `lab/lab test m1` runs `lab/test-recovery.sh`: **the bare-metal runbook's first path**
+(`docs/runbooks/bare-metal.md`), on one VM (`HF_REBUILD_VM`, default the first agent): the last fidelity snapshot
+noted; the fixture moved aside; the agent's packages removed and `/etc/holdfast` and `/var/lib/holdfast-agent` deleted;
+the packages installed again; a new code; the agent enrolled with `restore.allow_in_place`; the snapshot restored in
+place; and `hf-fidelity compare` of the restored fixture with the one moved aside.
+
+Until 0.6.0 it also ran **the dump test** on each agent, with the distribution's own PostgreSQL: a dump job's backup
+of `pg_dump`, restored into a new directory and loaded into a fresh database. 0.6.0 removed dump jobs (decision 052),
+and the test with them; the agents no longer get a PostgreSQL. The results below are from before.
 
 **Result, 2026-11-22** (M6):
 
@@ -313,8 +313,9 @@ PASS   ol9 dump        PostgreSQL 13.23: dumped as postgres, restored, loaded: 1
 
 The first run found a bug: on el9 and ol9 a dump's restore failed with `xattr.LRemove … security.selinux: permission
 denied`. A dump's file has no SELinux label in its snapshot, so restic tried to remove the label the new file got, which
-SELinux refuses. A dump's restore, and a restore from another host, now leave that label alone
-(`--exclude-xattr security.selinux`); other restores still restore labels exactly, as the fidelity test checks.
+SELinux refuses. A dump snapshot's restore, and a restore from another host, now leave that label alone
+(`--exclude-xattr security.selinux`); other restores still restore labels exactly, as the fidelity test checks. The
+dump snapshots made before 0.6.0 still restore that way.
 
 ### M8's lab test: off-site copies
 

@@ -27,8 +27,10 @@ tells you by mail or chat when something is wrong.
   the host, into a new folder, in place, onto another host or from the off-site copy. File contents never leave a
   host through Holdfast.
 - **Backups checked in the bucket**: after every backup the server reads the repository back from S3.
-- **Database dumps**, **optional off-site copies**, **checks with stable codes** that stop mistakes before they are
-  saved, and a **config history and audit log** of every change and action.
+- **No commands run on your hosts**: the agent runs restic, and nothing before or after it. A database is backed up
+  from the export a systemd timer on the host writes.
+- **Optional off-site copies**, **checks with stable codes** that stop mistakes before they are saved, and a **config
+  history and audit log** of every change and action.
 - **Alerts without extra software** (mail, webhook, heartbeat), Prometheus metrics if you want them, and a
   **web UI** with OIDC login and three roles.
 - **Recovery of Holdfast itself**: a nightly encrypted export, every repository password escrowed with `age`, and

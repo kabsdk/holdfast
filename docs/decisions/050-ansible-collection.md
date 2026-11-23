@@ -2,6 +2,10 @@
 
 Status: accepted, 2026-11-23. The aim was an Ansible collection for the server and the agent that is idempotent,
 follows best practice and is as simple as possible while keeping all functionality, released with Holdfast.
+**Amended in 0.6.0:** with decision 052 the roles set no dumps (`holdfast_dumps` is gone) and take out of
+`agent.yaml` a `dumps:` that 0.5.0 left there, so of `agent.yaml` they own only the restore limits. And the server and
+agent roles require `holdfast_fqdn`, where the installer reads `hostname -f`: the roles read no host name from the
+machine.
 
 ## Decision
 

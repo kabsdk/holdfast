@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -14,13 +13,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/minio/minio-go/v7"
 
 	"github.com/kabsdk/holdfast/internal/agent"
 )
 
-// M6: dumps, a restore onto another host, and rolling a repository back.
+// No commands on hosts, a restore onto another host, and rolling a repository back.
 
 // editAgent changes the agent's own config, as root on the host would, while it is stopped.
 func editAgent(t *testing.T, a *agentProc, edit func(c *agent.Config)) {
@@ -64,113 +62,26 @@ func waitStatus(t *testing.T, e *env, fqdn, job, status string, n int) {
 	waitFor(t, fmt.Sprintf("%s/%s %s", fqdn, job, status), 2*time.Minute, func() bool { return countStatus(e.events(fqdn), job, status) >= n })
 }
 
-func TestDump(t *testing.T) {
-	pgDump, err1 := exec.LookPath("pg_dump")
-	psql, err2 := exec.LookPath("psql")
-	if err1 != nil || err2 != nil {
-		t.Skip("needs PostgreSQL's client tools: make e2e's image has them")
-	}
-	ctx := context.Background()
-	admin := os.Getenv("HOLDFAST_TEST_PG")
-	cfg, err := pgx.ParseConfig(admin)
-	must(t, err)
-	pgEnv := map[string]string{"PGHOST": cfg.Host, "PGPORT": fmt.Sprint(cfg.Port), "PGUSER": cfg.User, "PGPASSWORD": cfg.Password}
-	db := "hf_dump_" + randHex(4)
-	conn, err := pgx.Connect(ctx, admin)
-	must(t, err)
-	defer conn.Close(ctx)
-	for _, d := range []string{db, db + "_check"} {
-		_, err := conn.Exec(ctx, "CREATE DATABASE "+d)
-		must(t, err)
-		t.Cleanup(func() { _, _ = conn.Exec(context.Background(), "DROP DATABASE IF EXISTS "+d+" WITH (FORCE)") })
-	}
-	src, err := pgx.Connect(ctx, strings.Replace(admin, "/postgres?", "/"+db+"?", 1))
-	must(t, err)
-	_, err = src.Exec(ctx, `CREATE TABLE orders (id int PRIMARY KEY, note text); INSERT INTO orders SELECT g, 'order ' || g FROM generate_series(1, 1000) g`)
-	must(t, err)
-	src.Close(ctx)
-
+// Decision 052: Holdfast runs no command on a host. job set has no --dump, and an agent.yaml from before 0.6.0 that
+// still defines dumps loads, says they are ignored, and backs up its paths.
+func TestNoCommandsOnHosts(t *testing.T) {
 	e := newEnv(t)
 	const fqdn = "db01.example.com"
-	restoreRoot := filepath.Join(e.dir, "restore-db01")
+	if out, err := e.cliErr("job", "set", fqdn, "pg", "--dump", "pg"); err == nil || !strings.Contains(string(out), "unknown flag") {
+		t.Fatalf("job set --dump must be gone: %v %s", err, out)
+	}
 	a := e.enrollAgent(fqdn, e.addHost(fqdn, "etc", "--path", smallSource(t), "--daily", "02:00"))
 	editAgent(t, a, func(c *agent.Config) {
-		c.Restore.Root = restoreRoot
-		c.Dumps = map[string]agent.Dump{
-			"pg":     {Command: []string{pgDump, "--no-owner", "--dbname", db}, Env: pgEnv, Filename: "orders.sql"},
-			"env":    {Command: []string{"/usr/bin/env"}, Filename: "env.txt"},
-			"whoami": {Command: []string{"/usr/bin/id", "-un"}, User: "nobody"},
-			"broken": {Command: []string{"/bin/sh", "-c", "echo partial; exit 3"}},
-		}
+		c.Dumps = map[string]any{"pg": map[string]any{"command": []string{"/usr/bin/touch", filepath.Join(e.dir, "ran")}}}
 	})
 	e.runAgent(a)
 	e.waitProgress(fqdn, "first_backup_done", 2*time.Minute)
-
-	// A dump the host does not define is refused (D001); the others are jobs like any other.
-	if out, err := e.cliErr("job", "set", fqdn, "nope", "--dump", "nope", "--daily", "03:00", testAccept); err == nil || !strings.Contains(string(out), "D001") {
-		t.Fatalf("an unknown dump: %v %s", err, out)
-	}
-	for _, d := range []string{"pg", "env", "whoami", "broken"} {
-		e.cli("job", "set", fqdn, d, "--dump", d, "--daily", "03:00", testAccept)
-		e.cli("job", "run", fqdn, d)
-	}
-	for _, d := range []string{"pg", "env", "whoami"} {
-		waitStatus(t, e, fqdn, d, "success", 1)
-	}
-	waitStatus(t, e, fqdn, "broken", "failed", 1)
-	var snaps []struct {
-		JobID string `json:"job_id"`
-	}
-	must(t, json.Unmarshal(e.cli("snapshot", "list", fqdn, "--refresh"), &snaps))
-	for _, s := range snaps {
-		if s.JobID == "broken" {
-			t.Fatal("a dump whose command failed made a snapshot")
-		}
-	}
-
-	// Restored into a new directory only, then loaded and compared.
-	pgSnap := e.latestSnapshot(fqdn, "pg")
-	if out, err := e.cliErr("restore", fqdn, pgSnap, "--in-place"); err == nil || !strings.Contains(string(out), "new directory") {
-		t.Fatalf("a dump in place: %v %s", err, out)
-	}
-	ev, err := e.restoreWait(fqdn, pgSnap)
-	if err != nil || ev.Status != "success" {
-		t.Fatalf("restore the dump: %+v %v", ev, err)
-	}
-	load := exec.Command(psql, "-v", "ON_ERROR_STOP=1", "-q", "--dbname", db+"_check", "-f", filepath.Join(ev.Detail["directory"], "orders.sql"))
-	load.Env = os.Environ()
-	for k, v := range pgEnv {
-		load.Env = append(load.Env, k+"="+v)
-	}
-	if out, err := load.CombinedOutput(); err != nil {
-		t.Fatalf("loading the dump: %v\n%s", err, out)
-	}
-	check, err := pgx.Connect(ctx, strings.Replace(admin, "/postgres?", "/"+db+"_check?", 1))
-	must(t, err)
-	var n int
-	must(t, check.QueryRow(ctx, "SELECT count(*) FROM orders WHERE note LIKE 'order %'").Scan(&n))
-	check.Close(ctx)
-	if n != 1000 {
-		t.Fatalf("the loaded dump has %d rows, want 1000", n)
-	}
-
-	// The dump command never sees restic's environment: no S3 key, no password file.
-	ev, err = e.restoreWait(fqdn, e.latestSnapshot(fqdn, "env"))
-	if err != nil || ev.Status != "success" {
-		t.Fatalf("restore the env dump: %+v %v", ev, err)
-	}
-	envOut, err := os.ReadFile(filepath.Join(ev.Detail["directory"], "env.txt"))
-	must(t, err)
-	if strings.Contains(string(envOut), "AWS_") || strings.Contains(string(envOut), "RESTIC_") || !strings.Contains(string(envOut), "PATH=/usr/sbin") {
-		t.Fatalf("the dump command's environment:\n%s", envOut)
-	}
-	// And it runs as its user.
-	ev, err = e.restoreWait(fqdn, e.latestSnapshot(fqdn, "whoami"))
-	if err != nil || ev.Status != "success" {
-		t.Fatalf("restore the whoami dump: %+v %v", ev, err)
-	}
-	if b, _ := os.ReadFile(filepath.Join(ev.Detail["directory"], "whoami.dump")); strings.TrimSpace(string(b)) != "nobody" {
-		t.Fatalf("the dump ran as %q, not nobody", b)
+	waitFor(t, "the agent's warning", time.Minute, func() bool {
+		b, _ := os.ReadFile(e.logFile(filepath.Base(a.dir)))
+		return strings.Contains(string(b), "dumps is ignored")
+	})
+	if _, err := os.Stat(filepath.Join(e.dir, "ran")); err == nil {
+		t.Fatal("the agent ran a command from agent.yaml")
 	}
 }
 

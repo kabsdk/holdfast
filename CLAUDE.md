@@ -62,6 +62,8 @@ These also follow from the spec:
 
 - Credentials never appear in the UI, in API or CLI output, in logs, in metrics or in config revisions.
 - Agents never run forget or prune. Only the maintenance leader does.
+- Holdfast runs no command on a host: no dumps, no pre-backup hooks (decision 052). Preparing data, such as a
+  database export, is the host's job, with its own timer and monitoring; Holdfast backs up the files.
 - There is no raw restic console and there are no free-form restic arguments.
 - Passwords are never passed in argv, and restic never inherits `RESTIC_*` or `AWS_*` variables from its
   parent process.

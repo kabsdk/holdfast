@@ -23,14 +23,16 @@ This path is walked in the lab (`lab/README.md`, the rebuild test).
 5. **Enroll it**, as root on the host, with the command Holdfast printed: the new agent makes its own key and
    certificate, and the server pins them in place of the lost host's. Before starting the agent, set what it
    may do in `/etc/holdfast/agent.yaml`, which is the host's own (`deploy/examples/agent.yaml`): `restore.allow_in_place:
-   true` to restore over the fresh system, and the `dumps:` it had. Then `systemctl enable --now holdfast-agent`.
+   true` to restore over the fresh system. Then `systemctl enable --now holdfast-agent`.
 6. **Restore** the snapshot from step 3:
    - in place, for configuration and data: `holdfast restore web01.example.com <id> --in-place --only /etc/nginx
      --only /srv/www --wait`. The agent first backs up what it replaces, so this too can be undone;
    - or into a new directory, to copy from: `holdfast restore web01.example.com <id> --wait`, which prints the
      directory under `/var/restore`;
-   - a dump: `holdfast restore web01.example.com <dump snapshot> --wait`, then load the file on the host, such as
-     `sudo -u postgres psql -f /var/restore/…/postgresql.sql`.
+   - a database: restore its export into a new directory, then load it on the host, as root, such as
+     `runuser -u postgres -- psql -d postgres < /var/restore/…/var/backups/postgresql/all.sql`. A dump snapshot from
+     before 0.6.0 is restored the same way, and holds the one file. The export's systemd timer comes back with the
+     host's configuration management, or with `/etc/systemd/system` from the restore.
 7. **Check** that the next backup succeeds: `holdfast host events web01.example.com`.
 
 **A different FQDN**, such as a spare taking over, is a restore onto another host (spec §5.4): the spare's

@@ -37,8 +37,9 @@ type Job struct {
 	Retention Retention         `json:"retention"` // stored from M1; acted on from M3
 	// LimitUploadKiB caps the backup's upload, in KiB/s: restic's --limit-upload. 0: no limit (M5).
 	LimitUploadKiB int `json:"limit_upload_kib,omitempty"`
-	// Dump names a dump defined in the host's agent.yaml (decision 037). A job backs up either paths or a
-	// dump, never both.
+	// Dump named a command in the host's agent.yaml whose output the job backed up, until 0.6.0 removed dump
+	// jobs: Holdfast runs no command on a host (decision 052). It is kept so that a revision from before reads, and
+	// a job that still has it is refused with a reason; snapshots it made are restored as any other.
 	Dump string `json:"dump,omitempty"`
 
 	// In a vault only (decisions 027 and 039): Retention is then the off-site retention, the vault's own;
@@ -49,7 +50,7 @@ type Job struct {
 	Retired  bool       `json:"retired,omitempty"`
 }
 
-// IsDump says whether the job backs up a dump rather than paths.
+// IsDump says whether the job is a dump job from before 0.6.0 (decision 052).
 func (j Job) IsDump() bool { return j.Dump != "" }
 
 // Library holds paths items, protection items and profiles (M5). Until then the entries are kept

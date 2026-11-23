@@ -47,7 +47,7 @@ func TestMergeJob(t *testing.T) {
 		t.Fatalf("a retention: %+v %v", j.Retention, err)
 	}
 
-	// A dump drops the paths, and paths drop the dump.
+	// Paths turn a dump job from before 0.6.0 into a paths job (decision 052); a dump itself is refused by Validate.
 	j, err = mergeJob(base, json.RawMessage(`{"dump": "postgresql"}`), false)
 	if err != nil || j.Dump != "postgresql" || len(j.Paths) != 0 {
 		t.Fatalf("a dump: %+v %v", j, err)

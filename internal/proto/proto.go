@@ -58,8 +58,6 @@ type Facts struct {
 	// RestoreBounds are the host's own limits on restores, from agent.yaml. The server shows them and
 	// refuses early, but the agent decides (decision 030).
 	RestoreBounds *RestoreBounds `json:"restore_bounds,omitempty"`
-	// Dumps are the names of the dumps agent.yaml defines (decision 037); never their commands.
-	Dumps []string `json:"dumps,omitempty"`
 }
 
 // RestoreBounds limit what a restore may do on this host. Only root on the host can change them.
@@ -166,7 +164,8 @@ type JobConfig struct {
 	Schedule schedule.Schedule `json:"schedule"`
 	// LimitUploadKiB is restic's --limit-upload, in KiB/s; 0: no limit.
 	LimitUploadKiB int `json:"limit_upload_kib,omitempty"`
-	// Dump names a dump in the host's agent.yaml (decision 037; protocol 2). Paths are then empty.
+	// Dump is set on a dump job from before 0.6.0, which removed dump jobs (decision 052). An agent of 0.6.0 or
+	// later fails the job with that reason, and runs no command.
 	Dump string `json:"dump,omitempty"`
 }
 

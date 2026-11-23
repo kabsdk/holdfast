@@ -169,7 +169,7 @@ function Restore({ fqdn, snap, host, only }) {
       : html`<p class="muted">Everything in the snapshot (paths: <code>${(snap.paths || []).join(' ')}</code>). To leave something out, give its path, one per line:</p>
         <textarea placeholder="/etc/ssl/private" value=${leaveOut} onInput=${(e) => setLeaveOut(e.target.value)} />`}
     <h3>2 · Target on ${elsewhere ? toHost : fqdn}</h3>
-    ${isDump && html`<p class="muted">This snapshot is a dump: one file, restored into a new directory. Loading it into the database is done on the host.</p>`}
+    ${isDump && html`<p class="muted">This snapshot was made by a dump job, before 0.6.0: one file, restored into a new directory. Loading it is done on the host.</p>`}
     <label class="field"><input type="radio" checked=${target === 'new'} onChange=${() => setTarget('new')} /> A new restore directory under ${elsewhere ? 'that host’s restore root' : bounds?.root || '/var/restore'}, made by the agent, root-only (mode 0700). Files keep their owner, mode and ACLs.</label>
     ${inPlace && !isDump && !elsewhere && html`<label class="field"><input type="radio" checked=${target === 'in_place'} onChange=${() => setTarget('in_place')} disabled=${bounds && !bounds.allow_in_place} />
       The original location: writes into the live paths. The agent first backs up exactly what it will replace. ${bounds && !bounds.allow_in_place ? html`<span class="muted">(this host does not allow it: restore.allow_in_place in agent.yaml)</span>` : ''}</label>`}

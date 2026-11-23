@@ -201,7 +201,7 @@ figure.shot img { display: block; width: 100%; height: auto; border: 1px solid v
       <li><a href="#upgrade">Upgrading</a></li><li><a href="#remove">Removing</a></li></ol></li>
     <li><a href="#usage">Using Holdfast</a>
       <ol><li><a href="#hosts">Hosts</a></li><li><a href="#jobs">Jobs and schedules</a></li><li><a href="#retention">Retention</a></li>
-      <li><a href="#checks">Checks and their codes</a></li><li><a href="#snapshots">Snapshots</a></li><li><a href="#restore">Restoring</a></li><li><a href="#dumps">Database dumps</a></li>
+      <li><a href="#checks">Checks and their codes</a></li><li><a href="#snapshots">Snapshots</a></li><li><a href="#restore">Restoring</a></li><li><a href="#dumps">Databases and exports</a></li>
       <li><a href="#deleting">Deleting</a></li><li><a href="#offsite">Off-site copies</a></li><li><a href="#history">History and audit</a></li>
       <li><a href="#problems">Problems</a></li><li><a href="#access">Access and roles</a></li><li><a href="#cli-ref">CLI reference</a></li></ol></li>
     <li><a href="#operating">Operating Holdfast</a>
@@ -267,7 +267,7 @@ figure.shot img { display: block; width: 100%; height: auto; border: 1px solid v
       <li><strong>Retention as time windows.</strong> "One per day for 14 days, one per month for a year", decided by restic's own <code>forget --dry-run</code>.</li>
       <li><strong>Safe deletion.</strong> Every deletion waits 7 days and can be cancelled; only an admin's Prune now or Delete now skips the wait. Behind that, S3 versioning keeps deleted files until your lifecycle rule expires them, out of Holdfast's reach.</li>
       <li><strong>Browsing and restoring.</strong> File names and metadata of every snapshot, what changed between two snapshots, a file's versions across all snapshots, and restores on the host: into a new folder, in place, into another folder, onto another host, or from the off-site copy.</li>
-      <li><strong>Database dumps</strong> from commands defined on the host, such as <code>pg_dumpall</code>.</li>
+      <li><strong>No commands run on your hosts.</strong> The agent runs restic, and nothing before or after it. A database is backed up from the export a systemd timer on the host writes, such as <code>pg_dumpall</code>'s (<a href="#dumps">Databases and other exports</a>).</li>
       <li><strong>Optional off-site copies</strong> into a second bucket, with their own passwords and their own retention.</li>
       <li><strong>Checks with stable codes</strong> that stop mistakes before they are saved, such as R104 for a change that cuts retention.</li>
       <li><strong>Config history and audit.</strong> Every change is a numbered revision with who, when and why, and any two can be compared. Every action is in the host's history and the audit log, with the person, the time and any warnings they accepted.</li>
@@ -542,8 +542,8 @@ holdfast snapshot list web01.example.com</code></pre></div></li>
         <figcaption><strong>A host.</strong> Its agent and the revision it runs, its repository and escrow file, each job with its schedule, retention, newest snapshot and next run, and the recent runs. Storage checks and problems show here when there are any. The buttons are the host's actions: <strong>Add job</strong>, <strong>Pending</strong>, <strong>Run retention now</strong>, <strong>Prune now</strong>, <strong>New enrollment code</strong>, <strong>Rotate password</strong>, <strong>Roll back</strong> and <strong>Remove host</strong>, after which <strong>Decommission</strong> appears; and per job <strong>Back up now</strong>, <strong>Snapshots</strong>, <strong>Restore from latest</strong>, <strong>Edit</strong> and <strong>Remove job</strong>. You see only the buttons your role allows.</figcaption>
       </figure>
       <figure class="shot">
-        <img src="img/configure.png" alt="The job form: what to back up (paths or a dump), excludes, when it runs with an optional spread, and beside them what you get: worst-case data loss, restore points, the oldest restore point, when the stale alert fires, and the restic forget command the retention means; then Save as a new revision with a message." loading="lazy">
-        <figcaption><strong>A job.</strong> Paths or a dump, excludes, the schedule and, further down, the retention. As you type, the server checks the job and shows what you get: the worst-case data loss, the restore points, the oldest one, when it counts as stale, and the <code>restic forget</code> its retention means. A save needs a message; findings show with their codes to fix or accept, and further down the page the same change as a <code>holdfast job set</code> command.</figcaption>
+        <img src="img/configure.png" alt="The job form: what to back up (paths), excludes, when it runs with an optional spread, and beside them what you get: worst-case data loss, restore points, the oldest restore point, when the stale alert fires, and the restic forget command the retention means; then Save as a new revision with a message." loading="lazy">
+        <figcaption><strong>A job.</strong> Paths, excludes, the schedule and, further down, the retention. As you type, the server checks the job and shows what you get: the worst-case data loss, the restore points, the oldest one, when it counts as stale, and the <code>restic forget</code> its retention means. A save needs a message; findings show with their codes to fix or accept, and further down the page the same change as a <code>holdfast job set</code> command.</figcaption>
       </figure>
       <figure class="shot">
         <img src="img/snapshots.png" alt="A job's snapshot list: two snapshots of web01's system job with the time taken, short ID, file count and size, and the retention rules that keep each; below, a search for a file across all snapshots." loading="lazy">
@@ -733,7 +733,7 @@ mc admin policy attach s3 holdfast-maint --user holdfast-maint</code></pre></div
       <p><strong>AWS S3</strong>: make the bucket with versioning and the lifecycle rule, and two IAM users with an access key each and the policies above.</p>
     </details>
     <p><strong>Holdfast tests these rules itself</strong> with plain S3 calls: when a host is added, before an enrollment is accepted, and every day for every host. A rule that fails is reported with its code, B001 to B016 (<a href="#ref-storage-codes">Storage checks</a>), and a host cannot be added or enroll until it is fixed. Right after the install, the server writes its first nightly export, which uses the maintenance key under <code>meta/</code>: <code>holdfast export list</code> shows whether that worked. The gateway key is first tested by the first <code>holdfast host add</code>.</p>
-    <p><strong>If B003 fails</strong> ("the maintenance key cannot read what the gateway key wrote"): on some S3 servers an object belongs to the user who wrote it. On Ceph RGW, put both users in one RGW account (Squid and later), or add a bucket-policy statement that gives the maintenance user <code>s3:GetObject</code>, <code>s3:PutObject</code> and <code>s3:DeleteObject</code> on <code>repos/*</code>. Do not grant <code>s3:*</code>.</p>
+    <p><strong>If B003 fails</strong> ("the maintenance key cannot read what the gateway key wrote"): on some S3 servers an object belongs to the user who wrote it, and a user's own policy cannot reach another user's objects. That happens with the policies given as each user's policy, outside an account. Either put both users in one RGW account (Squid and later), or give the policies as one bucket policy, set by the bucket's owner, as above: its maintenance statement then covers <code>repos/*</code> already. If you did give a bucket policy and B003 still fails, the policy is not in force: check that the bucket's owner set it and that each statement's <code>Principal</code> names the right user. Do not grant <code>s3:*</code>.</p>
     <p><strong>Object Lock</strong> is not required. If your bucket has it, Holdfast reports it on each host's page, and never extends a lock.</p>
   </div>
 
@@ -861,12 +861,7 @@ holdfast job set web01.example.com system --path /etc --path /home --path /srv -
   root: /var/restore             <span class="c"># restores into new folders under here (the default)</span>
   allow_in_place: false          <span class="c"># over the original files, after a safety backup</span>
   allow_other_directories: false <span class="c"># into any other folder</span>
-  allow_other_hosts: false       <span class="c"># another host's snapshot, onto this host</span>
-dumps:                           <span class="c"># commands a dump job may name (see Database dumps)</span>
-  postgresql:
-    command: [/usr/bin/pg_dumpall, --clean]
-    user: postgres
-    filename: postgresql.sql</code></pre></div>
+  allow_other_hosts: false       <span class="c"># another host's snapshot, onto this host</span></code></pre></div>
     <p>After changing it, <code>systemctl restart holdfast-agent</code>. Each <code>allow_</code> widens what an admin login, or whoever controls the server, can do on this host. In place means writing files there as root. Turn them on only where you need them, and off again afterwards.</p>
     <p><strong>A code expired</strong> after 15 minutes, or was used: <strong>New enrollment code</strong> on the host's page, or <code>holdfast host enroll-code web01.example.com</code>, issues a new one, with a new line. <strong>Configuration management</strong>: with Ansible, the collection does all of this (<a href="#install-ansible">With Ansible</a>). With another tool, install the two packages your own way and run only the enrollment, which <code>host add</code> also prints: <code>holdfast-agent enroll --server … --fqdn … --code … --ca-sha256 …</code>, then <code>systemctl enable --now holdfast-agent</code>.</p>
     <p>The agent runs as root, at low CPU and I/O priority (<code>Nice=10</code>, <code>IOSchedulingClass=idle</code>), so a backup gives way to the host's own work. Its first backup runs as soon as it has enrolled and has a job; after that, it follows the schedule. Its certificate does not expire; a new enrollment replaces it.</p>
@@ -947,6 +942,7 @@ HOLDFAST_DOWNLOAD_URL=file:///srv/holdfast/0.5.0 sh /srv/holdfast/0.5.0/install.
   <div class="sub" id="install-ansible">
     <h3>With Ansible</h3>
     <p>The collection <code>kabsdk.holdfast</code>, released beside the packages, does what the script does, as three roles: <code>server</code>, <code>agent</code> and <code>cli</code>. It takes the same settings in lower case: <code>HOLDFAST_S3_BUCKET</code> is <code>holdfast_s3_bucket</code>. The certificates and the recovery file are paths on the Ansible controller, and mail recipients and admins are lists. A second run with nothing to do changes nothing.</p>
+    <p><strong>The server and each host need <code>holdfast_fqdn</code></strong>, their FQDN: the roles read no host name from the machine. On the server, the URLs, the alerts' sender and the names in Holdfast's certificates default to it. On a host, <code>holdfast_hostname_autodetect: true</code> takes the host's own name (<code>hostname -f</code>) instead. The playbook gathers no facts, and the roles gather the little they need themselves, so it works with <code>gathering = explicit</code> in <code>ansible.cfg</code>.</p>
     <div class="cmd"><pre><code>ansible-galaxy collection install https://github.com/kabsdk/holdfast/releases/download/v0.5.0/kabsdk-holdfast-0.5.0.tar.gz
 ansible-playbook -i inventory.yml kabsdk.holdfast.site     <span class="c"># groups holdfast_server, holdfast_agents, holdfast_cli</span></code></pre></div>
     <div class="cmd"><pre><code><span class="c"># inventory.yml: the server's settings, and each host's jobs (secrets in Ansible Vault)</span>
@@ -955,6 +951,7 @@ all:
     holdfast_server:
       hosts:
         holdfast.example.com:
+          holdfast_fqdn: holdfast.example.com
           holdfast_s3_endpoint: https://s3.example.com
           holdfast_s3_bucket: holdfast
           holdfast_gateway_access_key_id: "{{ vault_gateway_key_id }}"
@@ -964,16 +961,23 @@ all:
           holdfast_webhook_url: https://chat.example.com/hooks/…
     holdfast_agents:
       vars:
-        holdfast_jobs: {system: --path /etc --path /home}   <span class="c"># the flags of holdfast job set</span>
+        holdfast_jobs:                         <span class="c"># each job a mapping of holdfast job set's flags</span>
+          system: {path: [/etc, /home], exclude: ["*.tmp"]}
       hosts:
         web01.example.com:
-        db01.example.com:</code></pre></div>
+          holdfast_fqdn: web01.example.com
+        db01.example.com:
+          holdfast_fqdn: db01.example.com
+          holdfast_jobs:
+            system: {path: [/etc]}
+            postgresql: {path: [/var/backups/postgresql], exclude: ["*.tmp"], daily: "02:00"}</code></pre></div>
+    <p>A job's keys are the flags of <code>holdfast job set</code> with an underscore for a dash, such as <code>keep_daily: 14d</code>. A list repeats the flag, <code>true</code> gives a flag alone, such as <code>no_spread: true</code>, and <code>false</code> leaves it out. Quote times, <code>"02:00"</code>: unquoted, YAML reads them as numbers. db01's <code>postgresql</code> job backs up the export a systemd timer writes there, which your own play sets up (<a href="#dumps">Databases and other exports</a>).</p>
     <p>The roles keep some things and leave others to Holdfast:</p>
     <ul class="plain">
       <li><strong><code>server.yaml</code> follows the settings.</strong> The script ignores settings on a server that is set up; the server role writes <code>server.yaml</code> on every run, and a change restarts the server. <code>holdfast_server_yaml</code> adds anything else <code>server.yaml</code> takes.</li>
       <li><strong>Each host is added and enrolled once.</strong> The agent role runs <code>holdfast host add</code> as root on the server, or <code>host enroll-code</code> for a host Holdfast knows, then enrolls the agent with the code.</li>
       <li><strong>Jobs are only made, never changed.</strong> A job in <code>holdfast_jobs</code> that the host lacks is made with <code>holdfast job set</code>. After that it is the UI's and CLI's, so a change made there is not undone by the next run.</li>
-      <li><strong>The host's own settings in <code>agent.yaml</code></strong>, the dumps and the restore limits, come from <code>holdfast_dumps</code> and <code>holdfast_restore</code> when given.</li>
+      <li><strong>The host's own restore limits in <code>agent.yaml</code></strong> come from <code>holdfast_restore</code> when given. The role also takes out a <code>dumps:</code> that 0.5.0 left there.</li>
       <li><strong>Nothing is removed.</strong> Removing a host stays <strong>Remove host</strong> or <code>holdfast host remove</code>.</li>
     </ul>
     <p>A lost server is replaced from the same inventory, run with <code>-e holdfast_recovery_file=/secure/holdfast-recovery.txt</code> on the new machine (<a href="#lost-server">A lost server</a>). An upgrade is a new <code>holdfast_version</code>; the playbook does the server first, then the agents. The collection's <code>README.md</code> lists every setting.</p>
@@ -1110,8 +1114,8 @@ curl -sfL https://github.com/kabsdk/holdfast/releases/download/v0.6.0/install.sh
     <h3>Jobs and schedules</h3>
     <p>A job says what to back up, when, and how long to keep it. <code>holdfast job set</code> makes one or changes one, as a new revision.</p>
     <ul class="plain">
-      <li><strong>A new job needs only its paths</strong>, or a dump. What it does not give comes from the default job: daily at 02:00 with a 20-minute spread, keeping one backup per day for 14 days, per week for 8 weeks, per month for 12 months and per year for 3 years, and always the newest 3. A schedule it does give is taken as given, with no spread unless it sets one.</li>
-      <li><strong>An existing job keeps what a save does not give.</strong> A new schedule form keeps the job's spread and zone; a retention given replaces the whole retention; paths replace a dump, and a dump replaces the paths.</li>
+      <li><strong>A new job needs only its paths.</strong> What it does not give comes from the default job: daily at 02:00 with a 20-minute spread, keeping one backup per day for 14 days, per week for 8 weeks, per month for 12 months and per year for 3 years, and always the newest 3. A schedule it does give is taken as given, with no spread unless it sets one.</li>
+      <li><strong>An existing job keeps what a save does not give.</strong> A new schedule form keeps the job's spread and zone; a retention given replaces the whole retention. Paths given to a dump job from 0.5.0 make it a paths job (<a href="#dumps">Databases and other exports</a>).</li>
     </ul>
     <p>Every option, in one command:</p>
     <div class="cmd"><pre><code>holdfast job set web01.example.com system --path /etc --path /home --path /srv \
@@ -1177,8 +1181,6 @@ curl -sfL https://github.com/kabsdk/holdfast/releases/download/v0.6.0/install.sh
           <tr><td>R005</td><td>A tier has no duration.</td></tr>
           <tr><td>S001</td><td>The spread is half the interval or more.</td></tr>
           <tr><td>S003</td><td>The schedule is invalid.</td></tr>
-          <tr><td>D001</td><td>The host's <code>agent.yaml</code> defines no dump of that name.</td></tr>
-          <tr><td>D002</td><td>The host's agent is too old for dump jobs.</td></tr>
         </tbody>
       </table></div>
       <div class="tablebox"><table>
@@ -1191,11 +1193,11 @@ curl -sfL https://github.com/kabsdk/holdfast/releases/download/v0.6.0/install.sh
           <tr><td>R103</td><td>The longest gap between runs is more than a day; the message gives the worst-case data loss.</td></tr>
           <tr><td>R104</td><td>The change cuts retention: the new policy keeps a strict subset of what the old one keeps. Accepting it needs an admin.</td></tr>
           <tr><td>O101</td><td>Off-site keeps less than primary.</td></tr>
-          <tr><td>I001 · I002</td><td>Information only: no yearly tier; a dump job on a host whose agent has not enrolled yet.</td></tr>
+          <tr><td>I001</td><td>Information only: there is no yearly tier.</td></tr>
         </tbody>
       </table></div>
     </div>
-    <p>Storage checks, the B codes, test the S3 server instead of the config, and cannot be accepted (<a href="#ref-storage-codes">Storage checks</a>).</p>
+    <p>Storage checks, the B codes, test the S3 server instead of the config, and cannot be accepted (<a href="#ref-storage-codes">Storage checks</a>). D001, D002 and I002 were the checks of dump jobs, which 0.6.0 removed; the codes are retired and not used again.</p>
   </div>
 
   <div class="sub" id="snapshots">
@@ -1240,27 +1242,48 @@ holdfast restore web01.example.com 4f2a91c3 --to /srv/old --overwrite if-newer</
       <li><strong>The host sets the bounds</strong> in its <code>agent.yaml</code> (<a href="#install-agents">Agents</a>), so a stolen admin login cannot write over a host's files unless that host allows it.</li>
       <li><strong>Restore both versions to diff on the host</strong> (editors): <code>holdfast restore pair &lt;fqdn&gt; &lt;id&gt; &lt;other id&gt; &lt;path&gt; --wait</code> restores one file from two snapshots into a root-only folder and prints the <code>diff -u</code> command to run on the host.</li>
       <li><strong>Onto another host</strong>, the target reads the source host's repository through the gateway, read-only, for that one restore, and gets the source's password once. Both hosts' histories record it.</li>
-      <li>SELinux labels are restored as the snapshot has them, except for a dump and a restore from another host, which get the label the host gives a new file.</li>
+      <li>SELinux labels are restored as the snapshot has them, except for a dump snapshot from before 0.6.0 and a restore from another host, which get the label the host gives a new file.</li>
     </ul>
     <p>The UI's snapshot page has the same: <strong>Restore only this</strong> on each file or folder, and a <strong>Restore</strong> tab that restores everything, or leaves out the paths you list. The <strong>Restores</strong> page lists every restore in the fleet: who, what, where, and the result.</p>
   </div>
 
   <div class="sub" id="dumps">
-    <h3>Database dumps</h3>
-    <p>A dump job backs up what a command prints, such as a database dump, as one file in the snapshot. A file copy of a running database is not a backup, so database files are better excluded and dumped instead.</p>
-    <p><strong>The command is the host's own</strong>, defined by root on the host in <code>agent.yaml</code>; a job only names it. The server never sends a command to run.</p>
-    <div class="cmd"><pre><code><span class="c"># /etc/holdfast/agent.yaml on db01</span>
-dumps:
-  postgresql:
-    command: [/usr/bin/pg_dumpall, --clean]    <span class="c"># argv, no shell; the first item an absolute path</span>
-    user: postgres                             <span class="c"># run as this user (default root)</span>
-    filename: postgresql.sql                   <span class="c"># the file's name in the snapshot</span>
-    env: {PGHOST: /run/postgresql}             <span class="c"># optional, besides PATH and LANG</span>
-  mariadb:
-    command: [/usr/bin/mariadb-dump, --all-databases, --single-transaction, --routines, --events]
-    filename: mariadb.sql</code></pre></div>
-    <div class="cmd"><pre><code>holdfast job set db01.example.com pg --dump postgresql --daily 01:30 --keep-daily 14d --keep-monthly 6mo</code></pre></div>
-    <p>The agent runs it with <code>restic backup --stdin-from-command</code>, as its user, with a clean environment. A command that exits non-zero fails the run, and no snapshot is made. A dump is restored into a new folder; loading it is your job, on the host, such as <code>sudo -u postgres psql -f /var/restore/…/postgresql.sql</code>.</p>
+    <h3>Databases and other exports</h3>
+    <p>A file copy of a running database is not a backup, so Holdfast does not back up database files. Back up an export instead: a file the database or directory server writes itself, such as <code>pg_dumpall</code>'s, <code>mariadb-dump</code>'s or <code>slapcat</code>'s. Holdfast runs no command on a host, so the host makes the export, with a systemd timer, and a Holdfast job backs up its folder.</p>
+    <ol class="steps">
+      <li>A service writes the export to a temporary name, and renames it only when it succeeded, so a running or failed export never replaces the last good file. Here PostgreSQL, as the <code>postgres</code> user:
+        <div class="cmd"><pre><code><span class="c"># /etc/systemd/system/pg-export.service</span>
+[Unit]
+Description=Export PostgreSQL for the backup
+
+[Service]
+Type=oneshot
+User=postgres
+ExecStart=/usr/bin/pg_dumpall --file=/var/backups/postgresql/all.sql.tmp
+ExecStart=/usr/bin/mv /var/backups/postgresql/all.sql.tmp /var/backups/postgresql/all.sql
+TimeoutStartSec=1h</code></pre></div></li>
+      <li>A timer starts it with a margin before the job's time, here at 01:30 for a job at 02:00:
+        <div class="cmd"><pre><code><span class="c"># /etc/systemd/system/pg-export.timer</span>
+[Unit]
+Description=Export PostgreSQL before the backup at 02:00
+
+[Timer]
+OnCalendar=*-*-* 01:30:00
+
+[Install]
+WantedBy=timers.target</code></pre></div>
+        <div class="cmd"><pre><code>install -d -o postgres -g postgres -m 700 /var/backups/postgresql
+systemctl daemon-reload
+systemctl enable --now pg-export.timer
+systemctl start pg-export.service      <span class="c"># once now, to see that it works</span></code></pre></div></li>
+      <li>A job backs up the folder, leaving out an export that is still being written:
+        <div class="cmd"><pre><code>holdfast job set db01.example.com postgresql --path /var/backups/postgresql --exclude '*.tmp' --daily 02:00</code></pre></div></li>
+      <li>Your monitoring watches the unit, as it watches the host's other units. Without that, <code>OnFailure=</code> in the service's <code>[Unit]</code> can start a unit of yours that sends an alert.</li>
+    </ol>
+    <p><strong>If the export fails</strong>, the unit fails and the last good file stays, so the job backs it up again, which costs nothing as restic deduplicates it. The failed unit is what alerts. Holdfast does not wait for the export or check the file's age; that is on purpose (decision 052). Keep the margin longer than the export takes, and remember that <code>OnCalendar=</code> is in the host's time zone and the job in the server's default zone unless it gives <code>--zone</code>. <code>TimeoutStartSec=</code> stops an export that hangs, and <code>SuccessExitStatus=</code> lets a tool whose exit code means a warning count as done.</p>
+    <p>Leave the database's own files out of other jobs, such as a job of <code>/</code>: <code>--exclude /var/lib/postgresql</code> on Ubuntu, <code>--exclude /var/lib/pgsql</code> on RHEL.</p>
+    <p><strong>To restore</strong>, restore the snapshot into a new folder, then load the file on the host, as root: <code>runuser -u postgres -- psql -d postgres &lt; /var/restore/…/var/backups/postgresql/all.sql</code>. The folder is root's only, so root's shell reads the file.</p>
+    <p><strong>Dump jobs from 0.5.0.</strong> Until 0.6.0 a dump job backed up what a command in the host's <code>agent.yaml</code> printed. Such a job no longer runs: its runs fail with the reason, and saving the config is refused until it has paths or is removed. Set the export up as above, then give the job its paths: <code>holdfast job set db01.example.com pg --path /var/backups/postgresql --exclude '*.tmp'</code>. Remove <code>dumps:</code> from <code>agent.yaml</code>; while it is there, the agent logs that it is ignored. Snapshots that dump jobs made are still restored as before: one file, into a new folder only.</p>
   </div>
 
   <div class="sub" id="deleting">
@@ -1505,7 +1528,7 @@ systemctl enable --now holdfast-server</code></pre></div>
       <li>Install the OS with the same FQDN.</li>
       <li>Note the last good snapshot first: <code>holdfast snapshot list web01.example.com</code>.</li>
       <li><code>holdfast host enroll-code web01.example.com</code> (or <code>host add</code> again if it was removed: it comes back with its repository), and run the line it prints on the host. The agent backs the fresh host up at once, and its new snapshots become the newest: with the default <em>keep the newest 3</em>, the last good snapshot is kept until three newer ones exist, so restore before then.</li>
-      <li>On the host, set <code>restore.allow_in_place: true</code> and the <code>dumps:</code> it had in <code>/etc/holdfast/agent.yaml</code>, and <code>systemctl restart holdfast-agent</code>.</li>
+      <li>On the host, set <code>restore.allow_in_place: true</code> in <code>/etc/holdfast/agent.yaml</code>, and <code>systemctl restart holdfast-agent</code>.</li>
       <li>Restore: <code>holdfast restore web01.example.com &lt;id&gt; --in-place --only /etc --only /srv --wait</code>, or into a new folder to copy from.</li>
       <li>Set <code>allow_in_place</code> back to <code>false</code>, and restart the agent.</li>
     </ol>
@@ -1680,7 +1703,7 @@ systemctl restart holdfast-server</code></pre></div>
       <li>Credentials never appear in the UI, in API or CLI output, in logs, in metrics or in config revisions. A decrypted escrow file given to <code>host import</code> is never shown back.</li>
       <li>Passwords are never passed on a command line, and restic never inherits <code>RESTIC_*</code> or <code>AWS_*</code> variables from its parent.</li>
       <li>There is no raw restic console and no free-form restic argument. <code>restic unlock</code> only ever removes stale locks.</li>
-      <li>A dump runs only a command root on the host defined, as the user it names, with a clean environment.</li>
+      <li>Holdfast runs no command on a host: the agent runs restic, with no dump and no hook before or after it.</li>
     </ul>
   </div>
 
@@ -1767,7 +1790,7 @@ systemctl restart holdfast-server</code></pre></div>
 
   <div class="sub" id="ref-agent-yaml">
     <h3>agent.yaml</h3>
-    <p><code>/etc/holdfast/agent.yaml</code> on each host, written by <code>holdfast-agent enroll</code>. <code>restore:</code> and <code>dumps:</code> are the host's own, and enrolling again keeps them.</p>
+    <p><code>/etc/holdfast/agent.yaml</code> on each host, written by <code>holdfast-agent enroll</code>. <code>restore:</code> is the host's own, and enrolling again keeps it. A <code>dumps:</code> from 0.5.0 is ignored, and the agent logs so: Holdfast runs no command on a host (<a href="#dumps">Databases and other exports</a>).</p>
     <div class="tablebox"><table class="ref">
       <thead><tr><th>Key</th><th>Meaning</th></tr></thead>
       <tbody>
@@ -1776,7 +1799,6 @@ systemctl restart holdfast-server</code></pre></div>
         <tr><td>poll_timeout, tick, retry_lock</td><td>The long poll (25s), the scheduler's resolution (1s), how long a backup waits for the clean-up's lock (15m).</td></tr>
         <tr><td>restore.root</td><td>Where new restore folders go. Default <code>/var/restore</code>.</td></tr>
         <tr><td>restore.allow_in_place, .allow_other_directories, .allow_other_hosts</td><td>What restores may do on this host. All false by default.</td></tr>
-        <tr><td>dumps.&lt;name&gt;.command, .user, .filename, .env</td><td>The dump commands jobs may name.</td></tr>
       </tbody>
     </table></div>
   </div>
@@ -1900,7 +1922,7 @@ POST   /api/v1/ui-login                       <span class="c"># on the root sock
       <li><span class="what">Off-site copies are optional and made by the server, with their own passwords and retention.</span><span class="why">One program to run; a leaked primary password does not open the copies.</span><span class="rec">041</span></li>
       <li><span class="what">One server, replaced when lost; no standby.</span><span class="why">Backups tolerate a delay; the data is safe in the bucket. A rebuild from a nightly export is simpler to trust than a cluster.</span><span class="rec">040 · 042</span></li>
       <li><span class="what">Passwords escrowed with age, and one recovery file.</span><span class="why">You can recover without Holdfast, the bucket alone opens nothing, and one file kept offline is all a rebuild needs besides the bucket's keys.</span><span class="rec">036 · 047</span></li>
-      <li><span class="what">Dumps from commands defined on the host.</span><span class="why">Root on the host decides what runs there.</span><span class="rec">037</span></li>
+      <li><span class="what">Holdfast runs no command on a host.</span><span class="why">We do not want it to run commands as root on hosts. A database is backed up from the export a systemd timer on the host writes, which the host's monitoring already watches.</span><span class="rec">003 · 052</span></li>
       <li><span class="what">A one-line install that stops on a missing setting.</span><span class="why">The storage keys decide what can be deleted, so they are given on purpose, never guessed.</span><span class="rec">044</span></li>
       <li><span class="what">Apache-2.0.</span><span class="why">Company legal reviews accept it routinely, and it carries a patent grant.</span><span class="rec">043</span></li>
     </ul>
@@ -1916,6 +1938,7 @@ POST   /api/v1/ui-login                       <span class="c"># on the root sock
       <li>LDAP in Holdfast, and local password users: use an OIDC provider; root is the break glass. <span class="muted mono">049</span></li>
       <li>Managing Object Lock: it is your storage's setting, which Holdfast reports. <span class="muted mono">041</span></li>
       <li>Fixes for what restic itself cannot handle. <span class="muted mono">030</span></li>
+      <li>Running commands on hosts: dump jobs, and hooks before or after a backup. A systemd timer on the host makes an export (<a href="#dumps">Databases and other exports</a>). <span class="muted mono">052</span></li>
     </ul>
   </div>
 

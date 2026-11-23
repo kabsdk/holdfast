@@ -17,8 +17,8 @@
 #                            UI through Authelia from this host (lab/test-login.sh), then on each agent VM (or those
 #                            named) back up the metadata fixture and restore it through Holdfast, enrolling the agent
 #                            first, and compare the 13 properties; the table is in <state>/test-fidelity.txt. Then M6's
-#                            (lab/test-recovery.sh): the bare-metal runbook's first path on one VM, and the dump test with
-#                            each OS's PostgreSQL; the results are in <state>/test-recovery.txt. Then M8's
+#                            (lab/test-recovery.sh): the bare-metal runbook's first path on one VM; the result is in
+#                            <state>/test-recovery.txt. Then M8's
 #                            (lab/test-offsite.sh): the server's off-site copies in a second bucket on the RGW, each
 #                            agent's snapshot copied there, and one restored from it through the gateway; in
 #                            <state>/test-offsite.txt. Then M9's (lab/test-rebuild.sh): the rebuild runbook walked on the
@@ -269,13 +269,13 @@ test)
 	[[ $st == ready ]] || { echo "lab: the lab $lab is $st, not ready: lab/lab up $lab first (lab/lab status $lab says why)" >&3; exit 3; }
 	resume="lab/lab test $lab $* runs it again"
 	build
-	step "installing the packages, the RGW users, Authelia, PostgreSQL on the agents, and the Holdfast server's TLS, settings and service (site.yml --tags binaries,rgwusers,hfserver,agentdb)"
-	play site.yml "$state/inventory.yml" --tags binaries,rgwusers,hfserver,agentdb -e lab_deploy=true
+	step "installing the packages, the RGW users, Authelia, and the Holdfast server's TLS, settings and service (site.yml --tags binaries,rgwusers,hfserver)"
+	play site.yml "$state/inventory.yml" --tags binaries,rgwusers,hfserver -e lab_deploy=true
 	step "the login check and the fidelity test through Holdfast: lab/test-fidelity.sh $lab $*"
 	shown=1
 	rc=0
 	bash lab/test-fidelity.sh "$lab" "$@" || rc=$?
-	step "M6: the bare-metal runbook's first path and the dump test: lab/test-recovery.sh $lab $*"
+	step "M6: the bare-metal runbook's first path: lab/test-recovery.sh $lab $*"
 	bash lab/test-recovery.sh "$lab" "$@" || rc=1
 	step "M8: the off-site copies the server makes, and a restore from them through the gateway: lab/test-offsite.sh $lab $*"
 	bash lab/test-offsite.sh "$lab" "$@" || rc=1

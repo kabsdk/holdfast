@@ -346,7 +346,6 @@ func (a *Agent) facts(ctx context.Context) proto.Facts {
 	f.Now = a.now().UTC()
 	bounds := a.cfg.Restore
 	f.RestoreBounds = &bounds
-	f.Dumps = a.cfg.DumpNames()
 	return f
 }
 
@@ -1021,13 +1020,9 @@ func (a *Agent) runBackup(ctx context.Context, j proto.JobConfig, commandID stri
 		LimitUploadKiB: j.LimitUploadKiB}
 	var res restic.BackupResult
 	var err error
-	if j.Dump != "" { // decision 037: the command is this host's, by name
-		if d, ok := a.cfg.Dumps[j.Dump]; ok {
-			opts = restic.BackupOptions{Host: a.cfg.FQDN, Tags: []string{"job=" + j.ID, "dump=" + j.Dump}, LimitUploadKiB: j.LimitUploadKiB,
-				StdinCommand: dumpCommand(d), StdinFilename: d.Filename}
-		} else {
-			err = fmt.Errorf("this host's agent.yaml defines no dump named %q", j.Dump)
-		}
+	if j.Dump != "" { // a job from before 0.6.0, which removed dump jobs: no command runs (decision 052)
+		err = fmt.Errorf("the job names the dump %q, but Holdfast 0.6 runs no command on a host (decision 052): "+
+			"replace it with a paths job that backs up what the command writes", j.Dump)
 	}
 	timeout := a.runTimeout(j.Schedule)
 	rctx, cancel := context.WithTimeout(ctx, timeout)

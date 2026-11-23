@@ -1,7 +1,9 @@
 # 048: `host add` adds a host, `job set` adds jobs, with defaults
 
 Status: accepted, 2026-11-23. Adding a host and adding a job should be different commands: a host can exist without a
-job, and a `host add` that had to carry the host's first job, and only the first, was awkward.
+job, and a `host add` that had to carry the host's first job, and only the first, was awkward. **Amended by decision 052
+(2026-11-23):** dump jobs are removed, so a job has paths only; giving paths to a dump job from before 0.6.0 makes it a
+paths job.
 
 ## Decision
 
