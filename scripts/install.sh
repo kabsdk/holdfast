@@ -705,7 +705,7 @@ rebuild_from_recovery() {
 	holdfast-server restore-export -config $ETC/server.yaml -identity "$recovery" -latest ||
 		die "restore-export failed (above). The database may hold part of the export now: drop it and make it again, empty, before you try again"
 	if [ ! -s $ETC/tls/server.crt ] || [ ! -s $ETC/tls/server.key ]; then
-		die "the export holds no certificate for the agents (it was made before Holdfast 0.6): put the old server's $ETC/tls back, or give HOLDFAST_TLS_CERT and HOLDFAST_TLS_KEY from the CA the agents pinned, then systemctl enable --now holdfast-server"
+		die "the export holds no certificate for the agents (it was made by a build before the first release): put the old server's $ETC/tls back, or give HOLDFAST_TLS_CERT and HOLDFAST_TLS_KEY from the CA the agents pinned, then systemctl enable --now holdfast-server"
 	fi
 	if $ui && [ ! -s $ETC/tls/ui.crt ]; then
 		if [ -s $ETC/tls/ca.key ]; then make_cert ui "$ui_url"; else ui=false; fi

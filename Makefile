@@ -37,7 +37,7 @@ BROWSER_IMAGE  ?= chromedp/headless-shell@sha256:381353d3530ab9d579d2fe8b9c0f451
 BROWSER_NAME   ?= holdfast-test-browser
 BROWSER_PORT   ?= 59222
 
-.PHONY: build test unit vet fmt pg-up pg-down minio-up minio-down tools e2e e2e-image rules-test authelia-up authelia-down browser-up browser-down packages install-test screenshots
+.PHONY: build test unit vet fmt pg-up pg-down minio-up minio-down tools e2e e2e-image rules-test authelia-up authelia-down browser-up browser-down packages install-test collection ansible-test screenshots
 
 # promtool: the alert rules parse, and their unit tests pass.
 rules-test:
@@ -107,6 +107,17 @@ tools:
 # AlmaLinux, Oracle Linux), against MinIO. Needs the packages: make packages first.
 install-test:
 	MINIO_IMAGE=$(MINIO_IMAGE) MC_IMAGE=$(MC_IMAGE) bash test/install/run.sh
+
+# The Ansible collection kabsdk.holdfast (decision 050), built into dist/ with the packages' version, for a release.
+collection:
+	@v=$$(echo '$(HOLDFAST_VERSION)' | sed 's/~/-/'); t=$$(mktemp -d); cp -a ansible "$$t/holdfast"; \
+		sed -i "s/^version: .*/version: $$v/" "$$t/holdfast/galaxy.yml"; \
+		ansible-galaxy collection build "$$t/holdfast" --output-path dist --force; rm -rf "$$t"
+
+# Its test: built and installed as people get it, ansible-lint, and its playbook run twice on machines with systemd
+# (containers) against MinIO, with the packages served as a mirror. Needs the packages: make packages first.
+ansible-test:
+	MINIO_IMAGE=$(MINIO_IMAGE) MC_IMAGE=$(MC_IMAGE) bash test/ansible/run.sh
 
 # The end-to-end suite, as root in a privileged container (the metadata tests need root), on an ext4
 # volume so ACLs, trusted.* xattrs and SELinux labels behave as on a host. --init gives the container

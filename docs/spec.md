@@ -215,6 +215,15 @@ There are two programs: holdfast-agent and holdfast-server (decision 041), and t
   - On a new machine, the server's line with `HOLDFAST_RECOVERY_FILE` and the settings of the first install rebuilds
     a lost server from the bucket's newest export, and starts it (§2.3). With `/etc/holdfast` put back instead, it
     prepares a rebuild and leaves the server stopped for `restore-export`.
+- **The Ansible collection `kabsdk.holdfast`** (decision 050), released beside the packages, does what `install.sh`
+  does with the same settings in lower case, as the roles `server`, `agent` and `cli`. It differs from the installer
+  in what it keeps:
+  - `server.yaml` follows the settings on every run.
+  - The agent role adds the host and enrolls it with the `holdfast` command as root on the server.
+  - It makes the jobs a host lacks, and never changes or removes one.
+  - It sets the host-only dumps and restore limits in `agent.yaml` when they are given.
+
+  A run with nothing to do changes nothing.
 - **The agent and the server agree on a protocol version.** The agent sends its own with every poll (an agent
   before M5 sends none and speaks 1), and the server answers with the range it accepts. The server accepts
   every agent from its minimum on, so it is upgraded first, and agents after it, one by one. Protocol 2 (M6)

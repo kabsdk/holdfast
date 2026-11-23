@@ -1,0 +1,17 @@
+---
+- name: Restart PostgreSQL
+  ansible.builtin.systemd_service:
+    name: postgresql
+    state: restarted
+
+# Once, after keygen made the credentials key for your own age key: the recovery file with that key, for your age key's
+# line to be added to.
+- name: Write the recovery file
+  ansible.builtin.command:
+    argv: [holdfast-server, recovery-file, -config, /etc/holdfast/server.yaml, /root/holdfast-recovery.txt]
+    creates: /root/holdfast-recovery.txt
+
+- name: Restart holdfast-server
+  ansible.builtin.systemd_service:
+    name: holdfast-server
+    state: restarted

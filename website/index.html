@@ -185,7 +185,7 @@ figure.shot img { display: block; width: 100%; height: auto; border: 1px solid v
       <ol><li><a href="#before">Before you start</a></li><li><a href="#storage">The bucket and its keys</a></li>
       <li><a href="#install-server">The server</a></li><li><a href="#recovery-file">The recovery file</a></li><li><a href="#install-ui">The web UI and login</a></li><li><a href="#install-agents">Agents</a></li>
       <li><a href="#install-cli">The CLI on a workstation</a></li><li><a href="#install-alerts">Alerts</a></li><li><a href="#install-offsite">Off-site copies</a></li>
-      <li><a href="#install-mirror">Mirrors and closed networks</a></li><li><a href="#install-manual">Without the script</a></li><li><a href="#installer-ref">Installer settings</a></li>
+      <li><a href="#install-mirror">Mirrors and closed networks</a></li><li><a href="#install-ansible">With Ansible</a></li><li><a href="#install-manual">Without the script</a></li><li><a href="#installer-ref">Installer settings</a></li>
       <li><a href="#upgrade">Upgrading</a></li><li><a href="#remove">Removing</a></li></ol></li>
     <li><a href="#usage">Using Holdfast</a>
       <ol><li><a href="#hosts">Hosts</a></li><li><a href="#jobs">Jobs and schedules</a></li><li><a href="#retention">Retention</a></li>
@@ -217,7 +217,7 @@ figure.shot img { display: block; width: 100%; height: auto; border: 1px solid v
   <h1>Holdfast documentation</h1>
   <p class="lede">Holdfast runs restic backups for a fleet of Linux servers from one place. You install one Holdfast server, put a small agent on every host, and say what to back up and how long to keep it. The agents make encrypted backups with restic and send them through the server to your own S3 storage. The server keeps the settings and the history, checks that every backup really is in the bucket, cleans up every day under a 7-day safety rule, and tells you by mail or chat when something is wrong.</p>
   <div class="status">
-    <div><b>Install</b><span>One line per machine: <code>curl … | sh</code>. One program on the server.</span></div>
+    <div><b>Install</b><span>One line per machine, <code>curl … | sh</code>, or the Ansible collection. One program on the server.</span></div>
     <div><b>No storage key on hosts</b><span>The server holds two S3 keys (three with an off-site bucket), whether you have 5 hosts or 500. Hosts hold none.</span></div>
     <div><b>Free and open</b><span>Apache-2.0. No paid tier, no feature gating.</span></div>
   </div>
@@ -592,7 +592,7 @@ holdfast snapshot list web01.example.com</code></pre></div></li>
 <!-- ================================================================================================ INSTALLATION -->
 <section class="chapter" id="installation">
   <h2>Installation</h2>
-  <p>Everything is installed by one script, <code>install.sh</code>, released with each version beside the packages. You pipe it to <code>sh</code> as root, with its settings in environment variables, and name a role. It installs Holdfast's <code>.deb</code> or <code>.rpm</code> packages with apt or dnf, each checked against the release's <code>SHA256SUMS</code>, and sets the machine up.</p>
+  <p>Everything is installed by one script, <code>install.sh</code>, released with each version beside the packages. You pipe it to <code>sh</code> as root, with its settings in environment variables, and name a role. It installs Holdfast's <code>.deb</code> or <code>.rpm</code> packages with apt or dnf, each checked against the release's <code>SHA256SUMS</code>, and sets the machine up. Teams that use Ansible can use the collection <code>kabsdk.holdfast</code> instead, which takes the same settings (<a href="#install-ansible">With Ansible</a>).</p>
   <div class="tablebox"><table>
     <thead><tr><th>Role</th><th>Where</th><th>Command</th></tr></thead>
     <tbody>
@@ -824,7 +824,7 @@ dumps:                           <span class="c"># commands a dump job may name 
     user: postgres
     filename: postgresql.sql</code></pre></div>
     <p>After changing it, <code>systemctl restart holdfast-agent</code>. Each <code>allow_</code> widens what an admin login, or whoever controls the server, can do on this host. In place means writing files there as root. Turn them on only where you need them, and off again afterwards.</p>
-    <p><strong>A code expired</strong> after 15 minutes, or was used: <strong>New enrollment code</strong> on the host's page, or <code>holdfast host enroll-code web01.example.com</code>, issues a new one, with a new line. <strong>Configuration management</strong>: install the two packages your own way and run only the enrollment, which <code>host add</code> also prints: <code>holdfast-agent enroll --server … --fqdn … --code … --ca-sha256 …</code>, then <code>systemctl enable --now holdfast-agent</code>.</p>
+    <p><strong>A code expired</strong> after 15 minutes, or was used: <strong>New enrollment code</strong> on the host's page, or <code>holdfast host enroll-code web01.example.com</code>, issues a new one, with a new line. <strong>Configuration management</strong>: with Ansible, the collection does all of this (<a href="#install-ansible">With Ansible</a>). With another tool, install the two packages your own way and run only the enrollment, which <code>host add</code> also prints: <code>holdfast-agent enroll --server … --fqdn … --code … --ca-sha256 …</code>, then <code>systemctl enable --now holdfast-agent</code>.</p>
     <p>The agent runs as root, at low CPU and I/O priority (<code>Nice=10</code>, <code>IOSchedulingClass=idle</code>), so a backup gives way to the host's own work. Its first backup runs as soon as it has enrolled and has a job; after that, it follows the schedule. Its certificate does not expire; a new enrollment replaces it.</p>
   </div>
 
@@ -897,6 +897,41 @@ curl -sfL https://mirror.example.com/holdfast/1.0.0/install.sh | HOLDFAST_DOWNLO
 <span class="c"># or from a directory on the machine</span>
 HOLDFAST_DOWNLOAD_URL=file:///srv/holdfast/1.0.0 sh /srv/holdfast/1.0.0/install.sh server</code></pre></div>
     <p>A server installed from a mirror writes <code>download_url</code> into its <code>server.yaml</code>, so the line <code>host add</code> prints fetches from the same mirror. Set or change <code>download_url</code> by hand for a server installed otherwise. The packages are still checked against the mirror's <code>SHA256SUMS</code>.</p>
+  </div>
+
+  <div class="sub" id="install-ansible">
+    <h3>With Ansible</h3>
+    <p>The collection <code>kabsdk.holdfast</code>, released beside the packages, does what the script does, as three roles: <code>server</code>, <code>agent</code> and <code>cli</code>. It takes the same settings in lower case: <code>HOLDFAST_S3_BUCKET</code> is <code>holdfast_s3_bucket</code>. The certificates and the recovery file are paths on the Ansible controller, and mail recipients and admins are lists. A second run with nothing to do changes nothing.</p>
+    <div class="cmd"><pre><code>ansible-galaxy collection install https://github.com/kabsdk/holdfast/releases/download/v0.5.0/kabsdk-holdfast-0.5.0.tar.gz
+ansible-playbook -i inventory.yml kabsdk.holdfast.site     <span class="c"># groups holdfast_server, holdfast_agents, holdfast_cli</span></code></pre></div>
+    <div class="cmd"><pre><code><span class="c"># inventory.yml: the server's settings, and each host's jobs (secrets in Ansible Vault)</span>
+all:
+  children:
+    holdfast_server:
+      hosts:
+        holdfast.example.com:
+          holdfast_s3_endpoint: https://s3.example.com
+          holdfast_s3_bucket: holdfast
+          holdfast_gateway_access_key_id: "{{ vault_gateway_key_id }}"
+          holdfast_gateway_secret_access_key: "{{ vault_gateway_secret }}"
+          holdfast_maintenance_access_key_id: "{{ vault_maintenance_key_id }}"
+          holdfast_maintenance_secret_access_key: "{{ vault_maintenance_secret }}"
+          holdfast_webhook_url: https://chat.example.com/hooks/…
+    holdfast_agents:
+      vars:
+        holdfast_jobs: {system: --path /etc --path /home}   <span class="c"># the flags of holdfast job set</span>
+      hosts:
+        web01.example.com:
+        db01.example.com:</code></pre></div>
+    <p>The roles keep some things and leave others to Holdfast:</p>
+    <ul class="plain">
+      <li><strong><code>server.yaml</code> follows the settings.</strong> The script ignores settings on a server that is set up; the server role writes <code>server.yaml</code> on every run, and a change restarts the server. <code>holdfast_server_yaml</code> adds anything else <code>server.yaml</code> takes.</li>
+      <li><strong>Each host is added and enrolled once.</strong> The agent role runs <code>holdfast host add</code> as root on the server, or <code>host enroll-code</code> for a host Holdfast knows, then enrolls the agent with the code.</li>
+      <li><strong>Jobs are only made, never changed.</strong> A job in <code>holdfast_jobs</code> that the host lacks is made with <code>holdfast job set</code>. After that it is the UI's and CLI's, so a change made there is not undone by the next run.</li>
+      <li><strong>The host's own settings in <code>agent.yaml</code></strong>, the dumps and the restore limits, come from <code>holdfast_dumps</code> and <code>holdfast_restore</code> when given.</li>
+      <li><strong>Nothing is removed.</strong> Removing a host stays <strong>Remove host</strong> or <code>holdfast host remove</code>.</li>
+    </ul>
+    <p>A lost server is replaced from the same inventory, run with <code>-e holdfast_recovery_file=/secure/holdfast-recovery.txt</code> on the new machine (<a href="#lost-server">A lost server</a>). An upgrade is a new <code>holdfast_version</code>; the playbook does the server first, then the agents. The collection's <code>README.md</code> lists every setting.</p>
   </div>
 
   <div class="sub" id="install-manual">
@@ -1392,7 +1427,8 @@ holdfast whoami                         <span class="c"># who you are and what y
         <div class="cmd"><pre><code>set -a; . /root/holdfast.env; set +a
 export HOLDFAST_RECOVERY_FILE=/root/holdfast-recovery.txt
 curl -sfL https://github.com/kabsdk/holdfast/releases/latest/download/install.sh | sh -s - server</code></pre></div>
-        <p>It installs PostgreSQL with an empty database and the packages, then runs <code>holdfast-server restore-export</code> on the newest nightly export in the bucket. Before it touches the database, that checks that the age key opens the export, that the export is whole and not from a newer Holdfast, and that the credentials key opens the passwords in it. Then it loads every table, migrates to the installed version, writes back the server's certificates and the agents' CA, writes the credentials key, and audits the restore. The installer then starts the server, and ends with <em>restored from the bucket's newest nightly export</em> and the same pin as before.</p></li>
+        <p>It installs PostgreSQL with an empty database and the packages, then runs <code>holdfast-server restore-export</code> on the newest nightly export in the bucket. Before it touches the database, that checks that the age key opens the export, that the export is whole and not from a newer Holdfast, and that the credentials key opens the passwords in it. Then it loads every table, migrates to the installed version, writes back the server's certificates and the agents' CA, writes the credentials key, and audits the restore. The installer then starts the server, and ends with <em>restored from the bucket's newest nightly export</em> and the same pin as before.</p>
+        <p>With Ansible, run the playbook with the same inventory instead, adding <code>-e holdfast_recovery_file=/secure/holdfast-recovery.txt</code>, a path on the controller. The server role copies the file to the server and does the same.</p></li>
       <li><strong>Check</strong>: <code>holdfast status</code>, then <code>holdfast host list</code>. Every agent enrolled before the export comes back within a minute or two, by itself, as its pinned certificate is in the export. A host that shows <strong>ahead</strong> ran a change made after the export: its agent keeps that config until you make the change again.</li>
       <li><strong>Hosts added after the export</strong> come back from their escrow files in <code>escrow/</code>, with their repositories and passwords, and no jobs. For each, <code>holdfast host enroll-code &lt;fqdn&gt;</code>, run the line it prints on the host, and set its jobs again. <code>restore-export</code> lists them.</li>
       <li><strong>Delete the recovery file</strong> from the server once hosts are back; until then it shows the problem <code>recovery_file</code>. <code>holdfast export now</code> writes a fresh export at once.</li>

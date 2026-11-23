@@ -1,0 +1,95 @@
+---
+# Holdfast's packages of one release, as the installer installs them: VERSION names them, each is checked against the
+# release's SHA256SUMS, and they go in together in one transaction, as they depend on each other's exact version. Nothing
+# is downloaded while every package is already that release's.
+- name: Gather the facts this needs
+  ansible.builtin.setup:
+    gather_subset: [min]
+  when: ansible_facts.pkg_mgr is not defined or ansible_facts.architecture is not defined
+
+- name: Refuse a machine Holdfast's packages are not for
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.architecture == 'x86_64'
+      - ansible_facts.pkg_mgr in ['apt', 'dnf', 'dnf5']
+      - ansible_facts.service_mgr == 'systemd' or packages_names == ['cli']
+    fail_msg: >-
+      Holdfast's packages are for x86_64 machines with apt or dnf, and its services run under systemd; this one is
+      {{ ansible_facts.architecture }} with {{ ansible_facts.pkg_mgr }} and {{ ansible_facts.service_mgr }}
+    quiet: true
+
+- name: Read the release's version (VERSION)
+  ansible.builtin.uri:
+    url: "{{ packages_base }}/VERSION"
+    return_content: true
+  register: packages_version_file
+  check_mode: false
+
+- name: Refuse a VERSION that is not the version asked for
+  ansible.builtin.assert:
+    that:
+      - packages_release is match('^[0-9A-Za-z.~+]+-[0-9]+$')
+      - holdfast_version == 'latest' or packages_release.rsplit('-', 1)[0] == holdfast_version
+    fail_msg: "{{ packages_base }}/VERSION holds '{{ packages_release }}', not Holdfast {{ holdfast_version }}"
+    quiet: true
+
+- name: Read the installed versions
+  ansible.builtin.command:
+    argv: "{{ packages_query + packages_wanted }}"
+  register: packages_installed
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Note which are missing or of another release
+  ansible.builtin.set_fact:
+    packages_todo: "{{ packages_outdated }}"
+
+- name: Install them, unless every one is of the release already, {{ packages_release }}
+  when: packages_todo | length > 0
+  block:
+    - name: Make a directory to download them into
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: holdfast-
+      register: packages_tmp
+
+    - name: Download each, checked against the release's SHA256SUMS
+      ansible.builtin.get_url:
+        url: "{{ packages_base }}/{{ item }}"
+        dest: "{{ packages_tmp.path }}/{{ item }}"
+        checksum: "sha256:{{ packages_base }}/SHA256SUMS"
+        mode: "0600"
+      loop: "{{ packages_files }}"
+
+    - name: Install them together
+      ansible.builtin.command:
+        argv: "{{ packages_install + (packages_files | map('regex_replace', '^', packages_tmp.path ~ '/') | list) }}"
+      environment:
+        DEBIAN_FRONTEND: noninteractive
+      changed_when: true
+
+    - name: Read the installed versions again
+      ansible.builtin.command:
+        argv: "{{ packages_query + packages_wanted }}"
+      register: packages_installed_now
+      changed_when: false
+      failed_when: false
+
+    - name: Check that each is of the release now, {{ packages_release }}
+      ansible.builtin.assert:
+        that: packages_still | length == 0
+        fail_msg: >-
+          {{ packages_still | join(', ') }} did not become {{ packages_release }}. Holdfast does not go back to an
+          older release: set holdfast_version to the installed one or a newer one.
+        quiet: true
+      vars:
+        packages_still: >-
+          {{ packages_wanted | difference(packages_installed_now.stdout_lines | map('split', ' ') | selectattr('1', 'defined')
+             | selectattr('1', 'equalto', packages_release) | map(attribute='0') | list) }}
+  always:
+    - name: Remove the downloads
+      ansible.builtin.file:
+        path: "{{ packages_tmp.path }}"
+        state: absent
+      when: packages_tmp.path is defined

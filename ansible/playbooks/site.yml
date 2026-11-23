@@ -1,0 +1,23 @@
+---
+# Holdfast on every machine of the inventory's groups: ansible-playbook -i inventory.yml kabsdk.holdfast.site
+#   holdfast_server   the server (one host)
+#   holdfast_agents   the hosts it backs up
+#   holdfast_cli      workstations that get the holdfast command
+# The server goes first: an upgrade is the server, then the agents.
+- name: The Holdfast server
+  hosts: holdfast_server
+  become: true
+  roles:
+    - kabsdk.holdfast.server
+
+- name: The hosts Holdfast backs up
+  hosts: holdfast_agents
+  become: true
+  roles:
+    - kabsdk.holdfast.agent
+
+- name: The holdfast command on workstations
+  hosts: holdfast_cli
+  become: true
+  roles:
+    - kabsdk.holdfast.cli

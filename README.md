@@ -21,8 +21,10 @@ cmd/holdfast             CLI, a thin client of /api/v1
 internal/                the packages behind them
 deploy/                  Prometheus rules and their tests, systemd units, example configuration
 scripts/install.sh       the one-line installer
+ansible/                 the Ansible collection kabsdk.holdfast: the installer as roles (decision 050)
 test/e2e/                end-to-end tests: real restic, PostgreSQL, S3 and process kills
 test/install/            the installer's test, on systemd containers
+test/ansible/            the collection's test, on systemd containers
 poc/                     the proof of concept, kept as a reference
 mockup/                  UI mockups
 ```
@@ -38,7 +40,11 @@ make e2e            # the end-to-end suite: restic 0.19.1, MinIO, PostgreSQL; ru
 make rules-test     # promtool unit tests for the alert rules
 make packages       # the .deb and .rpm packages, install.sh and SHA256SUMS in dist/: one release
 make install-test   # install.sh as people run it, on systemd containers of each distribution, against MinIO
+make ansible-test   # the Ansible collection, linted and run twice on the same kind of machines: the second changes nothing
 ```
+
+A release is `scripts/release.sh <version>`: it builds the packages and the collection at that version, tags the
+commit and publishes them as a GitHub release.
 
 ## Licence
 

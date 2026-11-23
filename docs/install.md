@@ -78,6 +78,22 @@ provider.
 
 To read the script before running it: `curl -sfLO …/install.sh`, read it, then `sh install.sh server`.
 
+## Installing with Ansible
+
+The collection `kabsdk.holdfast` (decision 050), released beside the packages, does what `install.sh` does, as the
+roles `server`, `agent` and `cli`. It takes the same settings, in lower case: `HOLDFAST_S3_BUCKET` is
+`holdfast_s3_bucket`. The roles keep the machines that way: a run with nothing to do changes nothing, and a changed
+setting reaches `server.yaml`. The agent role also adds each host on the server, enrolls it, and gives it the jobs it
+lacks.
+
+```
+ansible-galaxy collection install https://github.com/kabsdk/holdfast/releases/download/v0.5.0/kabsdk-holdfast-0.5.0.tar.gz
+ansible-playbook -i inventory.yml kabsdk.holdfast.site
+```
+
+[../ansible/README.md](../ansible/README.md) has an inventory to start from, and explains what the roles keep and what
+they leave to Holdfast.
+
 ## Installing by hand
 
 ```

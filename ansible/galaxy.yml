@@ -1,0 +1,22 @@
+---
+# The Ansible collection kabsdk.holdfast (decision 050): Holdfast's installer as roles. It is released with Holdfast,
+# with the same version, as kabsdk-holdfast-<version>.tar.gz beside the packages (make collection).
+namespace: kabsdk
+name: holdfast
+version: 0.5.0
+readme: README.md
+authors:
+  - Holdfast maintainers
+description: Install Holdfast, a control plane over restic, on its server and on the Linux hosts it backs up.
+license:
+  - Apache-2.0
+tags: [backup, restic, linux, s3]
+dependencies:
+  ansible.posix: ">=1.5.0"
+  community.general: ">=8.0.0"
+repository: https://github.com/kabsdk/holdfast
+documentation: https://github.com/kabsdk/holdfast/tree/main/ansible
+issues: https://github.com/kabsdk/holdfast/issues
+build_ignore:
+  - .ansible
+  - "*.tar.gz"
