@@ -824,7 +824,10 @@ Restore and inspection behave like restic does on the host.
 
 ### 5.2 Job page
 
-- **One calendar of the job's restore points**, a square a day, by month, back to its oldest restore point.
+- **One calendar of the job's restore points**, a square a day, by calendar year: January to December of each year
+  back to the oldest restore point's, newest on top, each month as on a wall calendar (Monday to Sunday, from the 1st).
+  Every day shows: a restore point's state; no restore point kept (grey); before the oldest restore point (pale); still
+  to come (an outline, with only its date).
 - With off-site copies (§3.7), a square's top half is primary (site A) and its bottom half off-site (site B), each in
   its own state:
   - primary: **kept**, **deletion waits** (a retention cut or a deletion in its 7 days, §3.4), or **deleted**;
@@ -897,10 +900,12 @@ host.
 
 **A PostgreSQL dump** (decision 055) restores onto its own database server only, in one of three ways:
 - **Into a new database** beside the original (`holdfast restore <agent> <snapshot> --to-database`), named `<database>-restore-<YYYYMMDD>-<HHMM>` from the dump's time in the server's zone, cut to 63
-  bytes. It needs `restore.new_dir`, as a new directory does: it writes nothing that exists. The restore user creates
-  it, owned by the original database's owner (or by itself when the original is gone), and `pg_restore
-  --single-transaction --exit-on-error` loads the dump into it. If the load fails, the new database is left as it is,
-  for an admin to drop.
+  bytes. The snapshot list gives each such snapshot that name beforehand (`restore_database`), so every client shows
+  the name the restore uses. It needs `restore.new_dir`, as a new directory does: it writes nothing that exists. The
+  restore user creates it, owned by the original database's owner, and `pg_restore --single-transaction
+  --exit-on-error` loads the dump into it. When the original database is gone, its roles may be gone too: the copy and
+  everything in it belong to the restore user, without the dump's owners and grants (`--no-owner --no-acl`). If the
+  load fails, the new database is left as it is, for an admin to drop.
 - **In place**, over the database it came from: an admin's (`restore.in_place`), who types the database's name
   (`--in-place --confirm <database>`), and only where the agent's `agent.yaml` has
   `postgresql.allow_in_place_restore: true`. The agent first dumps the database as it is, into a snapshot of the job

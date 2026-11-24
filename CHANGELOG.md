@@ -25,14 +25,16 @@ replaces it under the same name and tag, `v0.1-dev`, and installs as an upgrade 
   connection set|list|test|remove`), their passwords sealed and sent only to the agent, and tested by the agent at
   once. `holdfast job set <agent> --connection c --database a --database b` makes a job each. A dump restores into
   a new database beside the original, in place by an admin where the agent allows it (after a safety dump, in one
-  transaction), or as a file. The checks P001, P003, P004 and P005, and the problem `postgresql`. Agent protocol 5.
+  transaction), or as a file; a dump whose database and roles are gone restores into a new database owned by the
+  restore user. The checks P001, P003, P004 and P005, and the problem `postgresql`. Agent protocol 5.
 - **The agent's container image**, `ghcr.io/kabsdk/holdfast-agent`, with restic and PostgreSQL 18's client, backs up
   a PostgreSQL server in Kubernetes from a pod.
 - **holdfast**: the CLI, with every action the web UI has.
 - **The web UI**: an **Overview** of every agent, worst first, whose tiles count stale, failed and incomplete jobs
   and filter the agents by them; an **agent page** with a row per job and its last 14 days as squares, and its
-  PostgreSQL connections; a **job page** that is one **calendar** of the job's restore points, a square a day, primary
-  and off-site in its two halves, where a day opens its restore points with Restore and Delete; and a snapshot's
+  PostgreSQL connections; a **job page** that is one **calendar** of the job's restore points, a square a day, by
+  calendar year with each month as on a wall calendar, primary and off-site in its two halves, where a day opens its
+  restore points with Restore and Delete; and a snapshot's
   **Restore** as a tree of ticks, restic's `--exclude` or `--include`, in one column.
 - Retention by time windows, decided by restic's `forget --dry-run`; checks with stable codes; deleting snapshots,
   always with a reason, in primary, off-site or both; Prune now; rolling a repository back from S3 versions;

@@ -37,7 +37,7 @@ func accessCmd() *cobra.Command {
 		}
 		fmt.Printf("revision %d\n", v.Revision)
 		w := table()
-		fmt.Fprintln(w, "GROUP\tROLE\tHOSTS")
+		fmt.Fprintln(w, "GROUP\tROLE\tAGENTS")
 		for _, b := range v.Bindings {
 			fmt.Fprintf(w, "%s\t%s\t%s\n", b.Group, b.Role, strings.Join(b.Hosts, " "))
 		}

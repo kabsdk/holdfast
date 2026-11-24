@@ -262,18 +262,6 @@ export function DeleteDialog({ fqdn, points, off, site, onClose, onDone }) {
 
 /* ---------------- a PostgreSQL dump's restore (decision 055) ---------------- */
 
-// autoName is the database a restore beside the original makes: <database>-restore-<date>-<time>, the dump's time in
-// the server's zone (default_zone), cut to PostgreSQL's 63 bytes. The server names it; this shows it beforehand.
-export function autoName(db, t, zone) {
-  let p = {};
-  try {
-    p = Object.fromEntries(new Intl.DateTimeFormat('en-GB', { timeZone: zone || undefined, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
-      .formatToParts(new Date(t)).map((x) => [x.type, x.value]));
-  } catch { /* an unknown zone: the browser's */ }
-  const suffix = `-restore-${p.year}${p.month}${p.day}-${p.hour}${p.minute}`;
-  return db.slice(0, Math.max(0, 63 - suffix.length)) + suffix;
-}
-
 export function PGRestore({ fqdn, snap, host, job, copy, aGone, settings }) {
   const p = job.postgresql;
   const db = p.database;
@@ -293,7 +281,8 @@ export function PGRestore({ fqdn, snap, host, job, copy, aGone, settings }) {
   const [reason, setReason] = useState('');
   const act = useAction();
   const [result, setResult] = useResult(act.done);
-  const auto = roles ? '' : autoName(db, snap.time, settings?.default_zone);
+  // The new database's name, as the server makes it (the snapshot list's restore_database).
+  const auto = roles ? '' : snap.restore_database || '';
   const file = dumpFile(job);
   const blocked = kind === 'in_place' && typed !== db;
   const id = from === 'b' && copy ? copy.id : snap.id;

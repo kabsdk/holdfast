@@ -225,7 +225,26 @@ func (s *Server) Snapshots(ctx context.Context, fqdn string, in SnapshotQuery) (
 			}
 		}
 	}
+	if err := s.pgRestoreNames(ctx, fqdn, list); err != nil {
+		return nil, err
+	}
 	return list, s.deletionDates(ctx, fqdn, list)
+}
+
+// pgRestoreNames fills in, for each snapshot of a PostgreSQL database's job, the database a restore beside the original
+// makes (decision 055), so every client shows the name the restore will use.
+func (s *Server) pgRestoreNames(ctx context.Context, fqdn string, list []store.Snapshot) error {
+	head, err := s.head(ctx, s.st.Q())
+	if err != nil {
+		return err
+	}
+	jobs := head.Config.Hosts[fqdn].Jobs
+	for i := range list {
+		if j, ok := jobs[list[i].JobID]; ok && j.PostgreSQL != nil && !j.PostgreSQL.Globals && j.PostgreSQL.Database != "" {
+			list[i].RestoreDatabase = s.pgRestoreName(j.PostgreSQL.Database, list[i].Time)
+		}
+	}
+	return nil
 }
 
 // deletionDates fills in when deletions were asked for, and when deleted data is really gone: S3 keeps the

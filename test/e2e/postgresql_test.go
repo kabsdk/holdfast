@@ -434,6 +434,16 @@ SELECT setval('shop.customer_id_seq', 7000);`)
 	if got := pg.dump(t, newDB); got != original {
 		t.Fatalf("the restored database differs from the original:\n%s", firstDiff(original, got))
 	}
+	// The snapshot list names that database beforehand, so every client shows the name the restore uses.
+	type listedSnap struct {
+		ShortID         string `json:"short_id"`
+		RestoreDatabase string `json:"restore_database"`
+	}
+	var listed []listedSnap
+	must(t, json.Unmarshal(e.cli("snapshot", "list", name), &listed))
+	if i := slices.IndexFunc(listed, func(s listedSnap) bool { return s.ShortID == snap }); i < 0 || listed[i].RestoreDatabase != newDB {
+		t.Fatalf("the snapshot list must name the restore's database %s: %+v", newDB, listed)
+	}
 	if owner := pg.sql(t, "postgres", "SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = '"+newDB+"'"); owner != "app" {
 		t.Fatalf("the new database belongs to %q, not to the original's owner", owner)
 	}
@@ -475,6 +485,32 @@ SELECT setval('shop.customer_id_seq', 7000);`)
 	}
 	if !inPlaceAudited {
 		t.Fatalf("the restore in place, with its reason, must be in the audit log: %+v", e.audit(name))
+	}
+
+	// A database dropped with its owner role: its dump still restores beside it, owned by the restore user, without the
+	// grants to roles that are gone.
+	pg.sql(t, "postgres", "CREATE ROLE goner NOLOGIN; CREATE ROLE reader NOLOGIN; CREATE DATABASE gone OWNER goner;")
+	pg.sql(t, "gone", "SET ROLE goner; CREATE TABLE notes (id int PRIMARY KEY, body text); INSERT INTO notes SELECT g, 'note ' || g FROM generate_series(1, 42) g; GRANT SELECT ON notes TO reader;")
+	e.pgTest(name, "main") // the test finds the new database, so its job needs no P003
+	e.cli("job", "set", name, "gone", "--connection", "main", "--database", "gone", testAccept)
+	if ev := e.runJob(name, "gone"); ev.Status != "success" {
+		t.Fatalf("backup of gone: %+v", ev)
+	}
+	var goneSnap string
+	waitFor(t, "gone's snapshot in the catalogue", time.Minute, func() bool {
+		s := e.snapshotsOf(name, "gone")
+		if len(s) > 0 {
+			goneSnap = s[0].ShortID
+		}
+		return goneSnap != ""
+	})
+	pg.sql(t, "postgres", "DROP DATABASE gone; DROP ROLE goner; DROP ROLE reader;")
+	ev = restore(goneSnap, "--to-database", "-m", "e2e: a database and its owner are gone")
+	if ev.Status != "success" || ev.Detail["no_owner"] != "true" || ev.Detail["owner"] != "holdfast_restore" {
+		t.Fatalf("restoring a database whose owner is gone: %+v", ev)
+	}
+	if n := pg.sql(t, ev.Detail["database"], "SELECT count(*) || ' ' || pg_get_userbyid(c.relowner) FROM notes, pg_class c WHERE c.relname = 'notes' GROUP BY c.relowner"); n != "42 holdfast_restore" {
+		t.Fatalf("the copy of gone: %q, not its 42 notes owned by the restore user", n)
 	}
 
 	// As the file: the dump, which pg_restore reads; the roles' file has no password.

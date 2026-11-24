@@ -45,6 +45,9 @@ type Snapshot struct {
 	// words, or, if only an older policy still keeps it, from when the daily run may forget it.
 	KeptBy       []string   `json:"kept_by,omitempty"`
 	PendingUntil *time.Time `json:"pending_until,omitempty"`
+	// Filled in by the server's snapshot list for a PostgreSQL database's job: the database a restore beside the
+	// original makes, <database>-restore-<YYYYMMDD>-<HHMM> (decision 055).
+	RestoreDatabase string `json:"restore_database,omitempty"`
 }
 
 // SyncSnapshots makes the catalogue of a host match a fresh listing of its repository. A listed snapshot

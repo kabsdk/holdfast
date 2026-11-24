@@ -347,17 +347,24 @@ func (a *Agent) runPGRestore(ctx context.Context, cmd proto.Command, r restic.Ru
 	if !spec.InPlace && targetExists {
 		return fmt.Errorf("database %s exists already: Holdfast restores into a new database only, or in place", target)
 	}
-	// The owner: the original's, so the copy belongs where the original does; the restore user if the original is gone.
+	// The owner: the original's, so the copy belongs where the original does. If the original is gone, its roles may be
+	// gone too: the copy, and everything in it, belongs to the restore user, without the original's grants.
 	owner := targetOwner
+	noOwner := false
 	if !spec.InPlace {
 		if ok, o, err := exists(spec.Database); err != nil {
 			return err
 		} else if ok {
 			owner = o
+		} else {
+			noOwner = true
 		}
 	}
 	if owner == "" {
 		owner = c.RestoreUser
+	}
+	if noOwner {
+		ev.Detail["no_owner"] = "true"
 	}
 	if cmd.Restore.DryRun {
 		// The dump must be one pg_restore reads: its table of contents, read through the pipe, writes nothing.
@@ -380,7 +387,7 @@ func (a *Agent) runPGRestore(ctx context.Context, cmd proto.Command, r restic.Ru
 		}
 	}
 	ev.Detail["owner"] = owner
-	if err := a.pgPipe(ctx, r, sn, spec, c, pgRestoreArgs{db: target, clean: spec.InPlace && targetExists}); err != nil {
+	if err := a.pgPipe(ctx, r, sn, spec, c, pgRestoreArgs{db: target, clean: spec.InPlace && targetExists, noOwner: noOwner}); err != nil {
 		if !targetExists {
 			return fmt.Errorf("%v; database %s was made for this restore and is left as it is, empty or partly loaded: drop it, or restore again under another name", err, target)
 		}
@@ -394,9 +401,10 @@ func (a *Agent) runPGRestore(ctx context.Context, cmd proto.Command, r restic.Ru
 }
 
 type pgRestoreArgs struct {
-	list  bool   // pg_restore --list: read the dump, write nothing
-	db    string // the database to load into
-	clean bool   // in place: drop and make again what the dump holds, in the one transaction
+	list    bool   // pg_restore --list: read the dump, write nothing
+	db      string // the database to load into
+	clean   bool   // in place: drop and make again what the dump holds, in the one transaction
+	noOwner bool   // the original is gone: no owners or grants from the dump, whose roles may be gone too
 }
 
 // pgPipe streams the dump out of restic into pg_restore: nothing is written to disk.
@@ -416,6 +424,9 @@ func (a *Agent) pgPipe(ctx context.Context, r restic.Runner, sn restic.Snapshot,
 		args = append(args, "--dbname="+u, "--single-transaction", "--exit-on-error")
 		if o.clean {
 			args = append(args, "--clean", "--if-exists")
+		}
+		if o.noOwner {
+			args = append(args, "--no-owner", "--no-acl")
 		}
 	}
 	cctx, cancel := context.WithTimeout(ctx, restoreTimeout)

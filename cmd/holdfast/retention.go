@@ -122,7 +122,7 @@ func retentionCuts() error {
 		return nil
 	}
 	w := table()
-	fmt.Fprintln(w, "HOST\tJOB\tREVISION\tBY\tCUT ON\tFROM THEN ON")
+	fmt.Fprintln(w, "AGENT\tJOB\tREVISION\tBY\tCUT ON\tFROM THEN ON")
 	for _, c := range cuts {
 		fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%s\t%s\n", c.FQDN, c.JobID, c.Revision, c.ChangedBy, c.ChangedAt.Local().Format("2006-01-02 15:04"), c.PrunableFrom.Local().Format("2006-01-02 15:04"))
 	}
@@ -164,7 +164,7 @@ func prunesCmd() *cobra.Command {
 			return nil
 		}
 		w := table()
-		fmt.Fprintln(w, "RUN\tSTARTED\tHOST\tKIND\tWHO\tSTATUS\tFORGOTTEN\tFREED\tREALLY GONE BY\tERROR")
+		fmt.Fprintln(w, "RUN\tSTARTED\tAGENT\tKIND\tWHO\tSTATUS\tFORGOTTEN\tFREED\tREALLY GONE BY\tERROR")
 		for _, r := range runs {
 			freed := "—"
 			if r.Pruned {

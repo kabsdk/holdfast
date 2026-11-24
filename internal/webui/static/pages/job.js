@@ -2,7 +2,7 @@
 // square is two halves, site A on top and site B below, each in its own site's state (decision 053). A day lists its
 // restore points, each with its snapshot in site A and its copy in site B, to open, restore or delete, in either site
 // or both, always with a reason (decision 055). What restic keeps is restic's answer (forget --dry-run), from kept_by.
-import { html, useState, useEffect, useRef, usePoll, useAction, link, offsiteLink, fmtTime, fmtDay, dur, bytes, scheduleText, retentionText, windowText, Pill, Snap, can, ErrorBox, Loading, Menu, MONTHS, fullDate, clock, browserZone, localDay, isPG, Kind, repoPath, icons } from '../lib.js';
+import { html, useState, usePoll, useAction, link, offsiteLink, fmtTime, fmtDay, dur, bytes, scheduleText, retentionText, windowText, Pill, Snap, can, ErrorBox, Loading, Menu, MONTHS, fullDate, clock, browserZone, localDay, isPG, Kind, repoPath, icons } from '../lib.js';
 import { api } from '../api.js';
 import { StateBadge } from './host.js';
 import { FindFile } from './snapshots.js';
@@ -43,6 +43,8 @@ function SiteB({ host, job, pts, storage, onChange }) {
   </div>`;
 }
 
+const WEEKDAYS = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'];
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const RULE_WORD = { within: 'every backup', hourly: 'one per hour', daily: 'one per day', weekly: 'one per week', monthly: 'one per month', yearly: 'one per year' };
 const swatch = (st) => html`<i class="swatch" style=${cellBg(st)}></i>`;
 
@@ -92,15 +94,9 @@ function RestorePoints({ h, j, pts, off, vault, siteA, siteB, days, events, relo
   const [dlg, setDlg] = useState(null);
   const [notice, setNotice] = useState(null);
   const act = useAction();
-  const scroller = useRef(null);
-  useEffect(() => { if (scroller.current) scroller.current.scrollLeft = scroller.current.scrollWidth; }, []);
   // A restore point can be deleted where it still is, and where no deletion waits for it already.
   const deletable = (p) => p.sa === 'kept' || (off && p.sb === 'copied');
   const oldest = pts.length ? dayOf(pts[pts.length - 1].time) : today;
-  const start = startOf('week', Math.min(oldest, step('day', today, -12 * 7).getTime()));
-  const allDays = [];
-  for (let d = start; d.getTime() <= today; d = step('day', d, 1)) allDays.push(d);
-  const weeks = Math.ceil(allDays.length / 7);
   const keysIn = (x, y) => { const lo = Math.min(x, y), hi = Math.max(x, y); return pts.filter((p) => { const d = dayOf(p.time); return d >= lo && d <= hi && deletable(p); }).map((p) => p.key); };
   const add = (keys) => setSel([...new Set([...sel, ...keys])]);
   const click = (t, e) => {
@@ -108,32 +104,21 @@ function RestorePoints({ h, j, pts, off, vault, siteA, siteB, days, events, relo
     setFocus(t); setAnchor(t);
   };
   const monthSel = (y, m) => { if (mayDelete) add(pts.filter((p) => { const d = new Date(p.time); return d.getFullYear() === y && d.getMonth() === m && deletable(p); }).map((p) => p.key)); };
-  const items = [];
   const example = {};
-  // The months' labels over their first weeks. The first column's month is often only a day or two of it: when the
-  // next month starts less than three columns later, a label's width, the first one goes, and the year moves on.
-  const labels = [];
-  allDays.forEach((d, i) => {
-    if (d.getDate() === 1 || i === 0) {
-      const mo = d.getMonth();
-      if (!labels.length || labels[labels.length - 1].mo !== mo) labels.push({ col: Math.floor(i / 7) + 2, mo, yr: d.getFullYear() });
-    }
-  });
-  if (labels.length > 1 && labels[1].col - labels[0].col < 3) labels.shift();
-  labels.forEach(({ col, mo, yr }, n) => {
-    items.push(html`<button type="button" class="ml" style=${`grid-row:1;grid-column:${col}`} disabled=${!mayDelete}
-      data-tip=${mayDelete ? `${MONTHS[mo]} ${yr}\nSelect every restore point of the month` : null} onClick=${() => monthSel(yr, mo)}>${MONTHS[mo]}${mo === 0 || n === 0 ? ' ' + yr : ''}</button>`);
-  });
-  allDays.forEach((d, i) => {
-    const t = d.getTime(), col = Math.floor(i / 7) + 2, row = (i % 7) + 2;
-    const pos = `grid-row:${row};grid-column:${col}`;
+  // The calendar is by calendar year: a block from January to December for each year from the oldest restore point's
+  // to this one, newest on top, every day a square. Days still to come are drawn faintly, and say so.
+  const thisYear = now.getFullYear();
+  const years = [];
+  for (let y = thisYear; y >= new Date(Math.min(oldest, today)).getFullYear(); y--) years.push(y);
+  const cell = (d, pos) => {
+    const t = d.getTime();
     const ps = byDay.get(t) || [];
     const r = ran.get(t);
     const fails = r ? r.failed : (failedRuns.get(t) || []).length;
-    const before = !ps.length && (r ? r.before : t < oldest);
     let cls = 'cell', style = pos, tip = fullDate(d);
-    if (before) { cls += ' c-before'; tip += '\nBefore the oldest restore point'; }
-    else if (ps.length) {
+    if (t > today) return html`<span class="cell c-future" style=${pos} data-tip=${tip + '\nStill to come'}></span>`;
+    if (!ps.length && (r ? r.before : t < oldest)) return html`<span class="cell c-before" style=${pos} data-tip=${tip + '\nBefore the oldest restore point'}></span>`;
+    if (ps.length) {
       const st = dayState(ps, off);
       const k = st.a + '/' + st.b;
       if (!(k in example)) example[k] = t;
@@ -149,9 +134,27 @@ function RestorePoints({ h, j, pts, off, vault, siteA, siteB, days, events, relo
     if (fails) { cls += ' c-fail'; tip += `\n${fails} failed ${fails === 1 ? 'backup' : 'backups'}`; }
     if (ps.some((p) => sel.includes(p.key))) cls += ' c-sel';
     if (t === focus) cls += ' c-focus';
-    items.push(html`<button type="button" class=${cls} style=${style} data-tip=${tip} aria-label=${tip.replace(/\n/g, ', ')} aria-pressed=${t === focus ? 'true' : 'false'} disabled=${before} onClick=${(e) => click(t, e)}></button>`);
-  });
-  [[0, 'Mon'], [2, 'Wed'], [4, 'Fri']].forEach(([rw, l]) => items.push(html`<span class="wl" style=${`grid-row:${rw + 2};grid-column:1`}>${l}</span>`));
+    if (t === today) cls += ' c-today';
+    return html`<button type="button" class=${cls} style=${style} data-tip=${tip} aria-label=${tip.replace(/\n/g, ', ')} aria-pressed=${t === focus ? 'true' : 'false'} onClick=${(e) => click(t, e)}></button>`;
+  };
+  // A month as on a wall calendar: its name, which selects the month, the days of the week, Monday first, and a row a
+  // week from the 1st.
+  const monthBlock = (y, mo) => {
+    const items = [html`<button type="button" class="ml" style="grid-row:1;grid-column:1 / span 7" disabled=${!mayDelete}
+      data-tip=${mayDelete ? `${MONTHS[mo]} ${y}\nSelect every restore point of the month` : null} onClick=${() => monthSel(y, mo)}>${MONTH_NAMES[mo]}</button>`];
+    WEEKDAYS.forEach((l, c) => items.push(html`<span class="wl" style=${`grid-row:2;grid-column:${c + 1}`}>${l}</span>`));
+    const lead = (new Date(y, mo, 1).getDay() + 6) % 7;
+    let last = 0;
+    for (let d = new Date(y, mo, 1); d.getMonth() === mo; d = step('day', d, 1)) {
+      const i = lead + d.getDate() - 1;
+      last = i;
+      items.push(cell(d, `grid-row:${Math.floor(i / 7) + 3};grid-column:${(i % 7) + 1}`));
+    }
+    return html`<div class="cal" role="group" aria-label=${`${MONTHS[mo]} ${y}`}
+      style=${`grid-template-columns:repeat(7, 15px);grid-template-rows:16px 14px repeat(${Math.floor(last / 7) + 1}, 15px)`}>${items}</div>`;
+  };
+  const blocks = years.map((y) => html`<div class="calyear"><div class="yl">${y}</div>
+    <div class="months">${MONTHS.map((_, mo) => monthBlock(y, mo))}</div></div>`);
   const ret = j.retention || {};
   const chips = [...['within', 'hourly', 'daily', 'weekly', 'monthly', 'yearly'].filter((k) => ret[k]).map((k) => [k, html`${RULE_WORD[k]} for ${windowText(ret[k])}`]),
     ...(ret.keep_last ? [['last', html`always the newest ${ret.keep_last}`]] : [])]
@@ -176,13 +179,14 @@ function RestorePoints({ h, j, pts, off, vault, siteA, siteB, days, events, relo
     <div class="rules"><span class="muted">Kept by restic:</span>
       ${chips.map(([k, label, n]) => html`<button type="button" class=${'rulechip' + (rule === k ? ' on' : '')} aria-pressed=${rule === k ? 'true' : 'false'} onClick=${() => setRule(rule === k ? null : k)}>${label} <b>${n}</b></button>`)}
       ${rule && html`<span class="muted">its days are highlighted below</span>`}</div>
-    <div class="scrollx calwrap" ref=${scroller}><div class="cal" style=${`grid-template-columns:30px repeat(${weeks}, 15px);grid-template-rows:16px repeat(7, 15px)`}>${items}</div></div>
+    <div class="calyears">${blocks}</div>
     <div class="legend" style="flex-direction:column;gap:.4rem">
       ${off ? html`<span>Each day: <b>site A on top, site B below</b>, each half in that site’s state. Click an example to go to such a day.</span>
         <span class="row" style="gap:.3rem 1rem">${COMBOS.map(([st, label]) => { const d = example[st.a + '/' + st.b]; return html`<button type="button" class="link legendbtn" disabled=${!d} onClick=${() => setFocus(d)}
           data-tip=${d ? 'For example ' + fullDate(d) : 'No such day in this job'}>${swatch(st)}${label}</button>`; })}</span>`
         : html`<span class="row" style="gap:.3rem 1rem">${['kept', 'waits', 'deleted'].map((k) => html`<span>${swatch({ a: k })}${WORD_A[k]}</span>`)}</span>`}
-      <span class="row" style="gap:.3rem 1rem"><span><i class="swatch c-fail" style="background:var(--sq-none)"></i>a backup failed that day</span><span><i class="swatch" style="background:var(--sq-none)"></i>no restore point kept</span>
+      <span class="row" style="gap:.3rem 1rem"><span><i class="swatch c-fail" style="background:var(--sq-none)"></i>a backup failed that day</span><span><i class="swatch c-none"></i>no restore point kept</span>
+        <span><i class="swatch c-before"></i>before the oldest restore point</span><span><i class="swatch c-future"></i>still to come</span>
         <span>Click a day for its restore points.${mayDelete ? ' Shift-click another to select every day between; click a month to select it.' : ''}</span></span>
     </div>
     ${mayDelete && chosen.length > 0 && html`<div class="selbar"><b>${chosen.length} restore ${chosen.length === 1 ? 'point' : 'points'} selected</b>

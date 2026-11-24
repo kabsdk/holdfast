@@ -249,7 +249,7 @@ func hostCmd() *cobra.Command {
 			return nil
 		}
 		w := table()
-		fmt.Fprintln(w, "HOST\tSTATUS\tPROGRESS\tJOBS\tLAST SEEN")
+		fmt.Fprintln(w, "AGENT\tSTATUS\tPROGRESS\tJOBS\tLAST SEEN")
 		for _, h := range hosts {
 			seen := "—"
 			if h.Agent != nil {
@@ -960,7 +960,7 @@ func auditCmd() *cobra.Command {
 			return nil
 		}
 		w := table()
-		fmt.Fprintln(w, "WHEN\tWHO\tACTION\tHOST\tJOB\tDETAIL")
+		fmt.Fprintln(w, "WHEN\tWHO\tACTION\tAGENT\tJOB\tDETAIL")
 		for _, e := range list {
 			d, _ := json.Marshal(e.Detail)
 			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", e.At.Local().Format("2006-01-02 15:04:05"), e.Actor, e.Action, e.FQDN, e.JobID, d)
@@ -983,7 +983,7 @@ func checkCmd() *cobra.Command {
 			return nil
 		}
 		w := table()
-		fmt.Fprintln(w, "HOST\tSTATUS\tERROR")
+		fmt.Fprintln(w, "AGENT\tSTATUS\tERROR")
 		for _, r := range res {
 			fmt.Fprintf(w, "%s\t%s\t%s\n", r.FQDN, r.Status, r.Error)
 		}

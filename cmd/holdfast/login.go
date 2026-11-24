@@ -273,7 +273,7 @@ func whoamiCmd() *cobra.Command {
 		}
 		sort.Strings(names)
 		w := table()
-		fmt.Fprintln(w, "HOST\tYOU MAY")
+		fmt.Fprintln(w, "AGENT\tYOU MAY")
 		for _, h := range names {
 			fmt.Fprintf(w, "%s\t%s\n", h, strings.Join(me.Hosts[h], " "))
 		}
