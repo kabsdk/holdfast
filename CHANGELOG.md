@@ -8,6 +8,13 @@ What each release of Holdfast changes. The Ansible collection has its own notes 
 - Web UI: **Overview** replaces the Fleet and Problems pages. Its tiles count stale, failed and incomplete jobs and
   the hosts with other problems, and filter the hosts by them; each problem shows once, under its host, and the
   sidebar's "Needs attention" list is gone.
+- Web UI: the **host page** has a row per job, with its last 14 days as squares, its last and next backup, Back up
+  now and Restore; the host's rarer actions are in a ⋯ menu, and recent runs fold by job and day.
+- Web UI: a **job page** draws what restic keeps, a row of squares per rule of the retention, beside its snapshots,
+  and a **calendar** has every kept snapshot, a square a day. Every square shows its date, snapshot and reasons on
+  hover.
+- API and CLI: `GET /api/v1/hosts/{fqdn}/days` and `holdfast host days <fqdn>` give each job's backups on each of the
+  last days, and the worst of each day.
 
 ## 0.1.0 (2026-11-24)
 

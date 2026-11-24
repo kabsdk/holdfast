@@ -1,4 +1,4 @@
-import { html, useState, usePoll, useAction, link, offsiteLink, go, ago, fmtTime, fmtDay, dur, bytes, scheduleText, retentionText, Pill, Snap, can, ErrorBox, Loading, EnrollLines } from '../lib.js';
+import { html, useState, usePoll, useAction, link, offsiteLink, go, ago, until, fmtTime, fmtDay, dur, bytes, retentionText, scheduleText, Pill, Snap, can, ErrorBox, Loading, EnrollLines, Menu, Problem, icons, fullDate, clock, localDay, browserZone } from '../lib.js';
 import { api } from '../api.js';
 import { jobState } from './overview.js';
 
@@ -65,71 +65,18 @@ function DecommissionPanel({ host, done }) {
   </div>`;
 }
 
-// The repository in the bucket: its size, the escrow file, and a decommission.
+// The repository in the bucket, on one line: its size, the escrow file, Object Lock and a decommission.
 function Repository({ host }) {
   const s = host.size, d = host.decommission, esc = host.escrow || {};
-  return html`<dl class="facts">
-    <dt>Repository</dt><dd><code>repos/${host.fqdn}</code>${s ? ` · ${bytes(s.current_bytes)} in ${s.objects} objects, and ${bytes(s.noncurrent_bytes)} in old versions S3 keeps · measured ${ago(s.measured_at)}` : ' · not measured yet'}</dd>
-    <dt>Escrow</dt><dd>${esc.current ? `the bucket's escrow file holds the current password (written ${fmtTime(esc.written_at)})` : esc.error ? `not written: ${esc.error}` : 'not written'}</dd>
-    ${host.storage?.object_lock && html`<dt>Object Lock</dt><dd>${host.storage.object_lock} <span class="muted">· reported, not required; Holdfast never extends a lock</span></dd>`}
-    ${d && html`<dt>Decommission</dt><dd>${d.done_at
-      ? `done ${fmtTime(d.done_at)}: ${d.objects_deleted} objects deleted, as ${d.requested_by} asked. The data is really gone ${d.really_gone_at ? fmtDay(d.really_gone_at) : 'when the lifecycle rule expires the old versions'}.`
-      : `asked by ${d.requested_by}; the repository is deleted ${fmtTime(d.due_at)}`}</dd>`}
-  </dl>`;
-}
-
-// An off-site job (decision 039): copied from primary, with its own off-site retention.
-function VaultJobFacts({ host, job }) {
-  const s = job.status || {};
-  return html`<dl class="facts">
-    <dt>From primary</dt><dd>${job.dump ? html`dump <span class="mono">${job.dump}</span>` : html`<span class="mono">${(job.paths || []).join('  ')}</span>`} · ${scheduleText(job.schedule)}</dd>
-    <dt>Off-site retention</dt><dd>${retentionText(job.retention)}</dd>
-    <dt>Primary retention 🔒</dt><dd>${job.primary_retention ? retentionText(job.primary_retention) : '—'} <span class="muted">· set on the server's pages</span></dd>
-    <dt>Copies</dt><dd>${s.last_success_at ? 'last copy ' + fmtTime(s.last_success_at) : 'none yet'}${job.behind_s != null ? ` · ${job.behind_s ? dur(job.behind_s + 's') + ' behind primary' : 'up to date'}` : ''}</dd>
-    <dt>Newest copy</dt><dd>${s.last_snapshot_id ? html`<${Snap} fqdn=${host.fqdn} id=${s.last_snapshot_id} />` : '—'}</dd>
-  </dl>`;
-}
-
-function JobCard({ host, job, cuts, onDone, vault }) {
-  const act = useAction();
-  const st = jobState(host, job);
-  const cut = cuts.find((c) => c.fqdn === host.fqdn && c.job_id === job.id);
-  const s = job.status || {};
-  return html`<div class="job">
-    <div class="head">
-      <div><strong>${job.id}</strong> <${Pill} kind=${st.kind}>${st.text}<//>
-        ${job.excluded && html` <${Pill} kind="warning">excluded: not copied<//>`}${job.retired && html` <${Pill}>removed in primary<//>`}</div>
-      <div class="row">
-        ${!vault && can(host, 'backup.run') && html`<button class="small" disabled=${act.busy} onClick=${() => act.run(() => api.runNow(host.fqdn, job.id))}>Back up now</button>`}
-        <a class="button small" href=${link('hosts', host.fqdn, 'jobs', job.id, 'snapshots')}>${vault ? 'Copies' : 'Snapshots'}</a>
-        ${!vault && can(host, 'restore.new_dir') && s.last_snapshot_id && html`<a class="button small" href=${link('hosts', host.fqdn, 'snapshots', s.last_snapshot_id, 'restore')}>Restore from latest…</a>`}
-        ${can(host, 'config.jobs') && html`<a class="button small" href=${link('hosts', host.fqdn, 'configure', job.id)}>${vault ? 'Off-site retention' : 'Edit'}</a>`}
-        ${vault && can(host, 'config.jobs') && !job.retired && html`<button class="small" disabled=${act.busy} onClick=${() => act.run(() => (job.excluded ? api.include : api.exclude)(host.fqdn, job.id, {})).then(onDone)}>${job.excluded ? 'Include' : 'Exclude'}</button>`}
-        ${vault && can(host, 'config.jobs') && job.primary_retention && html`<button class="small" disabled=${act.busy} onClick=${() => act.run(() => api.matchPrimary(host.fqdn, job.id, {})).then(onDone)}>Match primary</button>`}
-        ${can(host, 'host.remove') && (!vault || job.retired) && html`<button class="small" onClick=${() => {
-          if (confirm(`Remove job ${job.id} from ${host.fqdn}? Its snapshots stay; the daily retention no longer touches them.`)) act.run(() => api.removeJob(host.fqdn, job.id, {})).then(onDone);
-        }}>Remove job</button>`}
-      </div>
-    </div>
-    ${vault ? html`<${VaultJobFacts} host=${host} job=${job} />` : html`<dl class="facts">
-      ${job.dump ? html`<dt>Dump</dt><dd><span class="mono">${job.dump}</span> <span class="muted">· no longer run since 0.6.0 (decision 052): edit the job to give it paths</span></dd>`
-        : html`<dt>Paths</dt><dd class="mono">${(job.paths || []).join('  ')}${job.excludes?.length ? html` <span class="muted">· excludes ${job.excludes.join(' ')}</span>` : ''}</dd>`}
-      <dt>Schedule</dt><dd>${scheduleText(job.schedule)} · longest gap ${dur(job.longest_gap)} · stale after ${dur(job.stale_after)}</dd>
-      <dt>Retention</dt><dd>${retentionText(job.retention)}</dd>
-      <dt>Agent reported</dt><dd>${s.last_success_at ? 'last success ' + fmtTime(s.last_success_at) : 'no success yet'}${s.last_status && s.last_status !== 'success' ? ` · last run ${s.last_status}${s.last_error ? ': ' + s.last_error : ''}` : ''}</dd>
-      <dt>Newest snapshot</dt><dd>${s.last_snapshot_id ? html`<${Snap} fqdn=${host.fqdn} id=${s.last_snapshot_id} />` : '—'}</dd>
-      <dt>Next run</dt><dd>${fmtTime(job.next_runs?.[0])}</dd>
-    </dl>`}
-    ${act.done && act.done.findings && act.done.findings.length > 0 && html`<div class="banner info">Saved as revision ${act.done.revision}: ${act.done.findings.map((f) => f.code + ' ' + f.message).join('; ')}</div>`}
-    ${cut && html`<div class="banner warning">Retention cut pending: what the new retention drops stays until ${fmtTime(cut.prunable_from)}, the 7-day protection.
-      <div class="row" style="margin-top:.4rem">
-        ${can(host, 'config.jobs') && html`<button class="small" onClick=${() => act.run(() => api.keepLonger(host.fqdn, job.id, {})).then(onDone)}>Keep the old retention</button>`}
-        <a class="button small" href=${link('hosts', host.fqdn, 'pending')}>What waits</a>
-        ${can(host, 'retention.cut') && html`<a class="button small" href=${link('hosts', host.fqdn, 'prune-now')}>Prune now…</a>`}
-      </div></div>`}
-    <${ErrorBox} error=${act.error} />
-    ${act.done && act.done.command && html`<div class="banner ok">Queued: it starts after any running job. Its result appears in the runs below.</div>`}
-  </div>`;
+  return html`<section class="factline" aria-label="Repository">
+    <span><span class="muted">Repository</span> <code>repos/${host.fqdn}</code>${s ? ` · ${bytes(s.current_bytes)}, and ${bytes(s.noncurrent_bytes)} of old versions S3 keeps` : ' · not measured yet'}</span>
+    <span class="row" style="gap:.35rem"><span class="muted">Escrow</span>${esc.current ? html`${icons.ok()} current password` : esc.error ? html`<span class="num error">not written: ${esc.error}</span>` : 'not written'}</span>
+    ${host.storage?.object_lock && html`<span><span class="muted">Object Lock</span> ${host.storage.object_lock}</span>`}
+    ${s && html`<span class="muted">measured ${ago(s.measured_at)}</span>`}
+    ${d && html`<span><span class="muted">Decommission</span> ${d.done_at
+      ? `done ${fmtTime(d.done_at)}: ${d.objects_deleted} objects deleted, as ${d.requested_by} asked; really gone ${d.really_gone_at ? fmtDay(d.really_gone_at) : 'when the lifecycle rule expires the old versions'}`
+      : `asked by ${d.requested_by}; the repository is deleted ${fmtTime(d.due_at)}`}</span>`}
+  </section>`;
 }
 
 // What the off-site copies have of the host (decisions 039, 041). Their settings are on the off-site pages.
@@ -180,38 +127,139 @@ function OffsiteRestore({ host, done }) {
   </div>`;
 }
 
+// StateBadge is a job's state beside its name: a tick when it is fine, else what is wrong.
+export function StateBadge({ host, job }) {
+  const s = jobState(host, job);
+  if (s.kind === 'ok') return icons.ok();
+  return html`<${Pill} kind=${s.kind}>${s.text}<//>`;
+}
+
+const DAY_TEXT = { success: 'backed up', warning: 'incomplete: some files could not be read', failed: 'failed' };
+
+// Strip is a job's last 14 days, a square a day, coloured by the worst run of the day (spec §5.1a).
+function Strip({ job, days }) {
+  if (!days) return html`<div class="strip" aria-hidden="true">${Array.from({ length: 14 }, () => html`<span class="d-wait"></span>`)}</div>`;
+  const today = new Date().toDateString();
+  const tip = (d) => {
+    const day = localDay(d.date);
+    if (d.before) return `${fullDate(day)}\nBefore the job’s first backup`;
+    if (d.runs === 0) return `${fullDate(day)}\n${day.toDateString() === today ? 'No backup yet today' : 'No backup ran'}`;
+    const n = d.runs === 1 ? '1 backup' : `${d.runs} backups`;
+    const parts = [d.success && `${d.success} backed up`, d.warning && `${d.warning} incomplete`, d.failed && `${d.failed} failed`].filter(Boolean);
+    return `${fullDate(day)}\n${n}: ${d.runs === 1 ? DAY_TEXT[d.worst] : parts.join(', ')}`;
+  };
+  const cls = (d) => (d.before ? 'd-before' : d.runs === 0 ? (localDay(d.date).toDateString() === today ? 'd-later' : 'd-none') : 'd-' + d.worst);
+  return html`<div class="strip" role="img" aria-label=${job + ', the last 14 days: ' + days.days.map((d) => tip(d).replace('\n', ': ')).join('; ')}>
+    ${days.days.map((d) => html`<span class=${cls(d)} data-tip=${tip(d)}></span>`)}</div>`;
+}
+
+function JobRow({ host, job, days, cut, onRun, queued, vault }) {
+  const probs = (host.problems || []).filter((p) => p.job_id === job.id);
+  const s = job.status || {};
+  return html`<div class=${'gt' + (probs.some((p) => p.severity === 'error') ? ' bad' : '')} style=${'--cols:' + JOB_COLS}>
+    <div style="min-width:0">
+      <div class="row" style="gap:.5rem"><a href=${link('hosts', host.fqdn, 'jobs', job.id)}><b>${job.id}</b></a><${StateBadge} host=${host} job=${job} />
+        ${job.excluded && html`<${Pill} kind="warning">not copied<//>`}${job.retired && html`<${Pill}>removed in primary<//>`}
+        ${cut && html`<a class="pill warning" href=${link('hosts', host.fqdn, 'jobs', job.id)}>retention cut pending</a>`}
+        <span class="sub">${scheduleText(job.schedule)}</span></div>
+      ${probs.map((p) => html`<${Problem} p=${{ ...p, job_id: '' }} />`)}
+    </div>
+    <${Strip} job=${job.id} days=${days} />
+    <div><div class="num">${s.last_success_at ? ago(s.last_success_at) : '—'}</div>${s.last_success_at && html`<div class="sub">${fmtTime(s.last_success_at)}</div>`}</div>
+    <span class="num muted">${job.next_runs?.[0] ? until(job.next_runs[0]) : '—'}</span>
+    <div class="row" style="justify-content:flex-end;gap:.4rem">
+      ${queued && html`<span class="ok" style="font-size:12.5px">Queued</span>`}
+      ${!vault && can(host, 'backup.run') && html`<button class="small" disabled=${queued} onClick=${onRun}>Back up now</button>`}
+      ${!vault && can(host, 'restore.new_dir') && s.last_snapshot_id && html`<a class="button small" href=${link('hosts', host.fqdn, 'snapshots', s.last_snapshot_id, 'restore')}>Restore…</a>`}
+    </div>
+  </div>`;
+}
+const JOB_COLS = 'minmax(0,2.4fr) 225px minmax(0,1fr) minmax(0,.9fr) 210px';
+
+// Recent runs, folded: a job's backups on one day that ended the same way are one line, and so are a run and its
+// retries. Restores, checks and the rest are a line each.
+function fold(events) {
+  const out = [];
+  for (const e of events) {
+    const day = new Date(e.finished).toDateString();
+    const g = e.kind === 'backup' && !e.command_id && out.find((x) => x.fold && x.job === e.job_id && x.day === day && x.status === e.status);
+    if (g) {
+      g.n++;
+      g.from = e.started < g.from ? e.started : g.from;
+      continue;
+    }
+    out.push({ fold: e.kind === 'backup' && !e.command_id, job: e.job_id, day, status: e.status, n: 1, e, from: e.started });
+  }
+  return out;
+}
+
+function Runs({ host, events }) {
+  const groups = fold(events).slice(0, 8);
+  const cols = '170px 110px minmax(0,3fr) 100px 110px';
+  const pill = (st) => (st === 'success' ? 'ok' : st === 'warning' ? 'warning' : st === 'skipped' ? '' : 'error');
+  return html`<section class="list" aria-labelledby="runs-h">
+    <div class="list-head"><h2 id="runs-h">Recent runs</h2></div>
+    ${groups.length === 0 ? html`<p class="muted" style="padding:0 1rem 1rem">No run yet.</p>` : html`<div class="scrollx"><div style="min-width:760px">
+      <div class="gt head" style=${'--cols:' + cols}><span>When</span><span>Job</span><span>Result</span><span>Snapshot</span><span>By</span></div>
+      ${groups.map((g) => {
+        const e = g.e;
+        const what = e.kind === 'backup' ? (g.n > 1 ? `${g.n} backups` : 'backup') : e.kind.replace(/_/g, ' ');
+        const detail = e.error || (e.detail && e.detail.directory ? 'into ' + e.detail.directory : '') || (g.n > 1 && e.status === 'success' ? 'all OK' : '');
+        return html`<div class="gt" style=${'--cols:' + cols + ';align-items:baseline'}>
+          <span class="num muted">${g.n > 1 ? `${fmtDay(e.finished)} ${clock(g.from)}–${clock(e.finished)}` : fmtTime(e.finished)}</span>
+          <span>${e.job_id}</span>
+          <span style="min-width:0"><${Pill} kind=${pill(e.status)}>${e.status === 'success' ? what : `${what} ${e.status}${g.n > 1 ? ' ×' + g.n : ''}`}<//> <span class="muted wrap">${detail}</span></span>
+          <span>${e.snapshot_id ? html`<${Snap} fqdn=${host.fqdn} id=${e.snapshot_id} />` : html`<span class="muted">—</span>`}</span>
+          <span class="muted">${e.initiated_by || 'schedule'}</span>
+        </div>`;
+      })}</div></div>`}
+  </section>`;
+}
+
 export function Host({ fqdn, reloadHosts, vault }) {
   const host = usePoll(() => api.host(fqdn), [fqdn]);
-  const events = usePoll(() => api.hostEvents(fqdn, 50), [fqdn]);
+  const events = usePoll(() => api.hostEvents(fqdn, 200), [fqdn]);
+  const days = usePoll(() => api.hostDays(fqdn, 14, browserZone()), [fqdn], 60000);
   const cuts = usePoll(() => api.retentionCuts(), [fqdn], 60000);
   const [panel, setPanel] = useState('');
+  const [queued, setQueued] = useState({});
   const act = useAction();
   if (host.error) return html`<${ErrorBox} error=${host.error} />`;
   if (!host.data) return html`<${Loading} what=${fqdn} />`;
   const h = host.data;
-  const refresh = () => { host.reload(); events.reload(); reloadHosts(); };
-  const errors = (h.problems || []).filter((p) => p.severity === 'error').length;
+  const refresh = () => { host.reload(); events.reload(); days.reload(); reloadHosts(); };
+  const probs = h.problems || [];
+  const errors = probs.filter((p) => p.severity === 'error').length;
+  const needy = new Set(probs.filter((p) => p.job_id).map((p) => p.job_id)).size;
+  const run = (j) => act.run(() => api.runNow(h.fqdn, j.id)).then((r) => { if (r) setQueued({ ...queued, [j.id]: true }); });
   return html`
     <div class="spread">
       <div>
-        <h1>${h.fqdn} <${Pill} kind=${errors ? 'error' : (h.problems || []).length ? 'warning' : 'ok'}>${errors ? `${errors} problems` : (h.problems || []).length ? 'to check' : `all ${h.jobs.length} jobs OK`}<//></h1>
+        <h1 class="row" style="gap:.6rem">${h.fqdn}
+          ${probs.length === 0 ? html`<${Pill} kind="ok">all ${h.jobs.length} jobs OK<//>`
+            : html`<${Pill} kind=${errors ? 'error' : 'warning'}>${needy ? `${needy} ${needy === 1 ? 'job needs' : 'jobs need'} attention` : 'needs attention'}<//>`}</h1>
         <p class="muted">${vault ? `copied from primary · last copy ${h.copied_at ? fmtTime(h.copied_at) : 'none yet'}`
-          : h.agent ? `${h.agent.os_id} ${h.agent.os_version} · agent seen ${ago(h.agent.last_seen_at)} · restic ${h.agent.restic_version} · runs revision ${h.agent.applied_revision} (current: ${h.desired_revision})` : `${h.state.replace('_', ' ')} · progress: ${h.progress}`}</p>
+          : h.agent ? html`${h.agent.os_id} ${h.agent.os_version} · agent seen ${ago(h.agent.last_seen_at)} · restic ${h.agent.restic_version}${h.in_sync ? '' : html` · <${Pill} kind="warning">runs revision ${h.agent.applied_revision}, not ${h.desired_revision}<//>`}`
+          : `${h.state.replace(/_/g, ' ')} · progress: ${h.progress}`}</p>
       </div>
       <div class="row">
         ${!vault && can(h, 'config.jobs') && h.state !== 'retired' && html`<a class="button" href=${link('hosts', h.fqdn, 'configure')}>Add job</a>`}
-        <a class="button" href=${link('hosts', h.fqdn, 'pending')}>Pending</a>
-        ${can(h, 'retention.cut') && html`<button onClick=${() => act.run(() => api.retentionRun(h.fqdn))}>Run retention now</button>`}
-        ${can(h, 'retention.cut') && html`<a class="button" href=${link('hosts', h.fqdn, 'prune-now')}>Prune now…</a>`}
-        ${!vault && can(h, 'config.storage') && html`<button onClick=${() => setPanel('enroll')}>New enrollment code</button>`}
-        ${!vault && can(h, 'config.storage') && h.state !== 'retired' && html`<button onClick=${() => setPanel('rotate')}>Rotate password…</button>`}
-        ${can(h, 'repository.rollback') && !(h.decommission && h.decommission.done_at) && html`<a class="button" href=${link('hosts', h.fqdn, 'rollback')}>Roll back…</a>`}
-        ${can(h, 'host.remove') && h.state !== 'retired' && !h.removed_at && (!vault || h.jobs.every((j) => j.retired)) && html`<button onClick=${() => {
-          if (confirm(`Remove ${h.fqdn}? Its agent stops backing up; its repository and snapshots stay, and adding it again brings it back.`))
-            act.run(() => api.removeHost(h.fqdn, {})).then(refresh);
-        }}>Remove host…</button>`}
-        ${can(h, 'host.decommission') && h.state === 'retired' && !h.decommission && html`<button class="danger" onClick=${() => setPanel('decommission')}>Decommission…</button>`}
-        ${can(h, 'host.decommission') && h.decommission && !h.decommission.done_at && html`<button onClick=${() => act.run(() => api.cancelDecommission(h.fqdn, {})).then(refresh)}>Cancel decommission</button>`}
+        <${Menu} label="More host actions" items=${[
+          { label: 'Waiting to be deleted', href: link('hosts', h.fqdn, 'pending') },
+          can(h, 'retention.cut') && { label: 'Run retention now', run: () => act.run(() => api.retentionRun(h.fqdn)) },
+          can(h, 'retention.cut') && { label: 'Prune now…', href: link('hosts', h.fqdn, 'prune-now') },
+          '-',
+          !vault && can(h, 'config.storage') && { label: 'New enrollment code', run: () => setPanel('enroll') },
+          !vault && can(h, 'config.storage') && h.state !== 'retired' && { label: 'Rotate password…', run: () => setPanel('rotate') },
+          can(h, 'repository.rollback') && !(h.decommission && h.decommission.done_at) && { label: 'Roll back…', href: link('hosts', h.fqdn, 'rollback') },
+          '-',
+          can(h, 'host.remove') && h.state !== 'retired' && !h.removed_at && (!vault || h.jobs.every((j) => j.retired)) && { label: 'Remove host…', danger: true, run: () => {
+            if (confirm(`Remove ${h.fqdn}? Its agent stops backing up; its repository and snapshots stay, and adding it again brings it back.`))
+              act.run(() => api.removeHost(h.fqdn, {})).then(refresh);
+          } },
+          can(h, 'host.decommission') && h.state === 'retired' && !h.decommission && { label: 'Decommission…', danger: true, run: () => setPanel('decommission') },
+          can(h, 'host.decommission') && h.decommission && !h.decommission.done_at && { label: 'Cancel the decommission', run: () => act.run(() => api.cancelDecommission(h.fqdn, {})).then(refresh) },
+        ]} />
       </div>
     </div>
     <${ErrorBox} error=${act.error} />
@@ -221,23 +269,22 @@ export function Host({ fqdn, reloadHosts, vault }) {
     ${panel === 'decommission' && html`<${DecommissionPanel} host=${h} done=${() => { setPanel(''); refresh(); }} />`}
     ${panel === 'offsite' && html`<${OffsiteRestore} host=${h} done=${() => setPanel('')} />`}
     <${Banners} host=${h} onAck=${() => act.run(() => api.acknowledge(h.fqdn)).then(refresh)} />
-    <${Repository} host=${h} />
-    <h2>${h.jobs.length} ${vault ? 'copied jobs' : 'backup jobs'}</h2>
-    <p class="muted">${vault ? html`Copies of the host's snapshots, in its off-site repository: <code>repos/${h.fqdn}</code> in the off-site bucket, under the off-site retention.`
-      : html`One repository per host, shared by its jobs: <code>repos/${h.fqdn}</code>. They run one at a time.`}</p>
-    ${h.jobs.map((j) => html`<${JobCard} key=${j.id} host=${h} job=${j} cuts=${cuts.data || []} onDone=${refresh} vault=${vault} />`)}
+
+    <section class="list" aria-labelledby="jobs-h">
+      <div class="list-head"><h2 id="jobs-h">${vault ? 'Copied jobs' : 'Jobs'}</h2>
+        ${days.error && html`<span class="muted">The last 14 days could not be read: ${days.error.message}</span>`}</div>
+      ${h.jobs.length === 0 ? html`<p class="muted" style="padding:0 1rem 1rem">No job yet.${!vault && can(h, 'config.jobs') ? html` <a href=${link('hosts', h.fqdn, 'configure')}>Add one</a>.` : ''}</p>` : html`
+      <div class="scrollx"><div style="min-width:900px">
+        <div class="gt head" style=${'--cols:' + JOB_COLS}><span>Job</span><span>Last 14 days</span><span>Last backup</span><span>Next</span><span></span></div>
+        ${h.jobs.map((j) => html`<${JobRow} key=${j.id} host=${h} job=${j} vault=${vault} queued=${!!queued[j.id]} onRun=${() => run(j)}
+          days=${days.data && days.data.jobs.find((x) => x.job_id === j.id)} cut=${(cuts.data || []).some((c) => c.fqdn === h.fqdn && c.job_id === j.id)} />`)}
+      </div></div>
+      <div class="legend"><span><i class="d-success"></i>backed up</span><span><i class="d-warning"></i>incomplete</span><span><i class="d-failed"></i>failed</span>
+        <span><i class="d-none"></i>no run</span><span><i class="d-later"></i>not yet today</span><span><i class="d-before"></i>before the first backup</span><span>One square a day; the worst run of the day sets its colour.</span></div>`}
+    </section>
     ${!vault && h.offsite && html`<${Offsite} host=${h} onRestore=${() => setPanel('offsite')} />`}
-    <h2>Recent runs · all jobs</h2>
-    ${events.data ? html`<table>
-      <thead><tr><th>Finished</th><th>Job</th><th>Kind</th><th>Status</th><th>Duration</th><th>Snapshot</th><th>Details</th><th>Started by</th></tr></thead>
-      <tbody>${events.data.map((e) => html`<tr>
-        <td>${fmtTime(e.finished)}</td><td>${e.job_id}</td><td>${e.kind.replace('_', ' ')}${e.command_id && e.kind === 'backup' ? ' (manual)' : ''}</td>
-        <td><${Pill} kind=${e.status === 'success' ? 'ok' : e.status === 'warning' ? 'warning' : e.status === 'skipped' ? '' : 'error'}>${e.status}<//></td>
-        <td>${Math.max(0, Math.round((new Date(e.finished) - new Date(e.started)) / 1000))} s</td>
-        <td>${e.snapshot_id && html`<${Snap} fqdn=${h.fqdn} id=${e.snapshot_id} />`}</td>
-        <td class="muted">${e.error || (e.detail && e.detail.directory ? 'into ' + e.detail.directory : '')}</td>
-        <td>${e.initiated_by || 'schedule'}</td>
-      </tr>`)}</tbody></table>` : html`<${Loading} what="runs" />`}`;
+    ${events.data ? html`<${Runs} host=${h} events=${events.data} />` : html`<${Loading} what="runs" />`}
+    <${Repository} host=${h} />`;
 }
 
 export function Pending({ fqdn }) {

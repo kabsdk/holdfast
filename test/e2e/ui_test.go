@@ -104,11 +104,30 @@ func TestUIPages(t *testing.T) {
 	clickText(t, ctx, "button", "Show all hosts")
 	waitText(t, ctx, web)
 
-	// Host: Back up now.
+	// Host: a row per job with its last 14 days, and Back up now.
 	open(t, ctx, "#/hosts/"+web)
-	waitText(t, ctx, "backup jobs")
+	waitText(t, ctx, "Last 14 days")
 	clickText(t, ctx, "button", "Back up now")
 	waitText(t, ctx, "Queued")
+
+	// The days the host page draws, as the API and the CLI give them: today has both backups, and all went well.
+	var hd struct {
+		Jobs []struct {
+			JobID string `json:"job_id"`
+			Days  []struct {
+				Date  string
+				Runs  int
+				Worst string
+			}
+		}
+	}
+	must(t, json.Unmarshal(e.cli("host", "days", web), &hd))
+	if len(hd.Jobs) != 1 || hd.Jobs[0].JobID != "system" || len(hd.Jobs[0].Days) != 14 {
+		t.Fatalf("host days: %+v", hd)
+	}
+	if today := hd.Jobs[0].Days[13]; today.Runs < 2 || today.Worst != "success" {
+		t.Fatalf("today's backups, as host days gives them: %+v", today)
+	}
 
 	// Configure: the checks come from the server as you type, and the save makes a revision.
 	open(t, ctx, "#/hosts/"+web+"/configure/system")
@@ -122,16 +141,27 @@ func TestUIPages(t *testing.T) {
 	clickText(t, ctx, "label", "I accept")
 	waitText(t, ctx, "Ready to save")
 	clickText(t, ctx, "button", "Save")
-	waitText(t, ctx, "backup jobs") // back on the host page
+	waitText(t, ctx, "Last 14 days") // back on the host page
 	var revs []struct{ Message string }
 	must(t, json.Unmarshal(e.cli("revision", "list"), &revs))
 	if revs[0].Message != "exclude temporary files, from the UI" {
 		t.Fatalf("the UI's save is not the newest revision: %+v", revs[0])
 	}
 
-	// Job snapshots: restic's reasons for keeping each one.
+	// Job: what restic keeps as a row of squares per rule, and the snapshots with restic's reasons for keeping each.
+	// The old snapshot list's address opens the job's page. Then the calendar of every kept snapshot.
 	open(t, ctx, "#/hosts/"+web+"/jobs/system/snapshots")
+	waitText(t, ctx, "What restic keeps")
+	waitText(t, ctx, "One per day") // --keep-daily 7d
 	waitText(t, ctx, "kept:")
+	var squares int
+	run(t, ctx, "the squares", chromedp.Evaluate(`document.querySelectorAll('a.slot').length`, &squares))
+	if squares < 2 {
+		t.Fatalf("the job page shows %d kept snapshots as squares, want at least 2", squares)
+	}
+	clickText(t, ctx, "a", "Calendar")
+	waitText(t, ctx, "every kept snapshot")
+	waitText(t, ctx, "with a kept snapshot")
 
 	// Snapshot: Files, Changes, and a restore's dry run through the agent.
 	open(t, ctx, "#/hosts/"+web+"/snapshots/"+snaps[0]+"/files")

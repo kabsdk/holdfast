@@ -125,6 +125,7 @@ func (s *Server) Routes() []Route {
 		r("DELETE", "/api/v1/hosts/{fqdn}", access.HostRemove, s.apiRemoveHost),
 		r("DELETE", "/api/v1/hosts/{fqdn}/jobs/{job}", access.HostRemove, s.apiRemoveJob),
 		r("GET", "/api/v1/hosts/{fqdn}/events", access.View, s.apiHostEvents),
+		r("GET", "/api/v1/hosts/{fqdn}/days", access.View, s.apiHostDays),
 		r("POST", "/api/v1/hosts/{fqdn}/enrollment-code", access.ConfigStorage, s.apiEnrollmentCode),
 		r("POST", "/api/v1/hosts/{fqdn}/rotate", access.ConfigStorage, s.apiRotate),
 		r("POST", "/api/v1/hosts/{fqdn}/decommission", access.HostDecommission, s.apiDecommission),

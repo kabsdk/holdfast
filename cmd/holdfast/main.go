@@ -419,7 +419,75 @@ func hostCmd() *cobra.Command {
 		}
 		return w.Flush()
 	}})
+	c.AddCommand(hostDaysCmd())
 	return c
+}
+
+// hostDaysCmd is the host page's strip of days: each job's backups on each of the last days, the worst one marked.
+func hostDaysCmd() *cobra.Command {
+	var days int
+	var zone string
+	cmd := &cobra.Command{Use: "days <fqdn>", Short: "Each job's backups on each of the last days (the host page's squares)", Args: cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, a []string) error {
+			if zone == "" {
+				zone = localZone()
+			}
+			var hd struct {
+				Zone, From, To string
+				Jobs           []struct {
+					JobID string `json:"job_id"`
+					Days  []struct {
+						Date   string
+						Runs   int
+						Worst  string
+						Before bool
+					}
+				}
+			}
+			raw, err := call("GET", "/api/v1/hosts/"+url.PathEscape(a[0])+"/days?days="+strconv.Itoa(days)+"&tz="+url.QueryEscape(zone), nil, &hd)
+			if err != nil {
+				return err
+			}
+			if asJSON {
+				printJSON(raw)
+				return nil
+			}
+			fmt.Printf("%s to %s (%s): + backed up, ! incomplete, x failed, . no run, - before the job's first backup\n", hd.From, hd.To, hd.Zone)
+			w := table()
+			fmt.Fprintln(w, "JOB\tDAYS\tBACKUPS")
+			mark := map[string]string{"success": "+", "warning": "!", "failed": "x", "": "."}
+			for _, j := range hd.Jobs {
+				var line strings.Builder
+				runs := 0
+				for _, d := range j.Days {
+					if d.Before {
+						line.WriteString("-")
+					} else {
+						line.WriteString(mark[d.Worst])
+					}
+					runs += d.Runs
+				}
+				fmt.Fprintf(w, "%s\t%s\t%d\n", j.JobID, line.String(), runs)
+			}
+			return w.Flush()
+		}}
+	cmd.Flags().IntVar(&days, "days", 14, "how many days, today included, up to 92")
+	cmd.Flags().StringVar(&zone, "tz", "", "the time zone the days are in, such as Europe/Copenhagen (default: this machine's)")
+	return cmd
+}
+
+// localZone is this machine's time zone by name, which the server can load: $TZ, else /etc/localtime's link into the
+// zone database, else none, and the server uses its own.
+func localZone() string {
+	if tz := strings.TrimPrefix(os.Getenv("TZ"), ":"); tz != "" && !strings.HasPrefix(tz, "/") {
+		return tz
+	}
+	if p, err := os.Readlink("/etc/localtime"); err == nil {
+		if i := strings.Index(p, "zoneinfo/"); i >= 0 {
+			return p[i+len("zoneinfo/"):]
+		}
+	}
+	return ""
 }
 
 // jobFlags turn command-line flags into a job document. The server validates it.

@@ -667,16 +667,35 @@ Restore and inspection behave like restic does on the host.
 
 ### 5.1 Navigation
 
-- Path: Overview → Host → Job → Snapshot list → Snapshot page.
+- Path: Overview → Host → Job → Snapshot page.
 - Every snapshot ID anywhere in the product is a link.
+- A page shows its main actions; the rarer ones, such as Prune now, Roll back or Remove, are in its ⋯ menu.
 
-### 5.2 Job snapshot list
+### 5.1a Host page
 
-- Shows all snapshots, paginated and filterable by month.
-- For each snapshot it shows which rule keeps it, in restic's own words from `forget --dry-run` (such as
-  "daily within 14d"), and whether a pending prune will delete it, and from when.
+- One row per job: its state, its **last 14 days**, its last and next backup, and **Back up now** and **Restore**
+  (from the newest snapshot). Paths, schedule and retention are on the job's page.
+- The last 14 days are a square a day, coloured by the worst backup of the day: failed, incomplete, backed up, or no
+  run; a day before the job's first backup is drawn apart, as it had nothing to miss. The server puts each backup on
+  its day, in the time zone asked for: `GET /api/v1/hosts/{fqdn}/days?days=14&tz=…`
+  and `holdfast host days <fqdn>` (up to 92 days, in this machine's zone by default).
+- Recent runs fold: a job's backups on one day that ended the same way are one line.
+
+### 5.2 Job page
+
+- **What restic keeps**: a row per rule of the job's retention (one per hour, day, week, month or year, every
+  backup, the newest N), with a square per period of the rule's window, oldest on the left. A square holds the
+  snapshot restic keeps by that rule in that period, from the reasons `forget --dry-run` gives (such as "daily within
+  14d"); an empty one is a period without a snapshot. A row shows its newest 30 squares and "+N earlier".
+- **Calendar**: every kept snapshot of the job, a square a day, a block a year: kept, a day the daily rule should
+  have and has not (a missed backup), or a day the retention thinned out.
+- Every square says on hover, or when the keyboard reaches it, its period, its snapshot and restic's reasons for
+  keeping it; it links to the snapshot.
+- **Snapshots**: all of them, paginated and filterable by month, each with the rule that keeps it in restic's own
+  words, and whether a pending prune will delete it, and from when.
 - **Find a file in all snapshots** uses `restic find` to show the versions of a file. Each version links to
   the snapshot, opened at that folder.
+- `#/hosts/{fqdn}/jobs/{job}/snapshots`, the snapshot list it replaced, opens it.
 
 ### 5.3 Snapshot page
 

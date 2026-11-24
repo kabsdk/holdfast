@@ -819,6 +819,51 @@ func (q *Q) ListEvents(ctx context.Context, fqdn string, limit int) ([]Event, er
 	return q.queryEvents(ctx, `WHERE fqdn = $1 ORDER BY finished_at DESC, received_at DESC LIMIT $2`, fqdn, limit)
 }
 
+// Outcome is how one backup ended, for the host page's strip of days.
+type Outcome struct {
+	JobID    string
+	Status   string
+	Finished time.Time
+}
+
+// BackupOutcomes returns how a host's backups that finished since a time ended, oldest first.
+func (q *Q) BackupOutcomes(ctx context.Context, fqdn string, since time.Time) ([]Outcome, error) {
+	rows, err := q.db.Query(ctx, `SELECT job_id, status, finished_at FROM events
+		WHERE fqdn = $1 AND kind = 'backup' AND finished_at >= $2 ORDER BY finished_at`, fqdn, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Outcome
+	for rows.Next() {
+		var o Outcome
+		if err := rows.Scan(&o.JobID, &o.Status, &o.Finished); err != nil {
+			return nil, err
+		}
+		out = append(out, o)
+	}
+	return out, rows.Err()
+}
+
+// FirstBackups returns when each of a host's jobs first finished a backup, of any result.
+func (q *Q) FirstBackups(ctx context.Context, fqdn string) (map[string]time.Time, error) {
+	rows, err := q.db.Query(ctx, `SELECT job_id, min(finished_at) FROM events WHERE fqdn = $1 AND kind = 'backup' GROUP BY job_id`, fqdn)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]time.Time{}
+	for rows.Next() {
+		var id string
+		var t time.Time
+		if err := rows.Scan(&id, &t); err != nil {
+			return nil, err
+		}
+		out[id] = t
+	}
+	return out, rows.Err()
+}
+
 // RestoreEvent returns the result of the restore that a command asked for, or ErrNotFound while it has not
 // been reported.
 func (q *Q) RestoreEvent(ctx context.Context, fqdn, commandID string) (Event, error) {

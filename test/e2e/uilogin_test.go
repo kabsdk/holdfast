@@ -124,7 +124,7 @@ func TestScreenshots(t *testing.T) {
 	shot("overview")
 
 	open(t, ctx, "#/hosts/"+web)
-	waitText(t, ctx, "backup jobs")
+	waitText(t, ctx, "Last 14 days")
 	shot("host")
 
 	open(t, ctx, "#/hosts/"+web+"/configure/system")
@@ -132,9 +132,13 @@ func TestScreenshots(t *testing.T) {
 	waitText(t, ctx, "holdfast job set "+web+" system")
 	shot("configure")
 
-	open(t, ctx, "#/hosts/"+web+"/jobs/system/snapshots")
-	waitText(t, ctx, "system · snapshots")
-	shot("snapshots")
+	open(t, ctx, "#/hosts/"+web+"/jobs/system")
+	waitText(t, ctx, "What restic keeps")
+	shot("job")
+
+	open(t, ctx, "#/hosts/"+web+"/jobs/system/calendar")
+	waitText(t, ctx, "with a kept snapshot")
+	shot("calendar")
 
 	open(t, ctx, "#/hosts/"+web+"/snapshots/"+snap+"/files?path="+url.QueryEscape(src))
 	waitText(t, ctx, "news.html")

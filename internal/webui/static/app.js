@@ -1,9 +1,10 @@
 // The UI's shell: navigation, the top bar, and the routes. Each page is in pages/.
-import { html, render, useState, useEffect, useRoute, usePoll, go, link, primaryLink, offsiteLink, onOffsite, ErrorBox } from './lib.js';
+import { html, render, useState, useEffect, useRoute, usePoll, go, link, primaryLink, offsiteLink, onOffsite, ErrorBox, Tip } from './lib.js';
 import { api } from './api.js';
 import { Overview } from './pages/overview.js';
 import { Host, Pending } from './pages/host.js';
-import { JobSnapshots, Snapshot } from './pages/snapshots.js';
+import { Snapshot } from './pages/snapshots.js';
+import { Job, Calendar } from './pages/job.js';
 import { Configure } from './pages/configure.js';
 import { Restores } from './pages/restores.js';
 import { History, PruneNow } from './pages/history.js';
@@ -64,7 +65,9 @@ function Shell({ me, settings }) {
     else if (seg[2] === 'prune-now') page = html`<${PruneNow} fqdn=${fqdn} ...${ctx} />`;
     else if (seg[2] === 'rollback') page = html`<${Rollback} fqdn=${fqdn} ...${ctx} />`;
     else if (seg[2] === 'configure') page = html`<${Configure} fqdn=${fqdn} job=${seg[3] || ''} ...${ctx} />`;
-    else if (seg[2] === 'jobs' && seg[4] === 'snapshots') page = html`<${JobSnapshots} fqdn=${fqdn} job=${seg[3]} ...${ctx} />`;
+    // A job's page; …/snapshots, its old snapshot list, opens it too.
+    else if (seg[2] === 'jobs' && seg[3] && seg[4] === 'calendar') page = html`<${Calendar} key=${fqdn + '/' + seg[3]} fqdn=${fqdn} job=${seg[3]} ...${ctx} />`;
+    else if (seg[2] === 'jobs' && seg[3] && (!seg[4] || seg[4] === 'snapshots')) page = html`<${Job} key=${fqdn + '/' + seg[3]} fqdn=${fqdn} job=${seg[3]} ...${ctx} />`;
     else if (seg[2] === 'snapshots' && seg[3]) page = html`<${Snapshot} fqdn=${fqdn} id=${seg[3]} tab=${seg[4] || 'files'} ...${ctx} />`;
   }
   if (!page) page = html`<h1>Not found</h1><p><a href=${link()}>Back to the overview</a></p>`;
@@ -102,6 +105,7 @@ function Shell({ me, settings }) {
       })}
       ${page}
     </main>
+    <${Tip} />
   </div>`;
 }
 

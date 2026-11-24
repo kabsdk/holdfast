@@ -1,9 +1,8 @@
-import { html, useState, useEffect, usePoll, useAction, link, go, fmtTime, fmtDay, bytes, Pill, Snap, can, ErrorBox, Loading, Paged } from '../lib.js';
+import { html, useState, useEffect, usePoll, useAction, link, go, fmtTime, fmtDay, bytes, Pill, Snap, can, ErrorBox, Loading } from '../lib.js';
 import { api } from '../api.js';
 
-const month = (t) => fmtTime(t).slice(0, 7);
-
-function fate(s) {
+// fate is what happens to a snapshot, in a word or two: kept and why, waiting to be deleted, or gone.
+export function fate(s) {
   if (s.gone_at && s.deleted_by_holdfast) return { kind: '', text: `deleted by Holdfast ${fmtTime(s.gone_at)}` + (s.really_gone_by ? `; S3's old versions expire by ${fmtDay(s.really_gone_by)}` : '; its data is freed at the next prune') };
   if (s.gone_at) return { kind: 'error', text: `gone from the repository ${fmtTime(s.gone_at)}, without Holdfast deleting it` };
   if (s.deletion_requested_at) return { kind: 'warning', text: `deletion asked ${fmtTime(s.deletion_requested_at)}; it waits 7 days` };
@@ -14,7 +13,7 @@ function fate(s) {
   return { kind: '', text: '' };
 }
 
-function FindFile({ fqdn, job }) {
+export function FindFile({ fqdn, job }) {
   const [text, setText] = useState('');
   const act = useAction();
   const found = (act.done || []).filter((f) => !job || f.job_id === job);
@@ -35,30 +34,6 @@ function FindFile({ fqdn, job }) {
         <td>${bytes(m.size)}</td><td>${m.user || m.uid} · ${m.permissions}</td><td>${fmtTime(m.mtime)}</td>
       </tr>`))}</tbody></table>`)}
   </div>`;
-}
-
-export function JobSnapshots({ fqdn, job }) {
-  const list = usePoll(() => api.snapshots(fqdn, { job, retention: true }), [fqdn, job], 60000);
-  const [m, setM] = useState('');
-  if (list.error) return html`<${ErrorBox} error=${list.error} />`;
-  if (!list.data) return html`<${Loading} what="snapshots (restic is asked what it keeps)" />`;
-  const months = [...new Set(list.data.map((s) => month(s.time)))];
-  const shown = list.data.filter((s) => !m || month(s.time) === m);
-  return html`<h1>${fqdn} · ${job} · snapshots</h1>
-    <p class="muted">${list.data.length} snapshots in <code>repos/${fqdn}</code>${list.data.length ? ` · newest ${fmtTime(list.data[0].time)}, oldest ${fmtTime(list.data[list.data.length - 1].time)}` : ''}.
-      Same list: <code>holdfast snapshot list ${fqdn} --job ${job}</code></p>
-    <div class="chips">Taken in:
-      <span class=${'chip ' + (m ? '' : 'on')} onClick=${() => setM('')}>All · ${list.data.length}</span>
-      ${months.map((x) => html`<span class=${'chip ' + (m === x ? 'on' : '')} onClick=${() => setM(x)}>${x} · ${list.data.filter((s) => month(s.time) === x).length}</span>`)}
-    </div>
-    <${Paged} items=${shown} render=${(rows) => html`<table>
-      <thead><tr><th>Taken</th><th>Snapshot</th><th>Files · size</th><th>Retention</th></tr></thead>
-      <tbody>${rows.map((s) => { const f = fate(s); return html`<tr>
-        <td>${fmtTime(s.time)}</td><td><${Snap} fqdn=${fqdn} id=${s.id} short=${s.short_id} /></td>
-        <td>${s.total_files ?? '—'} · ${bytes(s.total_bytes)}</td><td>${f.text && html`<${Pill} kind=${f.kind + ' wrap'}>${f.text}<//>`}</td></tr>`; })}</tbody>
-    </table>`} />
-    <${FindFile} fqdn=${fqdn} job=${job} />
-    <p><a href=${link('hosts', fqdn)}>Back to ${fqdn}</a></p>`;
 }
 
 /* ---------------- one snapshot ---------------- */
@@ -242,7 +217,7 @@ export function Snapshot({ fqdn, id, tab, vault }) {
   const t = tab.split('?')[0];
   return html`<h1>Snapshot <span class="mono">${snap.short_id}</span></h1>
     ${f.text && html`<div class=${'banner ' + (f.kind || 'info')}>${f.text}</div>`}
-    <dl class="facts"><dt>Host</dt><dd><a href=${link('hosts', fqdn)}>${fqdn}</a></dd><dt>Job</dt><dd>${snap.job_id || html`<span class="muted">none: not made by Holdfast</span>`}</dd>
+    <dl class="facts"><dt>Host</dt><dd><a href=${link('hosts', fqdn)}>${fqdn}</a></dd><dt>Job</dt><dd>${snap.job_id ? html`<a href=${link('hosts', fqdn, 'jobs', snap.job_id)}>${snap.job_id}</a>` : html`<span class="muted">none: not made by Holdfast</span>`}</dd>
       <dt>Paths</dt><dd class="mono">${(snap.paths || []).join(' ')}</dd><dt>Taken</dt><dd>${fmtTime(snap.time)}</dd>
       <dt>Files · size</dt><dd>${snap.total_files ?? '—'} · ${bytes(snap.total_bytes)}</dd><dt>ID</dt><dd class="mono">${snap.id}</dd>
       ${snap.original && html`<dt>Copied from</dt><dd class="mono">${snap.original} <span class="muted">· in primary</span></dd>`}</dl>

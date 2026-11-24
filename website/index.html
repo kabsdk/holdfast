@@ -538,16 +538,20 @@ holdfast snapshot list web01.example.com</code></pre></div></li>
         <figcaption><strong>Overview.</strong> Every host you may see, those with problems first, with each problem under its host: this list is what the server's alerts send (<a href="#problems">Problems</a>). The tiles count stale, failed and incomplete jobs and other problems; choose one to see only those hosts. <strong>Add host</strong> is at the top. Here, a job on <code>files01</code> fails, and <code>app02</code> has been added and waits for its agent.</figcaption>
       </figure>
       <figure class="shot">
-        <img src="img/host.png" alt="A host's page: its agent, restic version and config revision, the repository and its escrow file, its backup job with schedule, retention, last success, newest snapshot and next run, recent runs, and buttons for the host's actions." loading="lazy">
-        <figcaption><strong>A host.</strong> Its agent and the revision it runs, its repository and escrow file, each job with its schedule, retention, newest snapshot and next run, and the recent runs. Storage checks and problems show here when there are any. The buttons are the host's actions: <strong>Add job</strong>, <strong>Pending</strong>, <strong>Run retention now</strong>, <strong>Prune now</strong>, <strong>New enrollment code</strong>, <strong>Rotate password</strong>, <strong>Roll back</strong> and <strong>Remove host</strong>, after which <strong>Decommission</strong> appears; and per job <strong>Back up now</strong>, <strong>Snapshots</strong>, <strong>Restore from latest</strong>, <strong>Edit</strong> and <strong>Remove job</strong>. You see only the buttons your role allows.</figcaption>
+        <img src="img/host.png" alt="A host's page: its agent and restic version; a row per job with its state, a square for each of the last 14 days, its last and next backup, and Back up now and Restore buttons; the recent runs; and the repository with its size and escrow file." loading="lazy">
+        <figcaption><strong>A host.</strong> A row per job: its state, its last 14 days as squares coloured by the worst backup of each day (hover one for its date and runs), its last and next backup, and <strong>Back up now</strong> and <strong>Restore</strong>. Below, the recent runs, folded by job and day, and the repository. Problems show at the top when there are any. <strong>Add job</strong> is at the top; the host's rarer actions are in its <strong>⋯</strong> menu: what waits to be deleted, <strong>Run retention now</strong>, <strong>Prune now</strong>, <strong>New enrollment code</strong>, <strong>Rotate password</strong>, <strong>Roll back</strong> and <strong>Remove host</strong>, after which <strong>Decommission</strong> appears. You see only the actions your role allows.</figcaption>
       </figure>
       <figure class="shot">
         <img src="img/configure.png" alt="The job form: what to back up (paths), excludes, when it runs with an optional spread, and beside them what you get: worst-case data loss, restore points, the oldest restore point, when the stale alert fires, and the restic forget command the retention means; then Save as a new revision with a message." loading="lazy">
         <figcaption><strong>A job.</strong> Paths, excludes, the schedule and, further down, the retention. As you type, the server checks the job and shows what you get: the worst-case data loss, the restore points, the oldest one, when it counts as stale, and the <code>restic forget</code> its retention means. A save needs a message; findings show with their codes to fix or accept, and further down the page the same change as a <code>holdfast job set</code> command.</figcaption>
       </figure>
       <figure class="shot">
-        <img src="img/snapshots.png" alt="A job's snapshot list: two snapshots of web01's system job with the time taken, short ID, file count and size, and the retention rules that keep each; below, a search for a file across all snapshots." loading="lazy">
-        <figcaption><strong>A job's snapshots.</strong> Every snapshot of one job, newest first, with its files, size and the retention rules that keep it, filtered by month. <strong>Find a file in all snapshots</strong> searches names and metadata, like <code>restic find</code>. The page names the same list in the CLI: <code>holdfast snapshot list web01.example.com --job system</code>.</figcaption>
+        <img src="img/job.png" alt="A job's page: its paths and schedule, Back up now and Edit; What restic keeps, a row of squares for each rule of the retention, one square per period; and the snapshots, with the time taken, short ID, file count and size and the rules that keep each, and a search for a file across them." loading="lazy">
+        <figcaption><strong>A job's page.</strong> <strong>What restic keeps</strong> draws the retention: a row per rule, such as one per day for 14 days, with a square per period, holding the snapshot restic keeps by that rule, from <code>restic forget --dry-run</code>. An empty square is a period without one. A long rule shows its newest 30 squares; the calendar has the rest. Below, every snapshot of the job with the rules that keep it, filtered by month, and <strong>Find a file in all snapshots</strong>, like <code>restic find</code>.</figcaption>
+      </figure>
+      <figure class="shot">
+        <img src="img/calendar.png" alt="A job's calendar: a block for the year, a square for each day, green where a snapshot is kept, with the month names above and the weekdays beside." loading="lazy">
+        <figcaption><strong>Calendar.</strong> Every kept snapshot of a job, a square a day, a block a year, newest first: green where one is kept, dashed where the daily rule should have one and has none, grey where the retention has thinned them out. Hover a day for its snapshot and why it is kept; click it to open it.</figcaption>
       </figure>
       <figure class="shot">
         <img src="img/snapshot.png" alt="A snapshot's page: its host, job, paths, time and ID; Files, Changes and Restore tabs; a folder's files with size, owner, mode and time, each with a Restore only this button; and below, deleting the snapshot." loading="lazy">
@@ -598,8 +602,9 @@ holdfast snapshot list web01.example.com</code></pre></div></li>
         <tr><td>Add or change a job</td><td>Host → Add job, or Edit on a job</td><td class="m">job set</td></tr>
         <tr><td>Remove a job</td><td>Host → Remove job</td><td class="m">job remove</td></tr>
         <tr><td>Back up now</td><td>Host → Back up now</td><td class="m">job run</td></tr>
-        <tr><td>See snapshots, browse files, see changes</td><td>Host → Snapshots on a job → a snapshot</td><td class="m">snapshot list · files · changes</td></tr>
-        <tr><td>Find a file in all snapshots</td><td>Host → Snapshots → Find</td><td class="m">snapshot find</td></tr>
+        <tr><td>See a job's last 14 days</td><td>Host → the squares on a job's row</td><td class="m">host days</td></tr>
+        <tr><td>See snapshots, browse files, see changes</td><td>Host → a job → a snapshot</td><td class="m">snapshot list · files · changes</td></tr>
+        <tr><td>Find a file in all snapshots</td><td>Host → a job → Find</td><td class="m">snapshot find</td></tr>
         <tr><td>Restore</td><td>Snapshot → Restore, or Restore only this on a file; Host → Restore from latest</td><td class="m">restore</td></tr>
         <tr><td>Restore two versions of a file, to diff on the host</td><td>Snapshot → Changes → Restore both versions</td><td class="m">restore pair</td></tr>
         <tr><td>Every restore in the fleet</td><td>Restores</td><td class="m">restores</td></tr>
@@ -1098,6 +1103,7 @@ curl -sfL https://github.com/kabsdk/holdfast/releases/download/v0.2.0/install.sh
         <tr><td>holdfast host list</td><td>Every host you may see, with its state.</td></tr>
         <tr><td>holdfast host show &lt;fqdn&gt;</td><td>The agent, its version and revision, drift, the jobs and their last runs, the storage checks, the repository's size, the escrow state, and any problem.</td></tr>
         <tr><td>holdfast host events &lt;fqdn&gt;</td><td>Recent runs: backups, checks, restores, with their results.</td></tr>
+        <tr><td>holdfast host days &lt;fqdn&gt;</td><td>Each job's backups on each of the last 14 days, the worst of each day marked: the host page's squares. <code>--days</code> up to 92, <code>--tz</code> the time zone.</td></tr>
         <tr><td>holdfast host enroll-code &lt;fqdn&gt;</td><td>A new 15-minute code, revoking the open one, with a new line to run.</td></tr>
         <tr><td>holdfast host remove &lt;fqdn&gt;</td><td>Admin. Removes the host from the config. Its agent stops backing up and its certificate stops working. <strong>Its repository stays</strong>, as it is: it can still be browsed and restored from, and nothing in it is cleaned up any more. Adding the same FQDN again brings it back, after a new enrollment. To delete it, <a href="#decommission">decommission</a> it.</td></tr>
       </tbody>
@@ -1394,7 +1400,7 @@ holdfast whoami                         <span class="c"># who you are and what y
       <tbody>
         <tr><td>status</td><td>The server's state and its own problems.</td></tr>
         <tr><td>login · logout · whoami</td><td>Log in through the provider (a device code), end the session, show your access.</td></tr>
-        <tr><td>host add|list|show|events|enroll-code|remove</td><td>Hosts (<a href="#hosts">Hosts</a>).</td></tr>
+        <tr><td>host add|list|show|events|days|enroll-code|remove</td><td>Hosts (<a href="#hosts">Hosts</a>).</td></tr>
         <tr><td>host rotate</td><td>Admin. After a compromise: a new repository password, the agent's certificate unpinned, a new code.</td></tr>
         <tr><td>host acknowledge</td><td>Admin. Clear the red alerts for changes made outside Holdfast, after looking into them.</td></tr>
         <tr><td>host rollback|rollbacks</td><td>Admin. Roll a repository back to a time, from S3's old versions; list past rollbacks.</td></tr>

@@ -110,6 +110,32 @@ export function ago(t) {
   return `${Math.round(s / 86400)} d ago`;
 }
 
+const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+export const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+// fullDate names a day the way a tooltip does: "Mon 23 Nov 2026".
+export function fullDate(d) {
+  d = new Date(d);
+  return `${WEEKDAYS[d.getDay()]} ${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
+}
+
+// clock is the time of day: "02:04".
+export function clock(t) {
+  const d = new Date(t);
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+// localDay turns the API's "2026-11-23" into that day at local midnight.
+export function localDay(s) {
+  const [y, m, d] = s.split('-').map(Number);
+  return new Date(y, m - 1, d);
+}
+
+// browserZone is the browser's time zone by name, for answers given in days, such as the host page's squares.
+export function browserZone() {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch { return ''; }
+}
+
 // until says how soon a time comes: "in 45 min", "in 13 h", "in 2 d".
 export function until(t) {
   if (!t) return '—';
@@ -195,6 +221,75 @@ export function Problem({ p }) {
     ${p.severity === 'error' ? icons.error() : icons.warning()}
     <span>${p.job_id ? p.job_id + ': ' : ''}${p.message} <code>${p.code}</code></span>
   </div>`;
+}
+
+// Menu is the ⋯ button for a page's rarer actions. Each item is { label, run } or { label, href }, with danger for
+// one that deletes or removes, and count for a number beside it; '-' is a separator. It closes on a click outside
+// and on Escape.
+export function Menu({ label, items }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    const outside = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    const esc = (e) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('click', outside);
+    document.addEventListener('keydown', esc);
+    return () => { document.removeEventListener('click', outside); document.removeEventListener('keydown', esc); };
+  }, [open]);
+  const list = items.filter(Boolean).filter((it, i, a) => it !== '-' || (i > 0 && i < a.length - 1 && a[i - 1] !== '-'));
+  if (list.length === 0) return null;
+  return html`<div class="menu" ref=${ref}>
+    <button type="button" class="icon" aria-label=${label} aria-haspopup="menu" aria-expanded=${open ? 'true' : 'false'} onClick=${() => setOpen(!open)}>
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"></circle><circle cx="12" cy="12" r="1.8"></circle><circle cx="19" cy="12" r="1.8"></circle></svg>
+    </button>
+    ${open && html`<div class="menu-pop" role="menu">${list.map((it, i) => it === '-'
+      ? html`<div key=${i} class="menu-sep" role="separator"></div>`
+      : it.href
+        ? html`<a key=${i} role="menuitem" class=${'menu-item' + (it.danger ? ' danger' : '')} href=${it.href} onClick=${() => setOpen(false)}>
+            <span>${it.label}</span>${it.count != null ? html`<span class="muted">${it.count}</span>` : null}</a>`
+        : html`<button key=${i} type="button" role="menuitem" class=${'menu-item' + (it.danger ? ' danger' : '')} onClick=${() => { setOpen(false); it.run(); }}>
+            <span>${it.label}</span>${it.count != null ? html`<span class="muted">${it.count}</span>` : null}</button>`)}</div>`}
+  </div>`;
+}
+
+// Tip shows the text of any element with data-tip at once, when the pointer is on it or the keyboard reaches it: the
+// first line bold, the rest under it. One Tip serves the whole UI.
+export function Tip() {
+  const [tip, setTip] = useState(null);
+  const ref = useRef(null);
+  useEffect(() => {
+    const target = (e) => (e.target && e.target.closest ? e.target.closest('[data-tip]') : null);
+    const show = (e) => { const el = target(e); if (el) setTip({ text: el.getAttribute('data-tip'), r: el.getBoundingClientRect() }); };
+    const hide = (e) => { if (target(e)) setTip(null); };
+    const clear = () => setTip(null);
+    document.addEventListener('mouseover', show);
+    document.addEventListener('mouseout', hide);
+    document.addEventListener('focusin', show);
+    document.addEventListener('focusout', hide);
+    addEventListener('scroll', clear, true);
+    addEventListener('hashchange', clear);
+    return () => {
+      document.removeEventListener('mouseover', show);
+      document.removeEventListener('mouseout', hide);
+      document.removeEventListener('focusin', show);
+      document.removeEventListener('focusout', hide);
+      removeEventListener('scroll', clear, true);
+      removeEventListener('hashchange', clear);
+    };
+  }, []);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || !tip) return;
+    const w = el.offsetWidth, h = el.offsetHeight, r = tip.r;
+    el.style.left = Math.max(8, Math.min(r.left + r.width / 2 - w / 2, innerWidth - w - 8)) + 'px';
+    el.style.top = (r.top - h - 8 >= 8 ? r.top - h - 8 : r.bottom + 8) + 'px';
+    el.style.visibility = 'visible';
+  }, [tip]);
+  if (!tip || !tip.text) return null;
+  const [first, ...rest] = tip.text.split('\n');
+  return html`<div key=${tip.text + tip.r.left + tip.r.top} class="tip" ref=${ref} role="tooltip" style="visibility:hidden;left:0;top:0">
+    <b>${first}</b>${rest.map((l) => html`<span>${l}</span>`)}</div>`;
 }
 
 export function Pill({ kind, children }) {

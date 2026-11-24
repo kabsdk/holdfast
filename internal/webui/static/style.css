@@ -136,6 +136,50 @@ button.link:hover { background: none; text-decoration: underline; }
 .dot.error { background: var(--err); }
 .dot.warning { background: #d99a1e; }
 
+/* The ⋯ menu of a page's rarer actions. */
+.menu { position: relative; display: inline-flex; }
+button.icon { display: inline-flex; align-items: center; justify-content: center; min-width: 2.4rem; padding: .3rem; }
+.menu-pop { position: absolute; right: 0; top: calc(100% + 6px); z-index: 15; width: 250px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  box-shadow: 0 10px 28px rgba(20,27,43,.16); padding: 6px; display: flex; flex-direction: column; }
+.menu-item { display: flex; justify-content: space-between; text-align: left; padding: .5rem .6rem; border: 0; border-radius: 6px; background: none; color: var(--text); font: inherit; cursor: pointer; }
+.menu-item:hover { background: #f2f4f8; text-decoration: none; }
+.menu-item.danger { color: var(--err); }
+.menu-sep { height: 1px; background: var(--line); margin: 4px 0; }
+
+/* Squares: the host page's days, the job page's rules, the calendar's days. Hover any for its tooltip. */
+.strip { display: grid; grid-template-columns: repeat(14, 12px); gap: 3px; }
+.strip span { display: block; width: 12px; height: 22px; border-radius: 3px; }
+.d-success, .c-ok, .slot { background: #3f9c63; }
+.d-warning { background: #d99a1e; }
+.d-failed { background: var(--err); }
+.d-none, .c-gap, .slot.empty { background: var(--panel); border: 1px dashed #9aa3b2; }
+.d-later, .c-thin { background: #e4e7ec; }
+.d-wait { background: #f0f2f5; }
+.d-before, .slot.before { background: #f6f7f9; border: 1px solid #eceef2; }
+.d-asked, .c-asked, .slot.asked { background: repeating-linear-gradient(135deg, #3f9c63 0 3px, #a8d5b8 3px 6px); }
+.legend { display: flex; flex-wrap: wrap; gap: .3rem 1rem; padding: .6rem 1rem; border-top: 1px solid var(--line); font-size: 12px; color: var(--muted); }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: .35rem; vertical-align: -1px; box-sizing: border-box; }
+.factline { display: flex; flex-wrap: wrap; gap: .4rem 1.6rem; align-items: center; padding: .7rem 1rem; margin: 1rem 0; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; font-size: 13px; }
+.list + .list, .list + h2 { margin-top: 1rem; }
+.ladder { display: flex; flex-direction: column; gap: .6rem; padding: .4rem 1rem .9rem; min-width: 680px; }
+.tier { display: grid; grid-template-columns: 170px minmax(0, 1fr) 170px; gap: .75rem; align-items: center; }
+.tier .lab { display: flex; flex-direction: column; }
+.tier .range { font-size: 12px; color: var(--muted); text-align: right; }
+.slots { display: flex; flex-wrap: wrap; gap: 4px; }
+.slot { display: block; width: 22px; height: 22px; border-radius: 4px; }
+a.slot:hover, a.slot:focus-visible, a.cell:hover, a.cell:focus-visible { outline: 2px solid var(--text); outline-offset: 1px; }
+.more { display: inline-flex; align-items: center; height: 22px; padding: 0 .5rem; border-radius: 4px; background: #eef0f4; color: var(--text); font-size: 12px; font-weight: 600; white-space: nowrap; }
+.more:hover { background: var(--line); text-decoration: none; }
+.tip { position: fixed; z-index: 70; max-width: 320px; background: #151b2b; color: #fff; border-radius: 8px; padding: .45rem .65rem; font-size: 12.5px; line-height: 1.45;
+  box-shadow: 0 10px 28px rgba(20,27,43,.2); pointer-events: none; }
+.tip b { display: block; font-size: 13px; }
+.tip span { display: block; color: #cfd6e4; }
+.cal { display: grid; gap: 3px; width: max-content; }
+.cal .ml { font-size: 11px; line-height: 14px; color: var(--muted); white-space: nowrap; }
+.cal .wl { font-size: 11px; line-height: 13px; color: var(--muted); }
+.cell { display: block; width: 13px; height: 13px; border-radius: 3px; box-sizing: border-box; }
+.c-out { background: transparent; }
+
 .diff-add { color: var(--ok); }
 .diff-del { color: var(--err); }
 .steps li { margin: .3rem 0; }
