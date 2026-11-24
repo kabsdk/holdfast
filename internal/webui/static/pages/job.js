@@ -1,6 +1,6 @@
 // A job's page: its state, what restic keeps of it as rows of squares, its snapshots, and a calendar of them all
 // (spec §5.2). The squares are restic's answer: forget --dry-run's reasons, from the snapshot list.
-import { html, useState, usePoll, useAction, link, fmtTime, dur, bytes, scheduleText, retentionText, Pill, Snap, can, ErrorBox, Loading, Menu, Paged, MONTHS, fullDate, clock } from '../lib.js';
+import { html, useState, usePoll, useAction, link, offsiteLink, fmtTime, dur, bytes, scheduleText, retentionText, Pill, Snap, can, ErrorBox, Loading, Menu, Paged, MONTHS, fullDate, clock } from '../lib.js';
 import { api } from '../api.js';
 import { StateBadge } from './host.js';
 import { fate, FindFile } from './snapshots.js';
@@ -21,13 +21,15 @@ function VaultJobFacts({ host, job }) {
 // A square's period, shorter, for a row's range: "11 Nov 2026", "Oct 2026", "2024".
 const short = (label) => label.replace(/^Week of /, '').replace(/^[A-Z][a-z]{2} (?=\d)/, '');
 
-function Keep({ fqdn, job, snaps }) {
-  const rows = keepRows(job.retention, snaps);
+// Keep draws what restic keeps of a list of snapshots under a retention: primary's, or the off-site copies' under the
+// off-site retention. href is where a square leads; only marks a copy whose snapshot primary no longer has.
+function Keep({ retention, snaps, href, only, cal, title, extra }) {
+  const rows = keepRows(retention, snaps);
   const kept = snaps.filter((s) => !s.gone_at && (s.kept_by || []).length).length;
-  const cal = link('hosts', fqdn, 'jobs', job.id, 'calendar');
   return html`<section class="list" aria-labelledby="keep-h">
-    <div class="list-head"><h2 id="keep-h">What restic keeps</h2>
-      <div class="row"><span class="muted">${kept} snapshots · from <code>restic forget --dry-run</code></span><a class="button small" href=${cal}>Calendar</a></div></div>
+    <div class="list-head"><div class="row" style="gap:.8rem"><h2 id="keep-h">What restic keeps</h2>${title}</div>
+      <div class="row"><span class="muted">${kept} ${only ? 'copies' : 'snapshots'} · from <code>restic forget --dry-run</code></span><a class="button small" href=${cal}>Calendar</a></div></div>
+    ${extra}
     <div class="scrollx"><div class="ladder">
       ${rows.map((r) => html`<div class="tier">
         <div class="lab"><b>${r.label}</b><span class="sub">${r.sub}</span></div>
@@ -36,37 +38,65 @@ function Keep({ fqdn, job, snaps }) {
           ${r.slots.slice(-CAP).map((x) => {
             if (x.before) return html`<span class="slot before" data-tip=${x.label + '\nBefore the job’s first snapshot'}></span>`;
             if (!x.s) return html`<span class="slot empty" data-tip=${x.label + '\nNo snapshot in this period'}></span>`;
-            const tip = slotTip(x.label, x.s);
-            return html`<a class=${'slot' + (x.s.deletion_requested_at ? ' asked' : '')} href=${link('hosts', fqdn, 'snapshots', x.s.id)} data-tip=${tip} aria-label=${tip.replace(/\n/g, ', ')}></a>`;
+            const gone = only && only(x.s);
+            const tip = slotTip(x.label, x.s) + (gone ? '\nOnly off-site now: primary no longer has it' : '');
+            return html`<a class=${'slot' + (x.s.deletion_requested_at ? ' asked' : '') + (gone ? ' only' : '')} href=${href(x.s)} data-tip=${tip} aria-label=${tip.replace(/\n/g, ', ')}></a>`;
           })}
         </div>
         <span class="range">${r.slots.length ? `${short(r.slots[0].label)} → ${short(r.slots[r.slots.length - 1].label)}` : 'none yet'}</span>
       </div>`)}
     </div></div>
-    <div class="legend"><span><i class="d-success"></i>kept</span><span><i class="d-asked"></i>deletion asked</span><span><i class="d-none"></i>no snapshot in that period</span><span><i class="d-before"></i>before the first snapshot</span>
+    <div class="legend"><span><i class="d-success"></i>kept</span><span><i class="d-asked"></i>deletion asked</span>${only && html`<span><i class="slot only"></i>only off-site now</span>`}<span><i class="d-none"></i>no snapshot in that period</span><span><i class="d-before"></i>before the first snapshot</span>
       <span>A row per rule, a square per period, oldest on the left; a row shows its newest ${CAP}. Hover a square for its date.</span></div>
   </section>`;
 }
 
-function Snapshots({ fqdn, job, snaps }) {
+function Snapshots({ fqdn, job, snaps, href, offsite }) {
   const [m, setM] = useState('');
   const month = (s) => { const d = new Date(s.time); return `${MONTHS[d.getMonth()]} ${d.getFullYear()}`; };
   const months = [...new Set(snaps.map(month))];
   const shown = snaps.filter((s) => !m || month(s) === m);
   return html`<section class="list" aria-labelledby="snaps-h">
     <div class="list-head">
-      <div class="row"><h2 id="snaps-h">Snapshots</h2>
+      <div class="row"><h2 id="snaps-h">${offsite ? 'Off-site copies' : 'Snapshots'}</h2>
         <label class="row muted" style="gap:.4rem">Taken in <select value=${m} onChange=${(e) => setM(e.target.value)}>
           <option value="">any month</option>${months.map((x) => html`<option value=${x}>${x}</option>`)}</select></label></div>
     </div>
     <${Paged} items=${shown} render=${(rows) => html`<table>
       <thead><tr><th>Taken</th><th>Snapshot</th><th>Files · size</th><th>Retention</th></tr></thead>
       <tbody>${rows.map((s) => { const f = fate(s); return html`<tr>
-        <td class="num">${fmtTime(s.time)}</td><td><${Snap} fqdn=${fqdn} id=${s.id} short=${s.short_id} /></td>
+        <td class="num">${fmtTime(s.time)}</td><td><a class="mono" href=${href(s)}>${s.short_id}</a></td>
         <td class="num">${s.total_files ?? '—'} · ${bytes(s.total_bytes)}</td><td>${f.text && html`<${Pill} kind=${f.kind + ' wrap'}>${f.text}<//>`}</td></tr>`; })}</tbody>
     </table>`} />
-    <div style="padding:0 1rem 1rem"><${FindFile} fqdn=${fqdn} job=${job.id} /></div>
+    ${!offsite && html`<div style="padding:0 1rem 1rem"><${FindFile} fqdn=${fqdn} job=${job.id} /></div>`}
   </section>`;
+}
+
+// The job's off-site copies, on its own page (decision 053): the same squares and list, under the off-site retention,
+// with whether that is primary's or the job's own, and the off-site settings of the job.
+function OffsiteView({ host, job, primary, seg, onChange }) {
+  const list = usePoll(() => api.offsiteSnapshots(host.fqdn, { job: job.id, retention: true }), [host.fqdn, job.id], 60000);
+  const act = useAction();
+  const oj = host.offsite.jobs.find((x) => x.id === job.id);
+  const inPrimary = new Set((primary || []).filter((s) => !s.gone_at).map((s) => s.id));
+  const isOnly = (s) => !(s.original && inPrimary.has(s.original));
+  const href = (s) => (isOnly(s) ? offsiteLink('hosts', host.fqdn, 'snapshots', s.id) : link('hosts', host.fqdn, 'snapshots', s.original));
+  const save = (fn, body) => act.run(() => fn(host.fqdn, job.id, body || {})).then((r) => { if (r) { onChange(); list.reload(); } });
+  const blocking = act.error?.data?.blocking || [];
+  const canSet = can(host, 'config.jobs');
+  const info = html`<div class="siteinfo">
+    <span>Off-site keeps <b>${oj.own_retention ? 'its own retention' : 'the same as primary'}</b>${oj.own_retention ? `: ${retentionText(oj.retention)}` : ', and follows every change there'}${oj.excluded ? html` · <b>new snapshots are not copied</b>` : ''}
+      ${oj.shorter_than_primary && html` <${Pill} kind="warning">keeps less than primary (O101)<//>`}</span>
+    ${canSet && oj.own_retention && html`<button class="small" disabled=${act.busy} onClick=${() => save(api.offsiteMatchPrimary)}>Keep the same as primary</button>`}
+    ${canSet && html`<a class="button small" href=${offsiteLink('hosts', host.fqdn, 'configure', job.id)}>Set its own…</a>`}
+    ${canSet && !oj.retired && html`<button class="small" disabled=${act.busy} onClick=${() => save(oj.excluded ? api.offsiteInclude : api.offsiteExclude)}>${oj.excluded ? 'Copy again' : 'Stop copying'}</button>`}
+  </div>`;
+  return html`
+    ${blocking.length > 0 ? html`<div class="banner warning">To keep the same as primary, accept ${blocking.map((b) => `${b.code} (${b.message})`).join('; ')}.
+      <button class="small" onClick=${() => save(api.offsiteMatchPrimary, { accept: blocking.map((b) => b.code) })}>Accept and save</button></div>` : html`<${ErrorBox} error=${act.error} />`}
+    ${list.error ? html`<${ErrorBox} error=${list.error} />` : !list.data ? html`<${Loading} what="the off-site copies (restic is asked)" />` : html`
+      <${Keep} retention=${oj.retention} snaps=${list.data} href=${href} only=${isOnly} cal=${offsiteLink('hosts', host.fqdn, 'jobs', job.id, 'calendar')} title=${seg} extra=${info} />
+      <${Snapshots} fqdn=${host.fqdn} job=${job} snaps=${list.data} href=${href} offsite=${true} />`}`;
 }
 
 export function Job({ fqdn, job: jid, vault, reloadHosts }) {
@@ -75,6 +105,7 @@ export function Job({ fqdn, job: jid, vault, reloadHosts }) {
   const cuts = usePoll(() => api.retentionCuts(), [fqdn], 60000);
   const act = useAction();
   const [queued, setQueued] = useState(false);
+  const [site, setSite] = useState('p');
   if (host.error) return html`<${ErrorBox} error=${host.error} />`;
   if (!host.data) return html`<${Loading} what=${jid} />`;
   const h = host.data;
@@ -83,6 +114,12 @@ export function Job({ fqdn, job: jid, vault, reloadHosts }) {
   const refresh = () => { host.reload(); list.reload(); cuts.reload(); reloadHosts(); };
   const probs = (h.problems || []).filter((p) => p.job_id === jid);
   const cut = (cuts.data || []).find((c) => c.fqdn === fqdn && c.job_id === jid);
+  // With an off-site bucket, Primary | Off-site switches the squares and the list between the two repositories.
+  const withOff = !vault && !!h.offsite && h.offsite.jobs.some((x) => x.id === jid);
+  const seg = withOff && html`<div class="seg" role="tablist" aria-label="Which repository">
+    <button type="button" role="tab" aria-selected=${site === 'p' ? 'true' : 'false'} class=${site === 'p' ? 'on' : ''} onClick=${() => setSite('p')}>Primary</button>
+    <button type="button" role="tab" aria-selected=${site === 'o' ? 'true' : 'false'} class=${site === 'o' ? 'on' : ''} onClick=${() => setSite('o')}>Off-site</button></div>`;
+  const primaryHref = (s) => link('hosts', fqdn, 'snapshots', s.id);
   return html`
     <div class="spread">
       <div style="min-width:0">
@@ -117,9 +154,10 @@ export function Job({ fqdn, job: jid, vault, reloadHosts }) {
         ${can(h, 'retention.cut') && html`<a class="button small" href=${link('hosts', fqdn, 'prune-now')}>Prune now…</a>`}
       </div></div>`}
     ${vault && html`<${VaultJobFacts} host=${h} job=${j} />`}
-    ${list.error ? html`<${ErrorBox} error=${list.error} />` : !list.data ? html`<${Loading} what="what restic keeps (restic is asked)" />` : html`
-      <${Keep} fqdn=${fqdn} job=${j} snaps=${list.data} />
-      <${Snapshots} fqdn=${fqdn} job=${j} snaps=${list.data} />`}`;
+    ${withOff && site === 'o' ? html`<${OffsiteView} host=${h} job=${j} primary=${list.data} seg=${seg} onChange=${refresh} />`
+      : list.error ? html`<${ErrorBox} error=${list.error} />` : !list.data ? html`<${Loading} what="what restic keeps (restic is asked)" />` : html`
+      <${Keep} retention=${j.retention} snaps=${list.data} href=${primaryHref} cal=${link('hosts', fqdn, 'jobs', jid, 'calendar')} title=${seg} />
+      <${Snapshots} fqdn=${fqdn} job=${j} snaps=${list.data} href=${primaryHref} />`}`;
 }
 
 /* ---------------- the calendar: every kept snapshot, a square a day, a block a year ---------------- */

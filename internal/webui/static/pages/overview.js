@@ -13,8 +13,10 @@ export function jobState(host, job) {
 
 // The problems a tile of their own counts; the rest are "Other problems".
 const JOB_CODES = ['stale', 'failed', 'incomplete'];
+const OFFSITE_CODES = ['offsite_copy', 'offsite_lag'];
 const worst = (h) => ((h.problems || []).some((p) => p.severity === 'error') ? 2 : (h.problems || []).length ? 1 : 0);
-const other = (h) => (h.problems || []).some((p) => !JOB_CODES.includes(p.code));
+const other = (h) => (h.problems || []).some((p) => !JOB_CODES.includes(p.code) && !OFFSITE_CODES.includes(p.code));
+const offsite = (h) => (h.problems || []).some((p) => OFFSITE_CODES.includes(p.code));
 const COLS = 'minmax(0,2fr) minmax(0,3fr) minmax(0,1fr) minmax(0,1fr) minmax(0,1.1fr)';
 
 function HostRow({ h }) {
@@ -45,7 +47,7 @@ function HostRow({ h }) {
   </div>`;
 }
 
-export function Overview({ me, hosts, vault }) {
+export function Overview({ me, hosts, vault, settings }) {
   const [filter, setFilter] = useState('all');
   const [q, setQ] = useState('');
   const check = useAction();
@@ -56,9 +58,10 @@ export function Overview({ me, hosts, vault }) {
     ['stale', 'Stale', count('stale'), 'no backup in time', 'error'],
     ['failed', 'Failed', count('failed'), 'last run failed', 'error'],
     ['incomplete', 'Incomplete', count('incomplete'), 'files not read', 'warning'],
+    !vault && settings.offsite && ['offsite', 'Off-site', hosts.filter(offsite).length, 'copies failing or behind', 'error'],
     ['other', 'Other problems', hosts.filter(other).length, 'offline, drift, storage…', 'warning'],
-  ];
-  const keep = (h) => filter === 'all' || (filter === 'other' ? other(h) : (h.problems || []).some((p) => p.code === filter));
+  ].filter(Boolean);
+  const keep = (h) => filter === 'all' || (filter === 'other' ? other(h) : filter === 'offsite' ? offsite(h) : (h.problems || []).some((p) => p.code === filter));
   const text = q.trim().toLowerCase();
   const shown = hosts.filter((h) => keep(h) && (!text || h.fqdn.includes(text))).sort((a, b) => worst(b) - worst(a) || a.fqdn.localeCompare(b.fqdn));
   const canCheck = hosts.some((h) => (h.actions || []).includes('maintenance'));

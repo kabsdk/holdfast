@@ -16,7 +16,7 @@ export class APIError extends Error {
 }
 
 async function req(method, path, body) {
-  if (onOffsite() && path.startsWith('/api/v1/')) path = '/api/v1/offsite' + path.slice('/api/v1'.length);
+  if (onOffsite() && path.startsWith('/api/v1/') && !path.startsWith('/api/v1/offsite/')) path = '/api/v1/offsite' + path.slice('/api/v1'.length);
   const opts = { method, credentials: 'same-origin', headers: {} };
   if (body !== undefined) {
     opts.headers['Content-Type'] = 'application/json';
@@ -98,6 +98,11 @@ export const api = {
   exclude: (f, job, body) => req('POST', `/api/v1/hosts/${e(f)}/jobs/${e(job)}/exclude`, body),
   include: (f, job, body) => req('POST', `/api/v1/hosts/${e(f)}/jobs/${e(job)}/include`, body),
   matchPrimary: (f, job, body) => req('POST', `/api/v1/hosts/${e(f)}/jobs/${e(job)}/match-primary`, body),
+  // The off-site copies' API from the server's own pages: a job's Off-site view and its off-site settings.
+  offsiteSnapshots: (f, opts) => req('GET', `/api/v1/offsite/hosts/${e(f)}/snapshots${q(opts || {})}`),
+  offsiteExclude: (f, job, body) => req('POST', `/api/v1/offsite/hosts/${e(f)}/jobs/${e(job)}/exclude`, body),
+  offsiteInclude: (f, job, body) => req('POST', `/api/v1/offsite/hosts/${e(f)}/jobs/${e(job)}/include`, body),
+  offsiteMatchPrimary: (f, job, body) => req('POST', `/api/v1/offsite/hosts/${e(f)}/jobs/${e(job)}/match-primary`, body),
   exports: () => req('GET', '/api/v1/exports'),
   exportNow: () => req('POST', '/api/v1/exports'),
   logout: () => req('POST', '/auth/logout'),

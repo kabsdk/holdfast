@@ -126,8 +126,9 @@ func (s *Server) copyAll(ctx context.Context) {
 /* ---------------- hosts and jobs from the server ---------------- */
 
 // applyFeed makes the off-site config follow the server's, in one off-site revision when anything changed:
-//   - a new host or job is added; a new job's off-site retention starts as a copy of its primary retention;
-//   - a job's paths, schedule and primary retention follow the server; its off-site retention and Exclude do not;
+//   - a new host or job is added;
+//   - a job's paths, schedule and primary retention follow the server, and so does its off-site retention, unless
+//     it is the job's own (decision 053); Exclude does not;
 //   - a job the server no longer has is Retired: its copies stay, under its off-site retention, until an admin
 //     removes the host off-site and decommissions it there;
 //   - the bindings are the server's: the off-site pages answer to the same people.
@@ -205,10 +206,13 @@ func followFeed(cur config.Document, feed proto.VaultFeed) (config.Document, []s
 			old, had := h.Jobs[fj.ID]
 			j := old
 			if !had {
-				j = config.Job{Engine: config.EngineRestic, Retention: fj.Retention} // off-site retention starts as primary's
+				j = config.Job{Engine: config.EngineRestic}
 			}
 			primary := fj.Retention
 			j.Paths, j.Excludes, j.Dump, j.Schedule, j.Primary, j.Retired = fj.Paths, fj.Excludes, fj.Dump, fj.Schedule, &primary, false
+			if !j.OwnRetention {
+				j.Retention = fj.Retention // the same as primary, now and after every change there
+			}
 			if j.Paths == nil {
 				j.Paths = []string{}
 			}
@@ -604,7 +608,7 @@ func (s *Server) vaultReport(ctx context.Context) (proto.VaultSync, error) {
 		for _, id := range ids {
 			j := hc.Jobs[id]
 			jr := proto.VaultJobReport{ID: id, Retention: j.Retention, Excluded: j.Excluded, Retired: j.Retired, Copies: count[id],
-				BehindS: int64(behind[id] / time.Second)}
+				BehindS: int64(behind[id] / time.Second), OwnRetention: j.OwnRetention}
 			if t, ok := newest[id]; ok {
 				jr.NewestAt = &t
 			}
@@ -743,7 +747,8 @@ func (s *Server) SetExcluded(ctx context.Context, a Actor, fqdn, jobID string, e
 	return revNum, err
 }
 
-// MatchPrimary sets a job's off-site retention to its primary retention again, with the checks of any change.
+// MatchPrimary makes a job's off-site retention the same as its primary retention again, and from then on follow
+// every change there (decision 053), with the checks of any change.
 func (s *Server) MatchPrimary(ctx context.Context, a Actor, fqdn, jobID string, in OffsiteInput) (SetJobResult, error) {
 	if !s.set.IsVault() {
 		return SetJobResult{}, errNotVault
@@ -764,7 +769,7 @@ func (s *Server) MatchPrimary(ctx context.Context, a Actor, fqdn, jobID string, 
 	}
 	j.Retention = *j.Primary
 	base := head.Number
-	return s.SetJob(ctx, a, fqdn, jobID, SetJobInput{Base: &base, Message: in.Message, Job: j, Accept: in.Accept})
+	return s.SetJob(ctx, a, fqdn, jobID, SetJobInput{Base: &base, Message: in.Message, Job: j, Accept: in.Accept, samePrimary: true})
 }
 
 var errNotVault = fmt.Errorf("off-site settings are set under offsite: holdfast --offsite, or /api/v1/offsite/: %w", ErrConflict)

@@ -118,6 +118,8 @@ func uiCalls(t *testing.T) map[string]bool {
 	for _, m := range re.FindAllStringSubmatch(string(b), -1) {
 		p := regexp.MustCompile(`\$\{q\([^}]*\}\)\}`).ReplaceAllString(m[2], "") // the query string
 		p = regexp.MustCompile(`\$\{[^}]*\}`).ReplaceAllString(p, "{}")
+		// The off-site API is the same routes under /api/v1/offsite/ (spec §3.3).
+		p = strings.Replace(p, "/api/v1/offsite/", "/api/v1/", 1)
 		out[m[1]+" "+p] = true
 	}
 	return out

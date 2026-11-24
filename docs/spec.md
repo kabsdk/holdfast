@@ -436,10 +436,12 @@ registers and there is no token.
 **Hosts and jobs follow the server's**, by revisions of the off-site instance's own:
 - a new host is copied at once, into its own off-site repository, with a password of its own, which the host never
   has; that password is escrowed in the off-site bucket (decision 036);
-- a new job's **off-site retention** starts as a copy of its primary retention; after that, an admin sets it, and
-  **Match primary** copies primary's again. Keeping less than primary is warning **O101**, which the admin accepts; a
-  cut is R104 and waits 7 days, as everywhere;
-- a job's paths, schedule and primary retention follow the server's; its off-site retention and Exclude do not;
+- a job's **off-site retention** is its primary retention, and follows every change there, until an admin saves one
+  off-site: that one is the job's **own**, and stays (decision 053). **Match primary** makes it primary's again, and
+  following again. Keeping less than primary is warning **O101**, which the admin accepts; a cut is R104 and waits 7
+  days, as everywhere;
+- a job's paths, schedule and primary retention follow the server's, and so does its off-site retention unless it is
+  its own; Exclude does not;
 - **Exclude** stops copying a job, and keeps its copies under its off-site retention; **Include** copies it again;
 - a job the server removes is **Retired**: its copies stay, under its off-site retention. A host all of whose jobs are
   retired can be removed off-site, and then decommissioned there, after 7 days;
@@ -779,11 +781,14 @@ original's (`holdfast offsite copies <fqdn>` lists them):
 ### 5.5a Problems
 
 **The Overview**, the UI's start page, lists every host, those with problems first, and under each host what the
-server knows is wrong with it, each problem once, with its code. Its tiles count the stale, failed and incomplete jobs
-and the hosts with any other problem; choosing a tile filters the list by it. `#/problems`, the page it replaced,
+server knows is wrong with it, each problem once, with its code. Its tiles count the stale, failed and incomplete jobs,
+with an off-site bucket the hosts whose copies fail or lag (`offsite_copy`, `offsite_lag`), and the hosts with any
+other problem; choosing a tile filters the list by it. `#/problems`, the page it replaced,
 opens it. The problems are:
 - errors: `stale`, `failed`, `not_in_bucket` (the agent reported a backup whose snapshot the server, reading the
-  repository from the bucket after the report, did not find: decision 045), `storage`, `disappeared`, `foreign_keys`,
+  repository from the bucket after the report, did not find: decision 045), `offsite_copy` (the last copy to the
+  off-site bucket failed) and `offsite_lag` (a job's newest copy is behind by more than twice its longest gap), with
+  an off-site bucket only, `storage`, `disappeared`, `foreign_keys`,
   `rotation` (an old password still opens the repository), and `decommission` when a due decommission could not
   delete;
 - warnings: `incomplete`, `offline`, `drift`, `restic`, `not_made_by_holdfast`, `catalogue`, `retention`,

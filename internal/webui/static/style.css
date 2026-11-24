@@ -179,6 +179,17 @@ a.slot:hover, a.slot:focus-visible, a.cell:hover, a.cell:focus-visible { outline
 .cal .wl { font-size: 11px; line-height: 13px; color: var(--muted); }
 .cell { display: block; width: 13px; height: 13px; border-radius: 3px; box-sizing: border-box; }
 .c-out { background: transparent; }
+.offstate { font-size: 13px; }
+.offstate.ok { color: var(--ok); }
+.offstate.error { color: var(--err); }
+.offstate.muted { color: var(--muted); }
+.slot.only { background: radial-gradient(circle, var(--panel) 0 4px, #3f9c63 4.5px); }
+.seg { display: inline-flex; border: 1px solid #c8ced9; border-radius: 8px; overflow: hidden; }
+.seg button { border: 0; border-radius: 0; padding: .3rem .8rem; font-weight: 600; color: var(--muted); }
+.seg button + button { border-left: 1px solid #c8ced9; }
+.seg button.on { background: var(--accent); color: #fff; }
+.siteinfo { display: flex; flex-wrap: wrap; gap: .5rem .8rem; align-items: center; margin: 0 1rem .6rem; padding: .55rem .75rem; border-radius: 8px; background: #fafbfc; border: 1px solid var(--line); font-size: 13px; }
+.siteinfo > span { flex: 1 1 280px; }
 
 .diff-add { color: var(--ok); }
 .diff-del { color: var(--err); }

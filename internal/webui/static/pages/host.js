@@ -72,6 +72,7 @@ function Repository({ host }) {
     <span><span class="muted">Repository</span> <code>repos/${host.fqdn}</code>${s ? ` · ${bytes(s.current_bytes)}, and ${bytes(s.noncurrent_bytes)} of old versions S3 keeps` : ' · not measured yet'}</span>
     <span class="row" style="gap:.35rem"><span class="muted">Escrow</span>${esc.current ? html`${icons.ok()} current password` : esc.error ? html`<span class="num error">not written: ${esc.error}</span>` : 'not written'}</span>
     ${host.storage?.object_lock && html`<span><span class="muted">Object Lock</span> ${host.storage.object_lock}</span>`}
+    ${host.offsite && html`<span><span class="muted">Off-site</span> ${host.offsite.copies} copies${host.offsite.pending ? `, ${host.offsite.pending} waiting` : ''} · last copy ${host.offsite.last_copy ? ago(host.offsite.last_copy) : 'none yet'}</span>`}
     ${s && html`<span class="muted">measured ${ago(s.measured_at)}</span>`}
     ${d && html`<span><span class="muted">Decommission</span> ${d.done_at
       ? `done ${fmtTime(d.done_at)}: ${d.objects_deleted} objects deleted, as ${d.requested_by} asked; really gone ${d.really_gone_at ? fmtDay(d.really_gone_at) : 'when the lifecycle rule expires the old versions'}`
@@ -79,23 +80,17 @@ function Repository({ host }) {
   </section>`;
 }
 
-// What the off-site copies have of the host (decisions 039, 041). Their settings are on the off-site pages.
-function Offsite({ host, onRestore }) {
+// offState is a job's off-site copies in a word or two, for its row: up to date, copying, behind, failing, or not
+// copied (decisions 039, 053). Lag and failure are the server's problems; this only words them.
+export function offState(host, job) {
   const o = host.offsite;
-  return html`<h2>Off-site copies</h2>
-    <p class="muted">Every job's snapshots are copied to the off-site bucket, under their own retention. While a snapshot is not copied yet, the daily run here keeps it for up to 7 days.</p>
-    <div class="panel">
-      <div class="spread"><a href=${offsiteLink('hosts', host.fqdn)}>The off-site pages of ${host.fqdn} →</a>
-        ${can(host, 'restore.new_dir') && o.copies > 0 && html`<button class="small" onClick=${onRestore}>Restore from off-site…</button>`}</div>
-      <dl class="facts">
-        <dt>Copies</dt><dd>${o.copies}${o.pending ? ` · ${o.pending} waiting to be copied` : ''} · last copy ${o.last_copy ? fmtTime(o.last_copy) : 'none yet'} · reported ${o.reported_at ? ago(o.reported_at) : 'never'}</dd>
-        ${o.copy_error && html`<dt>Copy error</dt><dd><${Pill} kind="error">${o.copy_error}<//></dd>`}
-      </dl>
-      <table><thead><tr><th>Job</th><th>Off-site retention</th><th>Copies</th><th>Newest copy</th><th>Behind</th><th></th></tr></thead>
-        <tbody>${o.jobs.map((j) => html`<tr><td>${j.id}</td><td>${retentionText(j.retention)}${j.shorter_than_primary ? html` <${Pill} kind="warning">keeps less than primary (O101)<//>` : ''}</td>
-          <td>${j.copies}</td><td>${j.newest_copy_at ? fmtTime(j.newest_copy_at) : '—'}</td><td>${j.behind_s ? dur(j.behind_s + 's') : '—'}</td>
-          <td>${j.excluded ? 'excluded' : j.retired ? 'retired' : ''}</td></tr>`)}</tbody></table>
-    </div>`;
+  const oj = o && o.jobs.find((x) => x.id === job.id);
+  if (!oj) return { text: 'not copied yet', kind: 'muted' };
+  const sub = oj.own_retention ? 'its own retention' : '';
+  if (oj.excluded) return { text: 'not copied', kind: 'muted', sub: oj.copies ? `${oj.copies} copies kept` : '' };
+  if (o.copy_error) return { text: 'copy failing', kind: 'error', sub };
+  if ((host.problems || []).some((p) => p.code === 'offsite_lag' && p.job_id === job.id)) return { text: `${dur(oj.behind_s + 's')} behind`, kind: 'error', sub };
+  return { text: oj.behind_s ? 'copying' : 'up to date', kind: oj.behind_s ? 'muted' : 'ok', sub };
 }
 
 // A restore of the host's own snapshot from its off-site copy. The host reads the copy through the gateway, for this
@@ -153,10 +148,11 @@ function Strip({ job, days }) {
     ${days.days.map((d) => html`<span class=${cls(d)} data-tip=${tip(d)}></span>`)}</div>`;
 }
 
-function JobRow({ host, job, days, cut, onRun, queued, vault }) {
+function JobRow({ host, job, days, cut, onRun, queued, vault, cols }) {
   const probs = (host.problems || []).filter((p) => p.job_id === job.id);
   const s = job.status || {};
-  return html`<div class=${'gt' + (probs.some((p) => p.severity === 'error') ? ' bad' : '')} style=${'--cols:' + JOB_COLS}>
+  const off = !vault && host.offsite ? offState(host, job) : null;
+  return html`<div class=${'gt' + (probs.some((p) => p.severity === 'error') ? ' bad' : '')} style=${'--cols:' + cols}>
     <div style="min-width:0">
       <div class="row" style="gap:.5rem"><a href=${link('hosts', host.fqdn, 'jobs', job.id)}><b>${job.id}</b></a><${StateBadge} host=${host} job=${job} />
         ${job.excluded && html`<${Pill} kind="warning">not copied<//>`}${job.retired && html`<${Pill}>removed in primary<//>`}
@@ -167,6 +163,7 @@ function JobRow({ host, job, days, cut, onRun, queued, vault }) {
     <${Strip} job=${job.id} days=${days} />
     <div><div class="num">${s.last_success_at ? ago(s.last_success_at) : '—'}</div>${s.last_success_at && html`<div class="sub">${fmtTime(s.last_success_at)}</div>`}</div>
     <span class="num muted">${job.next_runs?.[0] ? until(job.next_runs[0]) : '—'}</span>
+    ${off && html`<div><div class=${'offstate ' + off.kind}>${off.text}</div>${off.sub && html`<div class="sub">${off.sub}</div>`}</div>`}
     <div class="row" style="justify-content:flex-end;gap:.4rem">
       ${queued && html`<span class="ok" style="font-size:12.5px">Queued</span>`}
       ${!vault && can(host, 'backup.run') && html`<button class="small" disabled=${queued} onClick=${onRun}>Back up now</button>`}
@@ -175,6 +172,7 @@ function JobRow({ host, job, days, cut, onRun, queued, vault }) {
   </div>`;
 }
 const JOB_COLS = 'minmax(0,2.4fr) 225px minmax(0,1fr) minmax(0,.9fr) 210px';
+const JOB_COLS_OFFSITE = 'minmax(0,2.2fr) 225px minmax(0,1fr) minmax(0,.8fr) minmax(0,1fr) 210px';
 
 // Recent runs, folded: a job's backups on one day that ended the same way are one line, and so are a run and its
 // retries. Restores, checks and the rest are a line each.
@@ -232,6 +230,8 @@ export function Host({ fqdn, reloadHosts, vault }) {
   const errors = probs.filter((p) => p.severity === 'error').length;
   const needy = new Set(probs.filter((p) => p.job_id).map((p) => p.job_id)).size;
   const run = (j) => act.run(() => api.runNow(h.fqdn, j.id)).then((r) => { if (r) setQueued({ ...queued, [j.id]: true }); });
+  const withOff = !vault && !!h.offsite;
+  const cols = withOff ? JOB_COLS_OFFSITE : JOB_COLS;
   return html`
     <div class="spread">
       <div>
@@ -248,6 +248,8 @@ export function Host({ fqdn, reloadHosts, vault }) {
           { label: 'Waiting to be deleted', href: link('hosts', h.fqdn, 'pending') },
           can(h, 'retention.cut') && { label: 'Run retention now', run: () => act.run(() => api.retentionRun(h.fqdn)) },
           can(h, 'retention.cut') && { label: 'Prune now…', href: link('hosts', h.fqdn, 'prune-now') },
+          withOff && can(h, 'restore.new_dir') && h.offsite.copies > 0 && { label: 'Restore from off-site…', run: () => setPanel('offsite') },
+          withOff && { label: 'Off-site pages', href: offsiteLink('hosts', h.fqdn) },
           '-',
           !vault && can(h, 'config.storage') && { label: 'New enrollment code', run: () => setPanel('enroll') },
           !vault && can(h, 'config.storage') && h.state !== 'retired' && { label: 'Rotate password…', run: () => setPanel('rotate') },
@@ -274,15 +276,14 @@ export function Host({ fqdn, reloadHosts, vault }) {
       <div class="list-head"><h2 id="jobs-h">${vault ? 'Copied jobs' : 'Jobs'}</h2>
         ${days.error && html`<span class="muted">The last 14 days could not be read: ${days.error.message}</span>`}</div>
       ${h.jobs.length === 0 ? html`<p class="muted" style="padding:0 1rem 1rem">No job yet.${!vault && can(h, 'config.jobs') ? html` <a href=${link('hosts', h.fqdn, 'configure')}>Add one</a>.` : ''}</p>` : html`
-      <div class="scrollx"><div style="min-width:900px">
-        <div class="gt head" style=${'--cols:' + JOB_COLS}><span>Job</span><span>Last 14 days</span><span>Last backup</span><span>Next</span><span></span></div>
-        ${h.jobs.map((j) => html`<${JobRow} key=${j.id} host=${h} job=${j} vault=${vault} queued=${!!queued[j.id]} onRun=${() => run(j)}
+      <div class="scrollx"><div style=${'min-width:' + (withOff ? 1020 : 900) + 'px'}>
+        <div class="gt head" style=${'--cols:' + cols}><span>Job</span><span>Last 14 days</span><span>Last backup</span><span>Next</span>${withOff && html`<span>Off-site</span>`}<span></span></div>
+        ${h.jobs.map((j) => html`<${JobRow} key=${j.id} host=${h} job=${j} vault=${vault} cols=${cols} queued=${!!queued[j.id]} onRun=${() => run(j)}
           days=${days.data && days.data.jobs.find((x) => x.job_id === j.id)} cut=${(cuts.data || []).some((c) => c.fqdn === h.fqdn && c.job_id === j.id)} />`)}
       </div></div>
       <div class="legend"><span><i class="d-success"></i>backed up</span><span><i class="d-warning"></i>incomplete</span><span><i class="d-failed"></i>failed</span>
         <span><i class="d-none"></i>no run</span><span><i class="d-later"></i>not yet today</span><span><i class="d-before"></i>before the first backup</span><span>One square a day; the worst run of the day sets its colour.</span></div>`}
     </section>
-    ${!vault && h.offsite && html`<${Offsite} host=${h} onRestore=${() => setPanel('offsite')} />`}
     ${events.data ? html`<${Runs} host=${h} events=${events.data} />` : html`<${Loading} what="runs" />`}
     <${Repository} host=${h} />`;
 }

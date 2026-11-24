@@ -48,6 +48,9 @@ type Job struct {
 	Primary  *Retention `json:"primary,omitempty"`
 	Excluded bool       `json:"excluded,omitempty"`
 	Retired  bool       `json:"retired,omitempty"`
+	// OwnRetention says the off-site retention was set off-site, and stays as it is. Without it, the off-site
+	// retention is primary's, and follows every change there (decision 053).
+	OwnRetention bool `json:"own_retention,omitempty"`
 }
 
 // IsDump says whether the job is a dump job from before 0.6.0 (decision 052).

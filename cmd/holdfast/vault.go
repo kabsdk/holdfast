@@ -42,7 +42,7 @@ func offsiteCmd() *cobra.Command {
 	c.AddCommand(excludeCmd(true), excludeCmd(false))
 	var msg string
 	var accept []string
-	match := &cobra.Command{Use: "match-primary <fqdn> <job>", Short: "Set a job's off-site retention to its primary retention again",
+	match := &cobra.Command{Use: "match-primary <fqdn> <job>", Short: "Make a job's off-site retention its primary retention again, following every change there",
 		Args: cobra.ExactArgs(2), RunE: func(_ *cobra.Command, a []string) error {
 			useOffsite = true
 			var res struct {

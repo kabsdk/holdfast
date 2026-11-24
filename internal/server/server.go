@@ -626,6 +626,8 @@ type SetJobInput struct {
 	Message string     `json:"message"`
 	Job     config.Job `json:"job"`
 	Accept  []string   `json:"accept,omitempty"`
+	// samePrimary is Match primary's save off-site: the retention follows primary from then on (decision 053).
+	samePrimary bool
 }
 
 // SetJobResult is the saved revision, and every check that fired: the accepted warnings, and info.
@@ -671,6 +673,8 @@ func (s *Server) SetJob(ctx context.Context, a Actor, fqdn, jobID string, in Set
 		}
 		j := *old
 		j.Retention = in.Job.Retention
+		// A retention saved off-site is the job's own; Match primary makes it follow primary again (decision 053).
+		j.OwnRetention = !in.samePrimary
 		in.Job = j
 	}
 	if p := withJob(before.Config, fqdn, jobID, in.Job).Validate(); len(p) > 0 {
@@ -793,6 +797,8 @@ type JobView struct {
 	Retired  bool              `json:"retired,omitempty"`
 	BehindS  *int64            `json:"behind_s,omitempty"`
 	Lagging  bool              `json:"lagging,omitempty"`
+	// OwnRetention: the off-site retention was set off-site; without it, it is primary's and follows it (decision 053).
+	OwnRetention bool `json:"own_retention,omitempty"`
 }
 
 // HostView is one host as the API shows it.
@@ -952,7 +958,7 @@ func (s *Server) Hosts(ctx context.Context) ([]HostView, error) {
 			}
 			if s.set.IsVault() {
 				// Off-site jobs lag rather than go stale: the agents back them up in primary (decision 039).
-				jv.Primary, jv.Excluded, jv.Retired, jv.Stale = j.Primary, j.Excluded, j.Retired, false
+				jv.Primary, jv.Excluded, jv.Retired, jv.OwnRetention, jv.Stale = j.Primary, j.Excluded, j.Retired, j.OwnRetention, false
 				if behind := s.copyState(h.FQDN); behind != nil {
 					if b, ok := behind[id]; ok {
 						secs := int64(b / time.Second)

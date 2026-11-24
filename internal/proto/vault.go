@@ -50,6 +50,8 @@ type VaultJobReport struct {
 	// BehindS is how far the newest copy is behind the newest snapshot in primary, in seconds; the lag alert fires
 	// past twice the job's longest gap (decision 039).
 	BehindS int64 `json:"behind_s"`
+	// OwnRetention: the off-site retention was set off-site; without it, it is primary's (decision 053).
+	OwnRetention bool `json:"own_retention,omitempty"`
 }
 
 // VaultFeed is the server's answer: what is copied, and from where.

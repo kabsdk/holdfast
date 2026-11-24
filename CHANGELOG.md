@@ -15,6 +15,13 @@ What each release of Holdfast changes. The Ansible collection has its own notes 
   hover.
 - API and CLI: `GET /api/v1/hosts/{fqdn}/days` and `holdfast host days <fqdn>` give each job's backups on each of the
   last days, and the worst of each day.
+- Off-site: a job's off-site retention is its primary retention, and follows every change there, until one is saved
+  off-site, which is the job's own and stays; Match primary makes it follow again (decision 053). Before, it was a
+  copy made once, when the job was created, and lengthening primary's left the copies at the old retention.
+- Web UI, with an off-site bucket: the Overview's **Off-site** tile, a host's **Off-site** column per job, and a job
+  page's **Primary | Off-site** switch with the copies' squares and list and the job's off-site settings. The host
+  page's off-site table goes. New problems `offsite_lag` (a job's copies behind by more than twice its longest gap)
+  on the host's own page, beside `offsite_copy`, so the server's alerts send them too.
 
 ## 0.1.0 (2026-11-24)
 

@@ -263,8 +263,9 @@ func TestFollowFeed(t *testing.T) {
 		t.Fatalf("the off-site config does not validate: %v", p)
 	}
 
-	// Off-site keeps longer and excludes; primary changes its paths and its retention.
-	j.Retention, j.Excluded = longer, true
+	// Off-site keeps longer, its own retention (decision 053), and excludes; primary changes its paths and its
+	// retention, and the off-site retention stays.
+	j.Retention, j.Excluded, j.OwnRetention = longer, true, true
 	doc.Hosts["web01.example.com"].Jobs["etc"] = j
 	shorter := primary
 	shorter.KeepLast = 1
@@ -364,8 +365,42 @@ func TestOffsiteInstance(t *testing.T) {
 		t.Fatal(err)
 	}
 	h, _ = s.Host(ctx, fqdn)
-	if h.Jobs[0].Retention.Monthly == nil || !h.Jobs[0].Excluded {
+	if h.Jobs[0].Retention.Monthly == nil || !h.Jobs[0].Excluded || h.Jobs[0].OwnRetention {
 		t.Fatalf("after Match primary and Exclude: %+v", h.Jobs[0])
+	}
+
+	// Decision 053: the off-site retention is primary's, and follows every change there, until a save off-site makes
+	// it the job's own; Match primary makes it follow again.
+	longer := primary
+	longer.KeepLast = primary.KeepLast + 2
+	feed.Hosts[0].Jobs[0].Retention = longer
+	if err := s.applyFeed(ctx, feed); err != nil {
+		t.Fatal(err)
+	}
+	if h, _ = s.Host(ctx, fqdn); !reflect.DeepEqual(h.Jobs[0].Retention, longer) || h.Jobs[0].OwnRetention {
+		t.Fatalf("an off-site retention that is primary's follows it: %+v", h.Jobs[0])
+	}
+	own := longer
+	own.KeepLast += 5
+	if _, err := s.SetJob(ctx, root, fqdn, "etc", SetJobInput{Job: config.Job{Retention: own}, Accept: []string{"O101", "R101", "R104"}}); err != nil {
+		t.Fatal(err)
+	}
+	feed.Hosts[0].Jobs[0].Retention = primary
+	if err := s.applyFeed(ctx, feed); err != nil {
+		t.Fatal(err)
+	}
+	if h, _ = s.Host(ctx, fqdn); !reflect.DeepEqual(h.Jobs[0].Retention, own) || !h.Jobs[0].OwnRetention {
+		t.Fatalf("the job's own off-site retention stays when primary changes: %+v", h.Jobs[0])
+	}
+	if _, err := s.MatchPrimary(ctx, root, fqdn, "etc", OffsiteInput{Accept: []string{"R101", "R104"}}); err != nil {
+		t.Fatal(err)
+	}
+	feed.Hosts[0].Jobs[0].Retention = longer
+	if err := s.applyFeed(ctx, feed); err != nil {
+		t.Fatal(err)
+	}
+	if h, _ = s.Host(ctx, fqdn); !reflect.DeepEqual(h.Jobs[0].Retention, longer) || h.Jobs[0].OwnRetention {
+		t.Fatalf("after Match primary, the off-site retention follows primary again: %+v", h.Jobs[0])
 	}
 	if _, err := s.RemoveHost(ctx, root, fqdn, RemoveInput{}); !errors.Is(err, ErrConflict) {
 		t.Fatalf("removing a host the server still has: %v", err)

@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/chromedp/chromedp"
 )
 
 type snapRow struct {
@@ -93,7 +95,7 @@ func (e *env) offsiteOf(fqdn string) *offsiteView {
 //   - A restore on the host from its off-site copy, through the gateway, which lets it read that copy only then.
 func TestOffsite(t *testing.T) {
 	src := smallSource(t)
-	e := newEnvWith(t, envOpts{Offsite: true})
+	e := newEnvWith(t, envOpts{Offsite: true, UI: true})
 	const fqdn = "web01.example.com"
 	agent := e.startAgent(fqdn, e.addHost(fqdn, "data", "--path", src, "--daily", "02:00", "--keep-last", "1"))
 	e.waitProgress(fqdn, "first_backup_done", 2*time.Minute)
@@ -245,6 +247,54 @@ func TestOffsite(t *testing.T) {
 	}
 	if m[`holdfast_offsite_copy_failed{host="web01.example.com"}`] != 0 {
 		t.Fatal("the copy is reported failing")
+	}
+
+	// Decision 053: the off-site retention follows primary's until one is saved off-site, which is the job's own and
+	// stays; Match primary makes it follow again. Every step keeps more, so no cut waits 7 days.
+	offRetention := func() (float64, bool) {
+		var oh struct {
+			Jobs []struct {
+				Retention struct {
+					KeepLast float64 `json:"keep_last"`
+				}
+				Own bool `json:"own_retention"`
+			}
+		}
+		must(t, json.Unmarshal(e.offsite("host", "show", fqdn), &oh))
+		return oh.Jobs[0].Retention.KeepLast, oh.Jobs[0].Own
+	}
+	e.cli("job", "set", fqdn, "data", "--keep-last", "2", testAccept)
+	waitFor(t, "the off-site retention to follow primary's", time.Minute, func() bool { n, own := offRetention(); return n == 2 && !own })
+	e.offsite("job", "set", fqdn, "data", "--keep-last", "5", testAccept)
+	if n, own := offRetention(); n != 5 || !own {
+		t.Fatalf("a retention saved off-site is the job's own: keep_last %v, own %v", n, own)
+	}
+	e.cli("job", "set", fqdn, "data", "--keep-last", "6", testAccept)
+	time.Sleep(8 * time.Second) // a few polls of the off-site instance
+	if n, own := offRetention(); n != 5 || !own {
+		t.Fatalf("the job's own off-site retention must stay when primary's changes: keep_last %v, own %v", n, own)
+	}
+	e.cli("offsite", "match-primary", fqdn, "data", testAccept)
+	waitFor(t, "Match primary to make it primary's again", time.Minute, func() bool { n, own := offRetention(); return n == 6 && !own })
+	e.cli("job", "set", fqdn, "data", "--keep-last", "7", testAccept)
+	waitFor(t, "the off-site retention to follow primary's again", time.Minute, func() bool { n, own := offRetention(); return n == 7 && !own })
+
+	// The server's own pages show the off-site copies (decision 053): the host page's Off-site column, and the job
+	// page's Off-site view, with the same squares, whether the retention is primary's, and its settings.
+	ctx := newBrowser(t)
+	errs := jsErrors(ctx)
+	run(t, ctx, "root's link into the UI", chromedp.Navigate(e.rootLink()), chromedp.WaitVisible(`nav.side`, chromedp.ByQuery))
+	open(t, ctx, "#/hosts/"+fqdn)
+	waitText(t, ctx, "Last 14 days")
+	waitText(t, ctx, "Off-site")
+	open(t, ctx, "#/hosts/"+fqdn+"/jobs/data")
+	waitText(t, ctx, "What restic keeps")
+	clickText(t, ctx, "button", "Off-site")
+	waitText(t, ctx, "Off-site keeps")
+	waitText(t, ctx, "the same as primary")
+	waitText(t, ctx, "Stop copying")
+	if errs := errs(); len(errs) > 0 {
+		t.Fatalf("the UI logged errors:\n%s", strings.Join(errs, "\n"))
 	}
 }
 

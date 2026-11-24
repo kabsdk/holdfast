@@ -112,6 +112,21 @@ func problems(v HostView, now time.Time, retentionFailed, escrowOn bool) []Probl
 	if o := v.Offsite; o != nil && o.CopyError != "" {
 		add("offsite_copy", "error", "", "the last copy to off-site failed: %s", o.CopyError)
 	}
+	if o := v.Offsite; o != nil {
+		// A job whose copies fall behind as the off-site pages' lag does: past twice its longest gap (decision 039).
+		staleAfter := map[string]time.Duration{}
+		for _, j := range v.Jobs {
+			if d, err := time.ParseDuration(j.StaleAfter); err == nil {
+				staleAfter[j.ID] = d
+			}
+		}
+		for _, oj := range o.Jobs {
+			behind := time.Duration(oj.BehindS) * time.Second
+			if d := staleAfter[oj.ID]; !oj.Excluded && !oj.Retired && d > 0 && behind > d {
+				add("offsite_lag", "error", oj.ID, "the newest off-site copy is %s behind the newest snapshot, more than twice the job's longest gap", ago(behind))
+			}
+		}
+	}
 	for _, j := range v.Jobs {
 		// The storage witness: the agent said it backed up, and restic, reading the bucket after the
 		// report, did not find the snapshot. Whatever the agent says, that backup is not there to restore.
