@@ -165,7 +165,7 @@ func TestUIPages(t *testing.T) {
 	waitText(t, ctx, "SITE A")
 	waitText(t, ctx, "one per day for 7 days") // --keep-daily 7d
 	var days, points int
-	run(t, ctx, "the calendar's days with restore points", chromedp.Evaluate(`document.querySelectorAll('.cal button.cell:not(.c-none):not(.c-before)').length`, &days))
+	run(t, ctx, "the calendar's days with restore points", chromedp.Evaluate(`document.querySelectorAll('.mgrid button.cell:not(.c-none)').length`, &days))
 	run(t, ctx, "today's restore points", chromedp.Evaluate(`[...document.querySelectorAll('.gt:not(.head)')].filter((r) => r.querySelector('a.mono')).length`, &points))
 	if days < 1 || points < 2 {
 		t.Fatalf("the calendar shows %d days with restore points and %d restore points today, want at least 1 and 2", days, points)
@@ -173,11 +173,24 @@ func TestUIPages(t *testing.T) {
 	open(t, ctx, "#/agents/"+web+"/jobs/system/calendar")
 	waitText(t, ctx, "Restore points")
 
-	// Snapshot: Files, Changes, and a restore's dry run through the agent.
+	// Snapshot: Files is one tree with what changed against the snapshot before (later.txt is new), Only changes, and a
+	// find in this snapshot; the old Changes address opens it too. Then a restore's dry run through the agent.
 	open(t, ctx, "#/agents/"+web+"/snapshots/"+snaps[0]+"/files")
-	waitText(t, ctx, "Restore only this")
+	waitText(t, ctx, "Changes against")
+	waitText(t, ctx, "later.txt")
+	// The folders' listings and the diff's marks load apart: the mark comes once the diff is read.
+	waitFor(t, "later.txt marked new in the tree", 30*time.Second, func() bool {
+		var marked int
+		_ = chromedp.Run(ctx, chromedp.Evaluate(`[...document.querySelectorAll('.trow')].filter((r) => r.textContent.includes('later.txt') && r.querySelector('.chg.add')).length`, &marked))
+		return marked == 1
+	})
+	clickText(t, ctx, "button", "Only changes")
+	waitText(t, ctx, "later.txt")
+	run(t, ctx, "find in this snapshot", chromedp.SendKeys(`.treebar input[type=search]`, "later", chromedp.ByQuery))
+	clickText(t, ctx, "button", "Find")
+	waitText(t, ctx, "1 match")
 	open(t, ctx, "#/agents/"+web+"/snapshots/"+snaps[0]+"/changes")
-	waitText(t, ctx, "added")
+	waitText(t, ctx, "Changes against")
 	// Restore: a tree of ticks. Unticking a folder leaves it out; the dry run goes through the agent.
 	open(t, ctx, "#/agents/"+web+"/snapshots/"+snaps[0]+"/restore")
 	waitText(t, ctx, "Everything in the snapshot")

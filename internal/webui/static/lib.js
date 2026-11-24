@@ -82,7 +82,8 @@ export function useAction() {
       setBusy(false);
     }
   };
-  return { busy, error, done, run, setError, setDone };
+  const reset = () => { setDone(null); setError(null); };
+  return { busy, error, done, run, setError, setDone, reset };
 }
 
 /* ---------------- formatting ---------------- */

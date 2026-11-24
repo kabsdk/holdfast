@@ -138,11 +138,8 @@ func TestScreenshots(t *testing.T) {
 
 	open(t, ctx, "#/agents/"+web+"/snapshots/"+snap+"/files?path="+url.QueryEscape(src))
 	waitText(t, ctx, "news.html")
+	waitText(t, ctx, "Changes against")
 	shot("snapshot")
-
-	open(t, ctx, "#/agents/"+web+"/snapshots/"+snap+"/changes")
-	waitText(t, ctx, "news.html")
-	shot("changes")
 
 	open(t, ctx, "#/agents/"+web+"/snapshots/"+snap+"/restore")
 	waitText(t, ctx, "Everything in the snapshot")

@@ -214,7 +214,7 @@ func (s *Server) apiChanges(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) apiFind(w http.ResponseWriter, r *http.Request) {
-	found, err := s.Find(r.Context(), r.PathValue("fqdn"), r.URL.Query().Get("pattern"))
+	found, err := s.Find(r.Context(), r.PathValue("fqdn"), r.URL.Query().Get("pattern"), r.URL.Query().Get("snapshot"))
 	if err != nil {
 		apiError(w, err)
 		return

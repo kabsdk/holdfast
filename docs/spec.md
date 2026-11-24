@@ -826,10 +826,12 @@ Restore and inspection behave like restic does on the host.
 
 ### 5.2 Job page
 
-- **One calendar of the job's restore points**, a square a day, by calendar year: January to December of each year
-  back to the oldest restore point's, newest on top, each month as on a wall calendar (Monday to Sunday, from the 1st).
-  Every day shows: a restore point's state; no restore point kept (grey); before the oldest restore point (pale); still
-  to come (an outline, with only its date).
+- **One calendar of the job's restore points**, a square a day: one calendar year in one row, January to December,
+  each month's weeks as columns from its 1st, Monday to Sunday down the side. The year is chosen above it, each year
+  with its number of restore points, from the oldest restore point's year to this one; it opens on the newest restore
+  point's. The squares size themselves to fill the box, from 10 to 18 px. Every day shows: a restore point's state; no
+  restore point kept (grey); before the oldest restore point (pale, outlined); still to come (a dashed outline, with
+  only its date).
 - With off-site copies (§3.7), a square's top half is primary (site A) and its bottom half off-site (site B), each in
   its own state:
   - primary: **kept**, **deletion waits** (a retention cut or a deletion in its 7 days, §3.4), or **deleted**;
@@ -838,8 +840,9 @@ Restore and inspection behave like restic does on the host.
 
   Without off-site copies a square is primary's alone. A day with no restore point is empty.
 - Every square says on hover, or when the keyboard reaches it, its day and its restore points in each site.
-- **Choosing a day** lists its restore points: each with its time, its snapshot (a link), restic's reasons for keeping
-  it (such as "daily within 14d"), its state in each site, and **Restore** and **Delete**.
+- **Choosing a day** lists its restore points right under the calendar, which flashes so each click shows its answer:
+  each with its time, its snapshot (a link), restic's reasons for keeping it (such as "daily within 14d"), its state
+  in each site, and **Restore** and **Delete**.
 - **Several days** are chosen with shift-click, or a whole month by its name; Delete then deletes all their restore
   points, with one reason (§3.4).
 - The job's retention rules are chips; choosing one highlights the days it keeps.
@@ -854,13 +857,12 @@ Restore and inspection behave like restic does on the host.
 
 | Tab | Behaviour |
 | --- | --- |
-| Files | `restic ls --long`: names and metadata only. |
-| Changes | `restic diff --metadata` against the previous snapshot or any older one: what restic's diff shows, and nothing more. That means the changed paths (added, removed, content changed, metadata only, type changed) and their counts. It never shows contents or line diffs, as restic's diff does not. To compare the lines of a file, **Restore both versions to diff on the host** (§5.4) and run the `diff -u` it prints, on the host. |
+| Files | One tree of the snapshot, names and metadata only: folders open in place, each entry with its change, mode, owner, size and time. A folder is read when it is opened (`restic ls` of that folder, 1 000 entries at a time). The change is `restic diff --metadata`'s mark against the snapshot before, or any older one chosen: **+** new, **−** removed (shown struck through, from the older snapshot), **M** content changed, **U** metadata only, **T** type changed, with their counts; a closed folder says how many changed inside. **Only changes** shows just those and their folders. **Find** looks for a name in this snapshot (`restic find --snapshot`). Each entry has **Restore…** (only that, §5.4), and a changed file **Diff…**: restore both versions to diff on the host (§5.4) and run the `diff -u` it prints, on the host. It never shows contents or line diffs, as restic does not. The first 10 000 changes mark the tree; `holdfast snapshot changes` lists all. `#/…/snapshots/{id}/changes` opens Files. |
 | Restore | See §5.4. |
 
-A PostgreSQL job's snapshot holds one file, the dump: Files shows it, and there is no Changes tab.
+A PostgreSQL job's snapshot holds one file, the dump: it has only Restore.
 
-Deleting the snapshot is in the page's ⋯ menu, as a dialog: in primary (site A), off-site (site B) or both, with
+Deleting the snapshot is the page's **Delete…** button, a dialog: in primary (site A), off-site (site B) or both, with
 off-site copies; Delete in 7 days, or an admin's Delete now; and always a reason (§3.4). It is on no tab.
 
 ### 5.4 Restore

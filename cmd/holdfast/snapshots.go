@@ -226,14 +226,19 @@ func snapshotCmd() *cobra.Command {
 	changes.Flags().IntVar(&changesPage, "page", 1, "page of 1000 changes")
 	c.AddCommand(changes)
 
-	c.AddCommand(&cobra.Command{Use: "find <agent> <pattern>", Short: "Find a file in all of a host's snapshots", Args: cobra.ExactArgs(2), RunE: func(_ *cobra.Command, a []string) error {
+	var findIn string
+	find := &cobra.Command{Use: "find <agent> <pattern>", Short: "Find a file in all of an agent's snapshots, or in one (--snapshot)", Args: cobra.ExactArgs(2), RunE: func(_ *cobra.Command, a []string) error {
 		var found []struct {
 			ShortID string    `json:"short_id"`
 			Time    time.Time `json:"time"`
 			JobID   string    `json:"job_id"`
 			Matches []node
 		}
-		raw, err := call("GET", "/api/v1/agents/"+url.PathEscape(a[0])+"/find?"+url.Values{"pattern": {a[1]}}.Encode(), nil, &found)
+		q := url.Values{"pattern": {a[1]}}
+		if findIn != "" {
+			q.Set("snapshot", findIn)
+		}
+		raw, err := call("GET", "/api/v1/agents/"+url.PathEscape(a[0])+"/find?"+q.Encode(), nil, &found)
 		if err != nil {
 			return err
 		}
@@ -249,6 +254,8 @@ func snapshotCmd() *cobra.Command {
 			}
 		}
 		return w.Flush()
-	}})
+	}}
+	find.Flags().StringVar(&findIn, "snapshot", "", "look in this snapshot only")
+	c.AddCommand(find)
 	return c
 }

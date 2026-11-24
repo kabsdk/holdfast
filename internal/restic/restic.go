@@ -432,8 +432,12 @@ type Found struct {
 }
 
 // Find looks for a name pattern in every snapshot.
-func (r Runner) Find(ctx context.Context, pattern string) ([]Found, error) {
-	out, err := r.run(ctx, "find", "--json", "--", pattern)
+func (r Runner) Find(ctx context.Context, pattern string, snapshots ...string) ([]Found, error) {
+	args := []string{"find", "--json"}
+	for _, id := range snapshots {
+		args = append(args, "--snapshot", id)
+	}
+	out, err := r.run(ctx, append(args, "--", pattern)...)
 	if err != nil {
 		return nil, err
 	}

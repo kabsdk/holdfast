@@ -446,13 +446,21 @@ type FoundIn struct {
 	Matches  []restic.Node `json:"matches"`
 }
 
-// Find looks for a file name pattern in all of a host's snapshots, newest first (spec §5.2).
-func (s *Server) Find(ctx context.Context, fqdn, pattern string) ([]FoundIn, error) {
+// Find looks for a file name pattern in all of a host's snapshots, newest first, or in one snapshot (spec §5.2).
+func (s *Server) Find(ctx context.Context, fqdn, pattern, snapshot string) ([]FoundIn, error) {
 	if strings.TrimSpace(pattern) == "" || len(pattern) > 1024 || strings.ContainsRune(pattern, 0) {
 		return nil, &ValidationError{config.Problems{{Path: "pattern", Message: "give a file name or a pattern such as *.conf"}}}
 	}
 	if _, err := s.st.Q().GetHost(ctx, fqdn); err != nil {
 		return nil, fmt.Errorf("host %s: %w", fqdn, err)
+	}
+	var only []string
+	if snapshot != "" {
+		sn, err := s.snapshot(ctx, fqdn, snapshot)
+		if err != nil {
+			return nil, err
+		}
+		only = []string{sn.ID}
 	}
 	fctx, cancel := context.WithTimeout(ctx, findTimeout)
 	defer cancel()
@@ -461,7 +469,7 @@ func (s *Server) Find(ctx context.Context, fqdn, pattern string) ([]FoundIn, err
 		return nil, err
 	}
 	defer cleanup()
-	found, err := r.Find(fctx, pattern)
+	found, err := r.Find(fctx, pattern, only...)
 	if errors.Is(fctx.Err(), context.DeadlineExceeded) {
 		return nil, fmt.Errorf("find stopped after %s; narrow the pattern: %w", findTimeout, ErrTimeout)
 	}

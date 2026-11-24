@@ -178,16 +178,49 @@ button.icon { display: inline-flex; align-items: center; justify-content: center
 .rules { display: flex; flex-wrap: wrap; gap: .35rem .5rem; align-items: center; padding: 0 1rem .6rem; font-size: 12.5px; }
 .rulechip { border: 1px solid var(--line); background: var(--panel); border-radius: 999px; padding: .15rem .6rem; font-size: 12.5px; }
 .rulechip.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
-/* The calendar: a block a year, newest on top; in it the months as on a wall calendar, wrapping to the width. */
-.calyears { display: flex; flex-direction: column; gap: 1.1rem; padding: .2rem 1rem .9rem; }
-.calyear .yl { font-size: 13px; font-weight: 700; margin-bottom: .45rem; }
-.months { display: flex; flex-wrap: wrap; gap: .9rem 1.4rem; align-items: flex-start; }
-.cal { display: grid; gap: 3px; width: max-content; align-content: start; }
-.cal .ml { font-size: 12px; line-height: 16px; font-weight: 600; color: var(--text); white-space: nowrap; border: 0; background: none; padding: 0; text-align: left; }
-.cal button.ml:not(:disabled):hover { color: var(--accent); text-decoration: underline; background: none; }
-.cal button.ml:disabled { opacity: 1; }
-.cal .wl { font-size: 9.5px; line-height: 14px; color: var(--muted); text-align: center; }
-.cell { display: block; width: 15px; height: 15px; border-radius: 3px; box-sizing: border-box; padding: 0; border: 0; box-shadow: inset 0 0 0 1px rgba(29,35,48,.10); }
+/* The calendar: one calendar year in one row, its months side by side from the 1st, weeks as columns, Monday on top. The
+   squares' size, --c, follows the box's width (job.js). */
+.yearbar { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; padding: .1rem 1rem .6rem; font-size: 13px; }
+.yr { border: 1px solid var(--line); background: var(--panel); color: var(--text); border-radius: 999px; padding: .15rem .7rem; font-size: 12.5px; }
+.yr:hover { border-color: #b9c1ce; background: var(--panel); }
+.yr.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); font-weight: 600; }
+.yr .n { color: var(--muted); font-weight: 400; margin-left: .4rem; }
+.calwrap { padding: 0 1rem .8rem; }
+.yearcal { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; min-width: max-content; user-select: none; }
+.wdays { display: grid; grid-template-rows: repeat(7, var(--c)); gap: 2px; margin-top: 16px; font-size: 9.5px; line-height: var(--c); color: var(--muted); }
+.mblock { display: flex; flex-direction: column; gap: 2px; }
+.mblock .ml { font-size: 11px; line-height: 14px; color: var(--muted); white-space: nowrap; border: 0; background: none; padding: 0; text-align: left; }
+.mblock button.ml:not(:disabled):hover { color: var(--accent); text-decoration: underline; background: none; }
+.mblock button.ml:disabled { opacity: 1; cursor: default; }
+.mgrid { display: grid; grid-template-rows: repeat(7, var(--c)); gap: 2px; }
+.cell { display: block; width: var(--c, 15px); height: var(--c, 15px); border-radius: 2px; box-sizing: border-box; padding: 0; border: 0; box-shadow: inset 0 0 0 1px rgba(29,35,48,.10); }
+.dayhead.flash { animation: dayflash 1.2s ease-out; }
+/* A files snapshot: one tree with restic diff's marks against an older snapshot (snapshots.js FileTree). */
+.tabpanel { border-top-left-radius: 0; }
+.treebar { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .8rem; padding: .75rem 1rem; border-bottom: 1px solid var(--line); font-size: 13px; }
+.treebar select { font-size: 12.5px; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.seg button { border: 0; border-radius: 0; background: var(--panel); color: var(--text); padding: .25rem .7rem; font-size: 12.5px; }
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button.on { background: var(--info-bg); color: var(--accent); font-weight: 600; }
+.trow { display: grid; grid-template-columns: minmax(200px, 1fr) 96px 88px 100px 64px 128px 108px; gap: .5rem; align-items: center; padding: .3rem 1rem; border-top: 1px solid #eef0f3; font-size: 13px; }
+.trow.head { background: #fafbfc; font-size: 12px; font-weight: 600; color: var(--muted); padding-block: .45rem; border-top: 0; }
+.trow.note { grid-template-columns: 1fr; }
+.trow:not(.head):not(.note):hover { background: #f5f7fa; }
+.trow.gone .tname, .trow.gone .tmeta { color: #9aa3b2; text-decoration: line-through; }
+.tname { display: flex; align-items: center; gap: .3rem; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.twist { width: 16px; height: 16px; border: 0; background: none; padding: 0; color: var(--muted); font-size: 11px; flex: none; }
+.twist:hover { background: none; color: var(--text); }
+.tpad { width: 33px; flex: none; }
+.tmeta { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chg { display: inline-flex; align-items: center; font-size: 11.5px; font-weight: 600; padding: .05rem .45rem; border-radius: 999px; white-space: nowrap; }
+.chg.add { background: var(--ok-bg); color: var(--ok); }
+.chg.mod { background: var(--warn-bg); color: var(--warn); }
+.chg.meta { background: #eef0f4; color: #4b5565; }
+.chg.del { background: var(--err-bg); color: var(--err); }
+.chg.type { background: #ece7fb; color: #5b3fb3; }
+.inside { font-size: 11.5px; color: var(--muted); margin-left: .4rem; }
+@keyframes dayflash { from { background: #fff3c4; } to { background: transparent; } }
 button.cell { cursor: pointer; }
 button.cell:hover, button.cell:focus-visible { outline: 2px solid var(--text); outline-offset: 1px; }
 /* Every day is a square that shows on white: no restore point (grey), before the oldest one (pale, outlined), and
