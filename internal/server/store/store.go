@@ -964,10 +964,10 @@ func scanCommands(rows pgx.Rows) ([]Command, error) {
 }
 
 // PendingCommands returns the host's commands that the agent has not acknowledged yet, and that have
-// neither expired nor been cancelled.
-func (q *Q) PendingCommands(ctx context.Context, fqdn string) ([]Command, error) {
+// neither expired, by the server's clock, nor been cancelled.
+func (q *Q) PendingCommands(ctx context.Context, fqdn string, now time.Time) ([]Command, error) {
 	rows, err := q.db.Query(ctx, `SELECT `+commandCols+` FROM commands WHERE fqdn = $1 AND acked_at IS NULL AND cancelled_at IS NULL
-		AND (expires_at IS NULL OR expires_at > now()) ORDER BY created_at`, fqdn)
+		AND (expires_at IS NULL OR expires_at > $2) ORDER BY created_at`, fqdn, now)
 	if err != nil {
 		return nil, err
 	}
