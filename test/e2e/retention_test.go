@@ -292,10 +292,10 @@ func TestRetentionCutWaitsSevenDays(t *testing.T) {
 	if p := e.pending(fqdn); len(p.Pending) != 0 {
 		t.Fatalf("cancelled: %+v", p)
 	}
-	if out, err := e.cliErr("snapshot", "delete", fqdn, victim[:12], "--now", "--confirm", "cut02"); err == nil || !strings.Contains(string(out), "cut01") {
+	if out, err := e.cliErr("snapshot", "delete", fqdn, victim[:12], "--now", "--confirm", "cut02", "--reason", "e2e"); err == nil || !strings.Contains(string(out), "cut01") {
 		t.Fatalf("Delete now with the wrong name: %v %s", err, out)
 	}
-	if run := e.run("snapshot", "delete", fqdn, victim[:12], "--now", "--confirm", "cut01"); run.Status != "success" || !slices.Equal(run.Forgotten, []string{victim}) || run.Pruned {
+	if run := e.run("snapshot", "delete", fqdn, victim[:12], "--now", "--confirm", "cut01", "--reason", "e2e"); run.Status != "success" || !slices.Equal(run.Forgotten, []string{victim}) || run.Pruned {
 		t.Fatalf("Delete now forgets at once and leaves the prune for later: %+v", run)
 	}
 

@@ -291,7 +291,12 @@ func (s *Server) RemoveConnection(ctx context.Context, a Actor, fqdn, name, mess
 	return revNo, err
 }
 
-// TestConnection has the agent connect, as it would to back up, and report what it finds.
+// pgTestJoin is how recent a test of a connection still unanswered is joined by Test connection, rather than queueing
+// another one: the result of one would hide the other's from whoever waits for it.
+const pgTestJoin = 5 * time.Minute
+
+// TestConnection has the agent connect, as it would to back up, and report what it finds. A test of the connection
+// asked moments ago and not answered yet, such as the one saving it queued, is the test: its command is returned.
 func (s *Server) TestConnection(ctx context.Context, a Actor, fqdn, name string) (string, error) {
 	id := newID()
 	err := s.st.InTx(ctx, func(q *store.Q) error {
@@ -301,6 +306,13 @@ func (s *Server) TestConnection(ctx context.Context, a Actor, fqdn, name string)
 		}
 		if _, ok := head.Config.Hosts[fqdn].PostgreSQL[name]; !ok {
 			return fmt.Errorf("connection %s on %s: %w", name, fqdn, ErrNotFound)
+		}
+		now := s.now()
+		if open, err := q.UnfinishedPGTest(ctx, fqdn, name, now.Add(-pgTestJoin), now); err != nil {
+			return err
+		} else if open != "" {
+			id = open
+			return nil
 		}
 		if err := s.enqueuePGTest(ctx, q, a, fqdn, name, id); err != nil {
 			return err

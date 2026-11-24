@@ -3,7 +3,10 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 /* ---------------- PostgreSQL connections' passwords (decision 055) ---------------- */
@@ -82,6 +85,20 @@ func (q *Q) LatestPGTests(ctx context.Context, fqdn string) (map[string]Event, e
 		}
 	}
 	return out, nil
+}
+
+// UnfinishedPGTest returns the newest test of a connection, asked since since, whose result has not come back yet:
+// queued, or running on the agent. "" if there is none.
+func (q *Q) UnfinishedPGTest(ctx context.Context, fqdn, connection string, since, now time.Time) (string, error) {
+	var id string
+	err := q.db.QueryRow(ctx, `SELECT c.id FROM commands c WHERE c.fqdn = $1 AND c.kind = 'postgresql_test' AND c.payload->>'connection' = $2
+		AND c.cancelled_at IS NULL AND (c.expires_at IS NULL OR c.expires_at > $4) AND c.created_at >= $3
+		AND NOT EXISTS (SELECT 1 FROM events e WHERE e.fqdn = c.fqdn AND e.command_id = c.id)
+		ORDER BY c.created_at DESC LIMIT 1`, fqdn, connection, since, now).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	return id, err
 }
 
 // PGTestDetail decodes a test event's result, or returns nil.

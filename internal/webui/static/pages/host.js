@@ -407,7 +407,7 @@ export function Host({ fqdn, reloadHosts, vault, settings }) {
     <div class="spread">
       <div style="min-width:0">
         <h1 class="row" style="gap:.6rem"><span class="wrap">${h.fqdn}</span>
-          ${probs.length === 0 ? html`<${Pill} kind="ok">all ${h.jobs.length} jobs OK<//>`
+          ${probs.length === 0 ? html`<${Pill} kind="ok">${h.jobs.length === 1 ? 'its job is OK' : `all ${h.jobs.length} jobs OK`}<//>`
             : html`<${Pill} kind=${errors ? 'error' : 'warning'}>${needy ? `${needy} ${needy === 1 ? 'job needs' : 'jobs need'} attention` : 'needs attention'}<//>`}</h1>
         <p class="muted">${vault ? `copied from primary · last copy ${h.copied_at ? fmtTime(h.copied_at) : 'none yet'}`
           : a ? html`${a.remote_addr ? `Connects from ${a.remote_addr} · ` : ''}${a.os_id} ${a.os_version} · agent ${a.agent_version} seen ${ago(a.last_seen_at)} · restic ${a.restic_version}${a.postgresql?.client ? ` · PostgreSQL client ${a.postgresql.client}` : ''}${h.in_sync ? '' : html` · <${Pill} kind="warning">runs revision ${a.applied_revision}, not ${h.desired_revision}<//>`}`
@@ -448,7 +448,7 @@ export function Host({ fqdn, reloadHosts, vault, settings }) {
       <div class="list-head"><h2 id="jobs-h">${vault ? 'Copied jobs' : 'Jobs'}</h2>
         ${days.error && html`<span class="muted">The last 14 days could not be read: ${days.error.message}</span>`}</div>
       ${h.jobs.length === 0 ? html`<p class="muted" style="padding:0 1rem 1rem">No job yet.${!vault && can(h, 'config.jobs') ? html` <a href=${link('agents', h.fqdn, 'configure')}>Add one</a>.` : ''}</p>` : html`
-      <div class="scrollx"><div style=${'min-width:' + (withOff ? 1160 : 1040) + 'px'}>
+      <div class="scrollx"><div style=${'min-width:' + (withOff ? 1000 : 880) + 'px'}>
         <div class="gt head" style=${'--cols:' + cols}><span>Job</span><span>Backs up</span><span>Last 14 days</span><span>Last backup</span><span>Next</span>${withOff && html`<span>Off-site</span>`}<span></span></div>
         ${h.jobs.map((j) => html`<${JobRow} key=${j.id} host=${h} job=${j} vault=${vault} cols=${cols} queued=${!!queued[j.id]} onRun=${() => run(j)}
           days=${days.data && days.data.jobs.find((x) => x.job_id === j.id)} cut=${(cuts.data || []).some((c) => c.fqdn === h.fqdn && c.job_id === j.id)} />`)}

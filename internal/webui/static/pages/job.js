@@ -110,17 +110,22 @@ function RestorePoints({ h, j, pts, off, vault, siteA, siteB, days, events, relo
   const monthSel = (y, m) => { if (mayDelete) add(pts.filter((p) => { const d = new Date(p.time); return d.getFullYear() === y && d.getMonth() === m && deletable(p); }).map((p) => p.key)); };
   const items = [];
   const example = {};
-  let lastMonth = -1;
+  // The months' labels over their first weeks. The first column's month is often only a day or two of it: when the
+  // next month starts less than three columns later, a label's width, the first one goes, and the year moves on.
+  const labels = [];
+  allDays.forEach((d, i) => {
+    if (d.getDate() === 1 || i === 0) {
+      const mo = d.getMonth();
+      if (!labels.length || labels[labels.length - 1].mo !== mo) labels.push({ col: Math.floor(i / 7) + 2, mo, yr: d.getFullYear() });
+    }
+  });
+  if (labels.length > 1 && labels[1].col - labels[0].col < 3) labels.shift();
+  labels.forEach(({ col, mo, yr }, n) => {
+    items.push(html`<button type="button" class="ml" style=${`grid-row:1;grid-column:${col}`} disabled=${!mayDelete}
+      data-tip=${mayDelete ? `${MONTHS[mo]} ${yr}\nSelect every restore point of the month` : null} onClick=${() => monthSel(yr, mo)}>${MONTHS[mo]}${mo === 0 || n === 0 ? ' ' + yr : ''}</button>`);
+  });
   allDays.forEach((d, i) => {
     const t = d.getTime(), col = Math.floor(i / 7) + 2, row = (i % 7) + 2;
-    if (d.getDate() === 1 || i === 0) {
-      const mo = d.getMonth(), yr = d.getFullYear();
-      if (mo !== lastMonth) {
-        lastMonth = mo;
-        items.push(html`<button type="button" class="ml" style=${`grid-row:1;grid-column:${col}`} disabled=${!mayDelete}
-          data-tip=${mayDelete ? `${MONTHS[mo]} ${yr}\nSelect every restore point of the month` : null} onClick=${() => monthSel(yr, mo)}>${MONTHS[mo]}${mo === 0 || i === 0 ? ' ' + yr : ''}</button>`);
-      }
-    }
     const pos = `grid-row:${row};grid-column:${col}`;
     const ps = byDay.get(t) || [];
     const r = ran.get(t);
