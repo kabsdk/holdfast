@@ -110,6 +110,16 @@ export function ago(t) {
   return `${Math.round(s / 86400)} d ago`;
 }
 
+// until says how soon a time comes: "in 45 min", "in 13 h", "in 2 d".
+export function until(t) {
+  if (!t) return '—';
+  const s = (new Date(t).getTime() - Date.now()) / 1000;
+  if (s <= 0) return 'due now';
+  if (s < 5400) return `in ${Math.max(1, Math.round(s / 60))} min`;
+  if (s < 129600) return `in ${Math.round(s / 3600)} h`;
+  return `in ${Math.round(s / 86400)} d`;
+}
+
 export function bytes(n) {
   if (n == null) return '—';
   const u = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
@@ -170,6 +180,21 @@ export function ErrorBox({ error }) {
 
 export function Loading({ what }) {
   return html`<p class="muted">Loading ${what || ''}…</p>`;
+}
+
+// Icons, drawn inline. Each carries its meaning as a label, so colour is never the only sign.
+export const icons = {
+  error: () => html`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="Error"><circle cx="12" cy="12" r="9"></circle><path d="M15 9l-6 6M9 9l6 6"></path></svg>`,
+  warning: () => html`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="Warning"><path d="M12 9v4"></path><path d="M12 17h.01"></path><path d="M10.3 3.9L1.8 18a2 2 0 001.7 3h17a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z"></path></svg>`,
+  ok: () => html`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="OK" class="ok"><path d="M5 12l5 5L20 7"></path></svg>`,
+};
+
+// Problem is one line of what the server knows is wrong: its severity, the job it is about, its message and code.
+export function Problem({ p }) {
+  return html`<div class=${'prob ' + (p.severity === 'error' ? 'error' : 'warning')}>
+    ${p.severity === 'error' ? icons.error() : icons.warning()}
+    <span>${p.job_id ? p.job_id + ': ' : ''}${p.message} <code>${p.code}</code></span>
+  </div>`;
 }
 
 export function Pill({ kind, children }) {

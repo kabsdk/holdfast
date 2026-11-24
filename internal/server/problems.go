@@ -6,8 +6,8 @@ import (
 	"time"
 )
 
-// Problems are what the server knows is wrong with a host: the UI's Problems page and Fleet's
-// "Needs attention", and what the server's own alerts send (notify.go). The server is the storage witness too:
+// Problems are what the server knows is wrong with a host: what the UI's Overview lists under each host and counts in
+// its tiles, and what the server's own alerts send (notify.go). The server is the storage witness too:
 // not_in_bucket compares the agents' reports with what restic reads from the bucket.
 
 // Problem is one thing wrong with a host, or with one of its jobs.

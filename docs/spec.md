@@ -667,7 +667,7 @@ Restore and inspection behave like restic does on the host.
 
 ### 5.1 Navigation
 
-- Path: Host → Job → Snapshot list → Snapshot page.
+- Path: Overview → Host → Job → Snapshot list → Snapshot page.
 - Every snapshot ID anywhere in the product is a link.
 
 ### 5.2 Job snapshot list
@@ -759,8 +759,10 @@ original's (`holdfast offsite copies <fqdn>` lists them):
 
 ### 5.5a Problems
 
-The UI's Problems page, and the Fleet's "Needs attention", list what the server knows is wrong, host by
-host, each with a code:
+**The Overview**, the UI's start page, lists every host, those with problems first, and under each host what the
+server knows is wrong with it, each problem once, with its code. Its tiles count the stale, failed and incomplete jobs
+and the hosts with any other problem; choosing a tile filters the list by it. `#/problems`, the page it replaced,
+opens it. The problems are:
 - errors: `stale`, `failed`, `not_in_bucket` (the agent reported a backup whose snapshot the server, reading the
   repository from the bucket after the report, did not find: decision 045), `storage`, `disappeared`, `foreign_keys`,
   `rotation` (an old password still opens the repository), and `decommission` when a due decommission could not

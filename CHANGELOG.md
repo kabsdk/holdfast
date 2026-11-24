@@ -3,6 +3,12 @@
 What each release of Holdfast changes. The Ansible collection has its own notes in
 [ansible/CHANGELOG.md](ansible/CHANGELOG.md).
 
+## Unreleased
+
+- Web UI: **Overview** replaces the Fleet and Problems pages. Its tiles count stale, failed and incomplete jobs and
+  the hosts with other problems, and filter the hosts by them; each problem shows once, under its host, and the
+  sidebar's "Needs attention" list is gone.
+
 ## 0.1.0 (2026-11-24)
 
 The first release. Two development releases before it, 0.5.0 and 0.6.0, were withdrawn when the numbering started

@@ -1,0 +1,96 @@
+// Overview, the start page: every host you may see, worst first, with tiles that count what is wrong and filter the
+// list by it. Each problem shows once, under its host (spec §5.5a); the server works them out (problems.go).
+import { html, useState, link, ago, until, useAction, ErrorBox, Problem } from '../lib.js';
+import { api } from '../api.js';
+
+// jobState is how a job's pill reads: the server's problem for it, or OK.
+export function jobState(host, job) {
+  const p = (host.problems || []).find((x) => x.job_id === job.id);
+  if (p) return { kind: p.severity, text: { stale: 'stale', failed: job.status?.last_status || 'failed', incomplete: 'incomplete' }[p.code] || p.code };
+  if (!job.status) return { kind: '', text: host.state === 'enrolled' ? 'waiting for first backup' : 'not enrolled' };
+  return { kind: 'ok', text: 'OK' };
+}
+
+// The problems a tile of their own counts; the rest are "Other problems".
+const JOB_CODES = ['stale', 'failed', 'incomplete'];
+const worst = (h) => ((h.problems || []).some((p) => p.severity === 'error') ? 2 : (h.problems || []).length ? 1 : 0);
+const other = (h) => (h.problems || []).some((p) => !JOB_CODES.includes(p.code));
+const COLS = 'minmax(0,2fr) minmax(0,3fr) minmax(0,1fr) minmax(0,1fr) minmax(0,1.1fr)';
+
+function HostRow({ h }) {
+  const dot = h.fqdn.indexOf('.');
+  const short = dot > 0 ? h.fqdn.slice(0, dot) : h.fqdn;
+  const domain = dot > 0 ? h.fqdn.slice(dot) : '';
+  const successes = h.jobs.map((j) => j.status?.last_success_at).filter(Boolean);
+  const oldest = successes.length ? successes.reduce((a, b) => (b < a ? b : a)) : null;
+  const nexts = h.jobs.map((j) => j.next_runs?.[0]).filter(Boolean);
+  const next = nexts.length ? nexts.reduce((a, b) => (b < a ? b : a)) : null;
+  const probs = h.problems || [];
+  const stale = probs.some((p) => p.code === 'stale');
+  const offline = probs.some((p) => p.code === 'offline');
+  return html`<div class=${'hostrow' + (worst(h) === 2 ? ' bad' : '')}>
+    <div class="gt" style=${'--cols:' + COLS}>
+      <div style="min-width:0"><a href=${link('hosts', h.fqdn)}><b>${short}</b></a><span class="muted">${domain}</span>
+        <div class="sub">${h.agent ? `${h.agent.os_id} ${h.agent.os_version}` : h.state.replace(/_/g, ' ')}</div></div>
+      <div>${h.jobs.length === 0 ? html`<span class="muted">no job yet</span>` : h.jobs.map((j) => {
+        const s = jobState(h, j);
+        const k = s.kind === 'error' || s.kind === 'warning' ? s.kind : '';
+        return html`<a class=${'jobpill ' + k} href=${link('hosts', h.fqdn, 'jobs', j.id, 'snapshots')}><span class=${'dot ' + (k || s.kind)}></span>${j.id}${k ? ' · ' + s.text : ''}</a>`;
+      })}</div>
+      <span class=${'num' + (stale ? ' error' : '')}>${oldest ? ago(oldest) : '—'}</span>
+      <span class="num muted">${next ? until(next) : '—'}</span>
+      <span class=${'num' + (offline ? ' error' : ' muted')}>${h.agent ? (offline ? 'offline ' : 'seen ') + ago(h.agent.last_seen_at) : '—'}</span>
+    </div>
+    ${probs.length > 0 && html`<div class="probs">${probs.map((p) => html`<${Problem} p=${p} />`)}</div>`}
+  </div>`;
+}
+
+export function Overview({ me, hosts, vault }) {
+  const [filter, setFilter] = useState('all');
+  const [q, setQ] = useState('');
+  const check = useAction();
+  const states = hosts.flatMap((h) => h.jobs.map((j) => jobState(h, j)));
+  const count = (code) => hosts.flatMap((h) => h.problems || []).filter((p) => p.code === code).length;
+  const tiles = [
+    ['all', vault ? 'Copied hosts' : 'Hosts', hosts.length, `${states.filter((s) => s.kind === 'ok').length} of ${states.length} jobs OK`, ''],
+    ['stale', 'Stale', count('stale'), 'no backup in time', 'error'],
+    ['failed', 'Failed', count('failed'), 'last run failed', 'error'],
+    ['incomplete', 'Incomplete', count('incomplete'), 'files not read', 'warning'],
+    ['other', 'Other problems', hosts.filter(other).length, 'offline, drift, storage…', 'warning'],
+  ];
+  const keep = (h) => filter === 'all' || (filter === 'other' ? other(h) : (h.problems || []).some((p) => p.code === filter));
+  const text = q.trim().toLowerCase();
+  const shown = hosts.filter((h) => keep(h) && (!text || h.fqdn.includes(text))).sort((a, b) => worst(b) - worst(a) || a.fqdn.localeCompare(b.fqdn));
+  const canCheck = hosts.some((h) => (h.actions || []).includes('maintenance'));
+  const title = tiles.find((t) => t[0] === filter)[1];
+  return html`
+    <div class="spread">
+      <h1>Overview</h1>
+      <div class="row">
+        ${canCheck && html`<button disabled=${check.busy} onClick=${() => check.run(() => api.checkAll())}>Check all repositories</button>`}
+        ${me.add_hosts && !vault && html`<a class="button primary" href="#/add-host">Add host</a>`}
+      </div>
+    </div>
+    <${ErrorBox} error=${check.error} />
+    ${check.done && html`<div class="banner ok">Checks asked for on ${check.done.length} hosts. Each agent runs restic check on its next poll; its result is in the host's runs.</div>`}
+    <section class="tiles" aria-label="Status: choose one to filter the hosts">
+      ${tiles.map(([id, label, n, sub, kind]) => html`<button type="button" class=${'tile' + (filter === id ? ' on' : '')} aria-pressed=${filter === id ? 'true' : 'false'}
+          onClick=${() => setFilter(filter === id ? 'all' : id)}>
+        <span class="l">${label}</span><span class=${'n ' + (id === 'all' ? '' : n === 0 ? 'zero' : kind)}>${n}</span><span class="s">${sub}</span></button>`)}
+    </section>
+    <section class="list" aria-label="Hosts">
+      <div class="list-head">
+        <div class="row" style="align-items:baseline">
+          <h2>${filter === 'all' ? (vault ? 'All copied hosts' : 'All hosts') : title}</h2>
+          <span class="muted">${shown.length} ${shown.length === 1 ? 'host' : 'hosts'}${filter === 'all' ? ' · problems first' : ''}</span>
+          ${filter !== 'all' && html`<button type="button" class="link" onClick=${() => setFilter('all')}>Show all hosts</button>`}
+        </div>
+        <input id="host-filter" type="search" aria-label="Filter hosts by name" placeholder="Filter by name" value=${q} onInput=${(e) => setQ(e.target.value)} />
+      </div>
+      <div class="scrollx"><div style="min-width:860px">
+        <div class="gt head" style=${'--cols:' + COLS}><span>Host</span><span>Jobs</span><span>Last backup</span><span>Next backup</span><span>Agent</span></div>
+        ${shown.map((h) => html`<${HostRow} key=${h.fqdn} h=${h} />`)}
+        ${shown.length === 0 && html`<p class="muted" style="padding:1rem">${hosts.length === 0 ? 'No hosts yet.' : 'No host matches.'}</p>`}
+      </div></div>
+    </section>`;
+}

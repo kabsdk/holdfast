@@ -87,14 +87,22 @@ func TestUIPages(t *testing.T) {
 	errs := jsErrors(ctx)
 	uiLogin(t, ctx, "ada")
 
-	// Fleet, Problems, Settings, Audit log, Access, Config history, Restores render.
+	// Overview, Settings, Audit log, Access, Config history, Restores render; the old Problems page opens the Overview.
 	for _, p := range []struct{ hash, text string }{
-		{"#/", "Fleet"}, {"#/problems", "Problems"}, {"#/settings", "0.19.1, which the packages ship"}, {"#/audit", "host.add"},
+		{"#/", "1 of 1 jobs OK"}, {"#/problems", "All hosts"}, {"#/settings", "0.19.1, which the packages ship"}, {"#/audit", "host.add"},
 		{"#/access", "holdfast-admins"}, {"#/history", "Revisions"}, {"#/restores", "Choose a snapshot"},
 	} {
 		open(t, ctx, p.hash)
 		waitText(t, ctx, p.text)
 	}
+
+	// Overview: a tile filters the hosts by what it counts. Nothing has failed, so Failed leaves none.
+	open(t, ctx, "#/")
+	waitText(t, ctx, web)
+	clickText(t, ctx, "button", "last run failed")
+	waitText(t, ctx, "No host matches.")
+	clickText(t, ctx, "button", "Show all hosts")
+	waitText(t, ctx, web)
 
 	// Host: Back up now.
 	open(t, ctx, "#/hosts/"+web)

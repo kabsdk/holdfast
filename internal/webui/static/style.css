@@ -27,7 +27,6 @@ nav.side a { display: flex; justify-content: space-between; color: #cfd6e4; padd
 nav.side a:hover, nav.side a.on { background: #26304a; color: #fff; text-decoration: none; }
 nav.side .count { background: var(--err); color: #fff; border-radius: 9px; padding: 0 .45rem; font-size: 12px; }
 nav.side .section { margin: 1rem .5rem .35rem; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: #8792a8; }
-nav.side .attn a { font-size: 13px; }
 /* holdfast-vault: the same UI in red, so a vault is never taken for the server (decision 039) */
 .layout.vault nav.side { background: #3b0d0c; }
 .layout.vault nav.side a:hover, .layout.vault nav.side a.on { background: #6b1a17; }
@@ -99,6 +98,44 @@ label.accept { margin-left: .6rem; white-space: nowrap; }
 .pager { display: flex; gap: .75rem; align-items: center; margin: .6rem 0; color: var(--muted); }
 .job { border: 1px solid var(--line); border-radius: 10px; padding: .8rem 1rem; margin: .6rem 0; background: var(--panel); }
 .job .head { display: flex; justify-content: space-between; align-items: center; gap: .5rem; flex-wrap: wrap; }
+.sub { font-size: 12px; color: var(--muted); }
+.num { font-variant-numeric: tabular-nums; }
+.num.error { color: var(--err); }
+button.link { border: 0; background: none; padding: 0; color: var(--accent); }
+button.link:hover { background: none; text-decoration: underline; }
+
+/* Overview: tiles that count and filter, and the hosts as rows with their problems under them. */
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: .75rem; margin: 1rem 0; }
+.tile { text-align: left; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: .75rem 1rem; display: flex; flex-direction: column; gap: 1px; }
+.tile:hover { background: var(--panel); border-color: #c8ced9; }
+.tile.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.tile .l, .tile .s { color: var(--muted); font-size: 12.5px; }
+.tile .n { font-size: 1.6rem; font-weight: 700; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.tile .n.zero { color: #9aa3b2; }
+.tile .n.error { color: var(--err); }
+.tile .n.warning { color: var(--warn); }
+.list { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.list-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: .6rem; padding: .7rem 1rem; }
+.list-head h2 { margin: 0; }
+.scrollx { overflow-x: auto; }
+.gt { display: grid; grid-template-columns: var(--cols); gap: .75rem; align-items: center; padding: .6rem 1rem; border-top: 1px solid var(--line); }
+.gt.head { padding-block: .45rem; background: #fafbfc; font-size: 12px; font-weight: 600; color: var(--muted); }
+.hostrow.bad { background: #fffafa; }
+.probs { padding: 0 1rem .6rem; display: flex; flex-direction: column; gap: .2rem; }
+.prob { display: flex; gap: .5rem; align-items: flex-start; font-size: 13px; }
+.prob.error { color: var(--err); }
+.prob.warning { color: var(--warn); }
+.prob svg { flex: none; margin-top: 1px; }
+.prob code { color: var(--muted); }
+.jobpill { display: inline-flex; align-items: center; gap: 6px; padding: .05rem .55rem; margin: .1rem .3rem .1rem 0; border-radius: 999px; border: 1px solid var(--line); background: var(--panel); color: var(--text); font-size: 12.5px; }
+.jobpill:hover { text-decoration: none; border-color: #c8ced9; }
+.jobpill.error { background: var(--err-bg); border-color: #f4c2bd; color: #7a1a14; }
+.jobpill.warning { background: var(--warn-bg); border-color: #f1dc9e; color: #5c3d00; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: #9aa3b2; flex: none; }
+.dot.ok { background: #3f9c63; }
+.dot.error { background: var(--err); }
+.dot.warning { background: #d99a1e; }
+
 .diff-add { color: var(--ok); }
 .diff-del { color: var(--err); }
 .steps li { margin: .3rem 0; }

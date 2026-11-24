@@ -1,6 +1,6 @@
 # Alerting
 
-**The server sends its own alerts** (decision 046). Everything it knows is wrong, the Problems page's list (spec
+**The server sends its own alerts** (decision 046). Everything it knows is wrong, the problems the Overview lists (spec
 §5.5a), goes by mail, to a webhook, or both: once when a problem has lasted `notify.after` (10 minutes by default),
 and once when it ends. That covers backups that stop or fail, a backup the bucket does not hold (the server is the
 storage witness, decision 045), snapshots that disappear, a failing nightly export, and the rest.

@@ -13,7 +13,7 @@ tells you by mail or chat when something is wrong.
 
 **[Read the documentation →](https://kabsdk.github.io/holdfast/)**
 
-![The Fleet page of Holdfast's web UI: four hosts with their backup jobs, last and next runs; one needs attention](website/img/fleet.png)
+![The Overview of Holdfast's web UI: tiles counting stale, failed and incomplete jobs, and four hosts with their backup jobs, last and next backups; a failed job's problem shows under its host](website/img/overview.png)
 
 ## What you get
 

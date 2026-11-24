@@ -1,6 +1,6 @@
 import { html, useState, usePoll, useAction, link, offsiteLink, go, ago, fmtTime, fmtDay, dur, bytes, scheduleText, retentionText, Pill, Snap, can, ErrorBox, Loading, EnrollLines } from '../lib.js';
 import { api } from '../api.js';
-import { jobState } from './fleet.js';
+import { jobState } from './overview.js';
 
 function Banners({ host, onAck }) {
   const errs = (host.problems || []).filter((p) => !p.job_id);

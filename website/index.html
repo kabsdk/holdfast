@@ -8,7 +8,7 @@
 <meta property="og:description" content="One server, a small agent on each host, your own S3 storage. Free and open source, Apache-2.0.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://kabsdk.github.io/holdfast/">
-<meta property="og:image" content="https://kabsdk.github.io/holdfast/img/fleet.png">
+<meta property="og:image" content="https://kabsdk.github.io/holdfast/img/overview.png">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230e7c74'/%3E%3Cpath d='M10 8v16M22 8v16M10 16h12' stroke='white' stroke-width='3.5' stroke-linecap='round'/%3E%3C/svg%3E">
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -491,7 +491,7 @@ rm /root/holdfast-recovery.txt /root/holdfast.env</code></pre></div></li>
     <li><strong>Open the web UI</strong>, as root on the server:
       <div class="cmd"><pre><code>holdfast ui-login                    <span class="c"># prints a link that works once, for 5 minutes</span></code></pre></div>
       <p>Your browser warns about the certificate, which Holdfast's own CA signed, until you trust that CA or give the UI a certificate of your own (<a href="#install-ui">The web UI and login</a>).</p></li>
-    <li><strong>Add a host</strong>: in the UI, <strong>Fleet → Add host</strong>, with its name and the paths to back up. Or, as root on the server:
+    <li><strong>Add a host</strong>: in the UI, <strong>Overview → Add host</strong>, with its name and the paths to back up. Or, as root on the server:
       <div class="cmd"><pre><code>holdfast host add web01.example.com
 holdfast job set web01.example.com system --path /etc --path /home</code></pre></div>
       <p>The job backs up daily at 02:00 and keeps one backup per day for 14 days, per week for 8 weeks, per month for a year and per year for 3 years; <a href="#jobs">Jobs and schedules</a> changes that. <code>host add</code> prints one line, with a code that works once, for 15 minutes; the UI shows the same line.</p></li>
@@ -511,7 +511,7 @@ holdfast snapshot list web01.example.com</code></pre></div></li>
     <h3>Three ways, one behaviour</h3>
     <p>Everything in Holdfast can be done in the web UI, with the <code>holdfast</code> command, or through the HTTP API that both of them use, with the same names, the same checks and the same check codes. Nothing is decided in the UI or the CLI: the server decides, so a save refused in one is refused in the others with the same finding. A few things are not in the UI, as they run as root on the machine itself: installing; <code>holdfast ui-login</code>, whose API call answers only on the server's root socket; and <code>holdfast-server</code>'s own commands for keys and rebuilds (<code>keygen</code>, <code>recovery-file</code>, <code>restore-export</code>), which work while the server is stopped.</p>
     <dl class="parts">
-      <dt>The web UI</dt><dd><code>https://holdfast.example.com/</code>. Fleet, Problems, Restores, Config history, Audit log, Access, Exports and Settings, a page per host and per snapshot, and search in the top bar. Off-site copies have their own pages, in orange, when there is an off-site bucket. Root logs in with <code>holdfast ui-login</code>, people through your identity provider.</dd>
+      <dt>The web UI</dt><dd><code>https://holdfast.example.com/</code>. Overview, Restores, Config history, Audit log, Access, Exports and Settings, a page per host and per snapshot, and search in the top bar. Off-site copies have their own pages, in orange, when there is an off-site bucket. Root logs in with <code>holdfast ui-login</code>, people through your identity provider.</dd>
       <dt>The CLI</dt><dd><code>holdfast</code>. As root on the server it uses the root-only socket and is admin everywhere, with no login. Elsewhere, <code>holdfast login</code> first, which needs an identity provider. <code>--json</code> prints the API's own answer, for scripts.</dd>
       <dt>The API</dt><dd><code>https://holdfast.example.com/api/v1/…</code>, JSON, with the session from a login: a browser's cookie, or the CLI's bearer token. Root on the server can use it on <code>/run/holdfast/api.sock</code>. A refused save answers 422 with every finding.</dd>
     </dl>
@@ -534,8 +534,8 @@ holdfast snapshot list web01.example.com</code></pre></div></li>
     <p>These pictures are taken by Holdfast's own end-to-end test, against a real server with real agents, restic and S3, logged in with <code>holdfast ui-login</code>. Names such as <code>web01.example.com</code> and <code>/srv/www</code> are the test's.</p>
     <div class="shots">
       <figure class="shot">
-        <img src="img/fleet.png" alt="The Fleet page: four hosts with their jobs, last runs and next runs. files01 is marked as needing attention because a job failed; app02 waits for its agent to enroll. An Add host button is at the top right." loading="lazy">
-        <figcaption><strong>Fleet.</strong> Every host you may see, its jobs and their last and next runs. It opens on the hosts that need attention; <strong>All hosts</strong>, shown here, lists the rest too. <strong>Add host</strong> is at the top. Here, <code>app02</code> has been added and waits for its agent, and a job on <code>files01</code> fails.</figcaption>
+        <img src="img/overview.png" alt="The Overview: tiles counting hosts, stale, failed and incomplete jobs and other problems; then four hosts with their jobs, last and next backups and agents. files01 comes first, with its failed job's error under it; app02 waits for its agent to enroll. An Add host button is at the top right." loading="lazy">
+        <figcaption><strong>Overview.</strong> Every host you may see, those with problems first, with each problem under its host: this list is what the server's alerts send (<a href="#problems">Problems</a>). The tiles count stale, failed and incomplete jobs and other problems; choose one to see only those hosts. <strong>Add host</strong> is at the top. Here, a job on <code>files01</code> fails, and <code>app02</code> has been added and waits for its agent.</figcaption>
       </figure>
       <figure class="shot">
         <img src="img/host.png" alt="A host's page: its agent, restic version and config revision, the repository and its escrow file, its backup job with schedule, retention, last success, newest snapshot and next run, recent runs, and buttons for the host's actions." loading="lazy">
@@ -566,10 +566,6 @@ holdfast snapshot list web01.example.com</code></pre></div></li>
         <figcaption><strong>Restores.</strong> Every restore on the hosts you can see, where it went and how it ended. A restore starts from a snapshot: pick the host and the job here to get to one.</figcaption>
       </figure>
       <figure class="shot">
-        <img src="img/problems.png" alt="The Problems page, listing a failed backup job on files01 with its error." loading="lazy">
-        <figcaption><strong>Problems.</strong> What the server knows is wrong, host by host, each with its severity, code and message, here the error restic gave (<a href="#problems">Problems</a>). This list is what the server's alerts send.</figcaption>
-      </figure>
-      <figure class="shot">
         <img src="img/history.png" alt="The Config history page: no retention cuts waiting, eight revisions with time, author and message, and a comparison of revisions 7 and 8." loading="lazy">
         <figcaption><strong>Config history.</strong> Every change is a numbered revision, with who made it, when, its message and any warnings accepted; <strong>Compare</strong> shows what changed between two. Above, retention cuts still waiting out their 7 days; below, past prunes.</figcaption>
       </figure>
@@ -598,7 +594,7 @@ holdfast snapshot list web01.example.com</code></pre></div></li>
     <div class="tablebox"><table>
       <thead><tr><th>Task</th><th>In the UI</th><th>In the CLI</th></tr></thead>
       <tbody>
-        <tr><td>Add a host</td><td>Fleet → Add host</td><td class="m">host add</td></tr>
+        <tr><td>Add a host</td><td>Overview → Add host</td><td class="m">host add</td></tr>
         <tr><td>Add or change a job</td><td>Host → Add job, or Edit on a job</td><td class="m">job set</td></tr>
         <tr><td>Remove a job</td><td>Host → Remove job</td><td class="m">job remove</td></tr>
         <tr><td>Back up now</td><td>Host → Back up now</td><td class="m">job run</td></tr>
@@ -612,7 +608,7 @@ holdfast snapshot list web01.example.com</code></pre></div></li>
         <tr><td>Prune now</td><td>Host → Prune now</td><td class="m">prune-now</td></tr>
         <tr><td>Run the daily clean-up now</td><td>Host → Run retention now</td><td class="m">retention run</td></tr>
         <tr><td>Past forgets and prunes</td><td>Config history → Past prunes</td><td class="m">prunes</td></tr>
-        <tr><td>Check every repository and storage now</td><td>Fleet → Check all repositories now</td><td class="m">check</td></tr>
+        <tr><td>Check every repository and storage now</td><td>Overview → Check all repositories</td><td class="m">check</td></tr>
         <tr><td>Clear the alert for a change made outside Holdfast</td><td>Host → the red banner's acknowledge</td><td class="m">host acknowledge</td></tr>
         <tr><td>A new enrollment code</td><td>Host → New enrollment code</td><td class="m">host enroll-code</td></tr>
         <tr><td>Rotate a host's password</td><td>Host → Rotate password</td><td class="m">host rotate</td></tr>
@@ -1329,7 +1325,7 @@ holdfast settings          <span class="c"># what server.yaml says, without secr
 
   <div class="sub" id="problems">
     <h3>Problems</h3>
-    <p>The UI's Problems page and the fleet's "Needs attention" list what the server knows is wrong, host by host, each with a code. <code>holdfast host show</code> shows a host's.</p>
+    <p>The UI's Overview lists what the server knows is wrong, under each host, each with a code; its tiles count stale, failed and incomplete jobs and the hosts with other problems, and filter the list by them. <code>holdfast host show</code> shows a host's.</p>
     <div class="tablebox"><table>
       <thead><tr><th>Code</th><th>Means</th></tr></thead>
       <tbody>

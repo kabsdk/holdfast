@@ -119,9 +119,9 @@ func TestScreenshots(t *testing.T) {
 
 	run(t, ctx, "the link", chromedp.Navigate(e.rootLink()), chromedp.WaitVisible(`nav.side`, chromedp.ByQuery))
 	open(t, ctx, "#/")
-	clickText(t, ctx, "span", "All hosts") // the fleet opens on what needs attention
 	waitText(t, ctx, app)
-	shot("fleet")
+	waitText(t, ctx, "the last backup failed") // files01's failed job, under its host
+	shot("overview")
 
 	open(t, ctx, "#/hosts/"+web)
 	waitText(t, ctx, "backup jobs")
@@ -163,10 +163,6 @@ func TestScreenshots(t *testing.T) {
 	open(t, ctx, "#/audit")
 	waitText(t, ctx, "Audit log")
 	shot("audit")
-
-	open(t, ctx, "#/problems")
-	waitText(t, ctx, files)
-	shot("problems")
 
 	open(t, ctx, "#/add-host")
 	field(t, ctx, "FQDN", "web02.example.com")
