@@ -3,7 +3,7 @@
 # `make packages` runs it after building the binaries; nfpm runs in a container, so the host needs no
 # packaging tools.
 #
-#   HOLDFAST_VERSION     the packages' version, such as 0.5.0 (required)
+#   HOLDFAST_VERSION     the packages' version, such as 0.1.0 (required)
 #   RESTIC_BINARY        the pinned restic, checked (scripts/fetch-restic.sh)
 #   RESTIC_VERSION       its version
 #   NFPM_IMAGE           nfpm's image, pinned by digest

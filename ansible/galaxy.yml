@@ -3,7 +3,7 @@
 # with the same version, as kabsdk-holdfast-<version>.tar.gz beside the packages (make collection).
 namespace: kabsdk
 name: holdfast
-version: 0.7.0
+version: 0.1.0
 readme: README.md
 authors:
   - Holdfast maintainers

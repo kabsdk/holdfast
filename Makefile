@@ -21,7 +21,7 @@ RESTIC_VERSION ?= 0.19.1
 PROM_IMAGE  ?= prom/prometheus:v2.53.0
 
 # Packages: nfpm in a container, pinned by digest. HOLDFAST_VERSION is a release's version,
-# such as 0.5.0; a build between releases sorts before the next one (scripts/version.sh). Worked out once.
+# such as 0.1.0; a build between releases sorts before the next one (scripts/version.sh). Worked out once.
 NFPM_IMAGE ?= goreleaser/nfpm@sha256:f1e9f1adcf452a85ab7765aa7252cdb2f94816ead5363bbd52a4e563087c942b
 ifeq ($(origin HOLDFAST_VERSION),undefined)
 HOLDFAST_VERSION := $(shell sh scripts/version.sh)

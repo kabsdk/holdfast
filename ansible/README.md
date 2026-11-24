@@ -17,7 +17,7 @@ roles gather the little they need themselves, so it works with `gathering = expl
 ## Install the collection
 
 ```
-ansible-galaxy collection install https://github.com/kabsdk/holdfast/releases/download/v0.6.0/kabsdk-holdfast-0.6.0.tar.gz
+ansible-galaxy collection install https://github.com/kabsdk/holdfast/releases/download/v0.1.0/kabsdk-holdfast-0.1.0.tar.gz
 ```
 
 It needs ansible-core 2.16 or later, plus `ansible.posix` and `community.general`, which it installs with it. The
@@ -29,7 +29,7 @@ installs them with `ansible-galaxy collection install -r requirements.yml`:
 
 ```yaml
 collections:
-  - name: https://github.com/kabsdk/holdfast/releases/download/v0.6.0/kabsdk-holdfast-0.6.0.tar.gz
+  - name: https://github.com/kabsdk/holdfast/releases/download/v0.1.0/kabsdk-holdfast-0.1.0.tar.gz
     type: url
 ```
 
@@ -77,7 +77,7 @@ ansible-playbook -i inventory.yml kabsdk.holdfast.site
 name from the machine. db01's `postgresql` job backs up the export that a systemd timer on db01 writes, which your own
 play sets up: Holdfast runs no command on a host (see *Databases and other exports* in Holdfast's documentation).
 
-Keep the secrets in Ansible Vault. Pin the release with `holdfast_version: 0.6.0`; without it the roles install the
+Keep the secrets in Ansible Vault. Pin the release with `holdfast_version: 0.1.0`; without it the roles install the
 latest.
 
 After the first run:
@@ -130,7 +130,7 @@ holdfast_jobs:
 The keys are `path`, `exclude`, `daily`, `every`, `from`, `weekly`, `at`, `spread`, `no_spread`, `zone`,
 `keep_within`, `keep_hourly`, `keep_daily`, `keep_weekly`, `keep_monthly`, `keep_yearly`, `keep_last`, `accept` and
 `limit_upload`, as Holdfast's documentation describes the flags. Quote times, `"02:00"`: unquoted, YAML reads them as
-numbers. The flags string of 0.5.0, such as `--path /etc`, is refused with a message.
+numbers.
 
 ## What the roles keep, and what they leave to Holdfast
 
@@ -149,9 +149,6 @@ numbers. The flags string of 0.5.0, such as `--path /etc`, is refused with a mes
 - **Restore limits belong to the role.** Only root on the host can set them; the server cannot. When
   `holdfast_restore` is set, the role writes it to `agent.yaml` and restarts the agent. When it is not set, the role
   leaves them as they are.
-- **The role takes 0.5.0's dumps out of `agent.yaml`.** Holdfast 0.6.0 runs no command on a host (decision 052), and
-  the agent ignores a `dumps:` with a warning; the role removes it, and restarts the agent. `holdfast_dumps` is gone,
-  and the role stops with a message while it is set.
 - **The roles remove nothing.** Removing a host is `holdfast host remove`, or **Remove host** in the UI. It never
   deletes data. Deleting a host's backups is an admin's decommission.
 
@@ -160,10 +157,6 @@ numbers. The flags string of 0.5.0, such as `--path /etc`, is refused with a mes
 Set `holdfast_version` to the new release and run the playbook. It upgrades the server first, then the agents. Each
 host downloads only when its packages are of another release, and checks every package against the release's
 `SHA256SUMS`. The roles do not go back to an older release.
-
-**From 0.5.0**, give the server and every host `holdfast_fqdn`, write each job in `holdfast_jobs` as a mapping, and
-drop `holdfast_dumps`: the roles stop with a message on each until you do. A dump job made by 0.5.0 needs paths
-instead; Holdfast's changelog says how.
 
 ## A lost server
 

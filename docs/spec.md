@@ -1,6 +1,6 @@
 # Holdfast specification
 
-Status: describes Holdfast 0.5.0 and the main branch after it.
+Status: describes Holdfast 0.1.0 and the main branch after it.
 
 This document describes how Holdfast behaves. When behaviour changes, this file changes in the same pull request.
 The reasons behind the decisions are in [decisions/](decisions/), and the rules every change keeps are in

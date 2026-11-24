@@ -496,7 +496,7 @@ rm /root/holdfast-recovery.txt /root/holdfast.env</code></pre></div></li>
 holdfast job set web01.example.com system --path /etc --path /home</code></pre></div>
       <p>The job backs up daily at 02:00 and keeps one backup per day for 14 days, per week for 8 weeks, per month for a year and per year for 3 years; <a href="#jobs">Jobs and schedules</a> changes that. <code>host add</code> prints one line, with a code that works once, for 15 minutes; the UI shows the same line.</p></li>
     <li><strong>Run that line on the host</strong>, as root. It installs the agent, enrolls it with the server and starts it:
-      <div class="cmd"><pre><code>curl -sfL https://github.com/kabsdk/holdfast/releases/download/v0.6.0/install.sh | HOLDFAST_SERVER=https://holdfast.example.com:8443 HOLDFAST_FQDN=web01.example.com HOLDFAST_CODE=3DK5-TM2E-28V6 HOLDFAST_CA_SHA256=2315…d08c HOLDFAST_VERSION=0.6.0 sh -</code></pre></div></li>
+      <div class="cmd"><pre><code>curl -sfL https://github.com/kabsdk/holdfast/releases/download/v0.1.0/install.sh | HOLDFAST_SERVER=https://holdfast.example.com:8443 HOLDFAST_FQDN=web01.example.com HOLDFAST_CODE=3DK5-TM2E-28V6 HOLDFAST_CA_SHA256=2315…d08c HOLDFAST_VERSION=0.1.0 sh -</code></pre></div></li>
     <li><strong>Watch the first backup.</strong> It starts as soon as the agent has enrolled; the UI's Add host page follows it from <em>waiting</em> to <em>first backup done</em>. After that the job follows its schedule. In the CLI:
       <div class="cmd"><pre><code>holdfast host events web01.example.com
 holdfast snapshot list web01.example.com</code></pre></div></li>
@@ -650,7 +650,7 @@ holdfast snapshot list web01.example.com</code></pre></div></li>
     <li><strong>Run again, it upgrades.</strong> On a machine that is set up already, it only upgrades the packages, and says that the settings are ignored.</li>
     <li><strong>You can read it first.</strong> <code>curl -sfLO …/install.sh</code>, read it, then <code>sh install.sh server</code>. <code>sh install.sh help</code> lists every setting.</li>
   </ul>
-  <p>Here <code>…/install.sh</code> is <code>https://github.com/kabsdk/holdfast/releases/latest/download/install.sh</code>, the newest release. To pin a release, use <code>https://github.com/kabsdk/holdfast/releases/download/v0.6.0/install.sh</code> and <code>HOLDFAST_VERSION=0.6.0</code>.</p>
+  <p>Here <code>…/install.sh</code> is <code>https://github.com/kabsdk/holdfast/releases/latest/download/install.sh</code>, the newest release. To pin a release, use <code>https://github.com/kabsdk/holdfast/releases/download/v0.1.0/install.sh</code> and <code>HOLDFAST_VERSION=0.1.0</code>.</p>
 
   <div class="sub" id="before">
     <h3>Before you start</h3>
@@ -768,7 +768,7 @@ curl -sfL https://github.com/kabsdk/holdfast/releases/latest/download/install.sh
       <li>Opens the agent port, 8443, and the UI's, 443, in firewalld or ufw if one of them runs. Starts <code>holdfast-server</code>, which runs as root, and waits until it answers. SELinux may stay enforcing: the tested servers had it on.</li>
     </ol>
     <p>It ends like this:</p>
-    <div class="cmd"><pre><code>[holdfast] The Holdfast server 0.5.0-1 runs.
+    <div class="cmd"><pre><code>[holdfast] The Holdfast server 0.1.0-1 runs.
   The web UI          https://holdfast.example.com: log in with the link that holdfast ui-login prints, as root here
                       Browsers warn about its certificate until you trust /etc/holdfast/tls/ca.crt, or install with HOLDFAST_UI_TLS_CERT
   Agents connect to   https://holdfast.example.com:8443, and pin 2315269dbd8dcb02b9b627167cd4db94c5a53a7448e10654d39eb45a0d8cd08c
@@ -853,7 +853,7 @@ HOLDFAST_OIDC_CA_FILE=/root/internal-ca.crt       <span class="c"># optional: if
     <div class="cmd"><pre><code>holdfast host add web01.example.com
 holdfast job set web01.example.com system --path /etc --path /home --path /srv --exclude '/home/*/.cache'</code></pre></div>
     <p>The job takes the default schedule and retention unless you give them (<a href="#jobs">Jobs and schedules</a>). <code>host add</code> prints the line to run on the host as root, with everything filled in:</p>
-    <div class="cmd"><pre><code>curl -sfL https://github.com/kabsdk/holdfast/releases/download/v0.6.0/install.sh | HOLDFAST_SERVER=https://holdfast.example.com:8443 HOLDFAST_FQDN=web01.example.com HOLDFAST_CODE=3DK5-TM2E-28V6 HOLDFAST_CA_SHA256=2315…d08c HOLDFAST_VERSION=0.6.0 sh -</code></pre></div>
+    <div class="cmd"><pre><code>curl -sfL https://github.com/kabsdk/holdfast/releases/download/v0.1.0/install.sh | HOLDFAST_SERVER=https://holdfast.example.com:8443 HOLDFAST_FQDN=web01.example.com HOLDFAST_CODE=3DK5-TM2E-28V6 HOLDFAST_CA_SHA256=2315…d08c HOLDFAST_VERSION=0.1.0 sh -</code></pre></div>
     <p>On the host, the installer installs <code>holdfast-restic</code> and <code>holdfast-agent</code> of the server's own version, and runs <code>holdfast-agent enroll</code>. Enrolling checks the server's certificate against the pin, makes the agent a private key and certificate of its own, which never leave the host, and sends the code. The server pins that certificate: from then on it is the host, on every connection. Then the agent starts, fetches its jobs, and keeps its own schedule.</p>
     <p>The UI's <strong>Add host</strong> page does the same in one form, and shows the line with a copy button. A host can also be added with no job, and given one later.</p>
     <p><strong>What a host decides for itself</strong> is in its own <code>/etc/holdfast/agent.yaml</code>, which only root on the host can change, and which enrolling again keeps:</p>
@@ -933,9 +933,9 @@ scrape_configs:
     <h3>Mirrors and closed networks</h3>
     <p>Hosts that cannot reach GitHub can install from a mirror: any directory that holds one release's files as published (<code>install.sh</code>, <code>VERSION</code>, <code>SHA256SUMS</code> and the packages), served over HTTPS or HTTP, or mounted on every host.</p>
     <div class="cmd"><pre><code><span class="c"># the server, from the mirror</span>
-curl -sfL https://mirror.example.com/holdfast/0.5.0/install.sh | HOLDFAST_DOWNLOAD_URL=https://mirror.example.com/holdfast/0.5.0 sh -s - server
+curl -sfL https://mirror.example.com/holdfast/0.1.0/install.sh | HOLDFAST_DOWNLOAD_URL=https://mirror.example.com/holdfast/0.1.0 sh -s - server
 <span class="c"># or from a directory on the machine</span>
-HOLDFAST_DOWNLOAD_URL=file:///srv/holdfast/0.5.0 sh /srv/holdfast/0.5.0/install.sh server</code></pre></div>
+HOLDFAST_DOWNLOAD_URL=file:///srv/holdfast/0.1.0 sh /srv/holdfast/0.1.0/install.sh server</code></pre></div>
     <p>A server installed from a mirror writes <code>download_url</code> into its <code>server.yaml</code>, so the line <code>host add</code> prints fetches from the same mirror. Set or change <code>download_url</code> by hand for a server installed otherwise. The packages are still checked against the mirror's <code>SHA256SUMS</code>.</p>
   </div>
 
@@ -943,7 +943,7 @@ HOLDFAST_DOWNLOAD_URL=file:///srv/holdfast/0.5.0 sh /srv/holdfast/0.5.0/install.
     <h3>With Ansible</h3>
     <p>The collection <code>kabsdk.holdfast</code>, released beside the packages, does what the script does, as three roles: <code>server</code>, <code>agent</code> and <code>cli</code>. It takes the same settings in lower case: <code>HOLDFAST_S3_BUCKET</code> is <code>holdfast_s3_bucket</code>. The certificates and the recovery file are paths on the Ansible controller, and mail recipients and admins are lists. A second run with nothing to do changes nothing.</p>
     <p><strong>The server and each host need <code>holdfast_fqdn</code></strong>, their FQDN: the roles read no host name from the machine. On the server, the URLs, the alerts' sender and the names in Holdfast's certificates default to it. On a host, <code>holdfast_hostname_autodetect: true</code> takes the host's own name (<code>hostname -f</code>) instead. The playbook gathers no facts, and the roles gather the little they need themselves, so it works with <code>gathering = explicit</code> in <code>ansible.cfg</code>.</p>
-    <div class="cmd"><pre><code>ansible-galaxy collection install https://github.com/kabsdk/holdfast/releases/download/v0.6.0/kabsdk-holdfast-0.6.0.tar.gz
+    <div class="cmd"><pre><code>ansible-galaxy collection install https://github.com/kabsdk/holdfast/releases/download/v0.1.0/kabsdk-holdfast-0.1.0.tar.gz
 ansible-playbook -i inventory.yml kabsdk.holdfast.site     <span class="c"># groups holdfast_server, holdfast_agents, holdfast_cli</span></code></pre></div>
     <div class="cmd"><pre><code><span class="c"># inventory.yml: the server's settings, and each host's jobs (secrets in Ansible Vault)</span>
 all:
@@ -977,7 +977,7 @@ all:
       <li><strong><code>server.yaml</code> follows the settings.</strong> The script ignores settings on a server that is set up; the server role writes <code>server.yaml</code> on every run, and a change restarts the server. <code>holdfast_server_yaml</code> adds anything else <code>server.yaml</code> takes.</li>
       <li><strong>Each host is added and enrolled once.</strong> The agent role runs <code>holdfast host add</code> as root on the server, or <code>host enroll-code</code> for a host Holdfast knows, then enrolls the agent with the code.</li>
       <li><strong>Jobs are only made, never changed.</strong> A job in <code>holdfast_jobs</code> that the host lacks is made with <code>holdfast job set</code>. After that it is the UI's and CLI's, so a change made there is not undone by the next run.</li>
-      <li><strong>The host's own restore limits in <code>agent.yaml</code></strong> come from <code>holdfast_restore</code> when given. The role also takes out a <code>dumps:</code> that 0.5.0 left there.</li>
+      <li><strong>The host's own restore limits in <code>agent.yaml</code></strong> come from <code>holdfast_restore</code> when given.</li>
       <li><strong>Nothing is removed.</strong> Removing a host stays <strong>Remove host</strong> or <code>holdfast host remove</code>.</li>
     </ul>
     <p>A lost server is replaced from the same inventory, run with <code>-e holdfast_recovery_file=/secure/holdfast-recovery.txt</code> on the new machine (<a href="#lost-server">A lost server</a>). An upgrade is a new <code>holdfast_version</code>; the playbook does the server first, then the agents. The collection's <code>README.md</code> lists every setting.</p>
@@ -1030,7 +1030,7 @@ openssl x509 -in ca.crt -outform DER | sha256sum                 <span class="c"
     <div class="tablebox"><table class="ref">
       <thead><tr><th>Setting</th><th>Role</th><th>Meaning</th></tr></thead>
       <tbody>
-        <tr><td>HOLDFAST_VERSION</td><td>all</td><td>The release to install, such as <code>0.6.0</code>. Default: the latest.</td></tr>
+        <tr><td>HOLDFAST_VERSION</td><td>all</td><td>The release to install, such as <code>0.1.0</code>. Default: the latest.</td></tr>
         <tr><td>HOLDFAST_DOWNLOAD_URL</td><td>all</td><td>A mirror holding one release's files: <code>https://</code>, <code>http://</code> or <code>file:///</code>. Default: the release on GitHub.</td></tr>
         <tr><td>HOLDFAST_SERVER</td><td>agent</td><td><span class="pill x">to enroll</span> The server's URL for agents, such as <code>https://holdfast.example.com:8443</code>.</td></tr>
         <tr><td>HOLDFAST_CODE</td><td>agent</td><td><span class="pill x">to enroll</span> The host's enrollment code. On an enrolled host, a code enrolls it again; without one the packages are only upgraded, and no other setting is needed.</td></tr>
@@ -1070,9 +1070,9 @@ openssl x509 -in ca.crt -outform DER | sha256sum                 <span class="c"
     <p><strong>Upgrade the server first.</strong> Then upgrade the agents, one by one, in any order and at any pace. Run the installer again on each machine, with its role and the new version; on a machine that is set up, it only upgrades the packages.</p>
     <div class="cmd"><pre><code><span class="c"># on the server: write a fresh export first, then upgrade</span>
 holdfast export now
-curl -sfL https://github.com/kabsdk/holdfast/releases/download/v0.7.0/install.sh | HOLDFAST_VERSION=0.7.0 sh -s - server
+curl -sfL https://github.com/kabsdk/holdfast/releases/download/v0.2.0/install.sh | HOLDFAST_VERSION=0.2.0 sh -s - server
 <span class="c"># on each host, the same version</span>
-curl -sfL https://github.com/kabsdk/holdfast/releases/download/v0.7.0/install.sh | HOLDFAST_VERSION=0.7.0 sh -</code></pre></div>
+curl -sfL https://github.com/kabsdk/holdfast/releases/download/v0.2.0/install.sh | HOLDFAST_VERSION=0.2.0 sh -</code></pre></div>
     <ul class="plain">
       <li>Pin the version, as above, so a release published between the server's upgrade and a host's cannot make an agent newer than its server. <code>dpkg-query -W holdfast-server</code> or <code>rpm -q holdfast-server</code> on the server shows its version. The line <code>host add</code> prints is pinned to the server's version already.</li>
       <li>The server migrates its database when it starts. Its upgrade restarts it; agents wait meanwhile and carry on. There is no downgrade: to go back, build a new server at the old version from the export you wrote before the upgrade, as for an older export in <a href="#lost-server">A lost server</a>.</li>
@@ -1115,7 +1115,7 @@ curl -sfL https://github.com/kabsdk/holdfast/releases/download/v0.7.0/install.sh
     <p>A job says what to back up, when, and how long to keep it. <code>holdfast job set</code> makes one or changes one, as a new revision.</p>
     <ul class="plain">
       <li><strong>A new job needs only its paths.</strong> What it does not give comes from the default job: daily at 02:00 with a 20-minute spread, keeping one backup per day for 14 days, per week for 8 weeks, per month for 12 months and per year for 3 years, and always the newest 3. A schedule it does give is taken as given, with no spread unless it sets one.</li>
-      <li><strong>An existing job keeps what a save does not give.</strong> A new schedule form keeps the job's spread and zone; a retention given replaces the whole retention. Paths given to a dump job from 0.5.0 make it a paths job (<a href="#dumps">Databases and other exports</a>).</li>
+      <li><strong>An existing job keeps what a save does not give.</strong> A new schedule form keeps the job's spread and zone; a retention given replaces the whole retention.</li>
     </ul>
     <p>Every option, in one command:</p>
     <div class="cmd"><pre><code>holdfast job set web01.example.com system --path /etc --path /home --path /srv \
@@ -1197,7 +1197,7 @@ curl -sfL https://github.com/kabsdk/holdfast/releases/download/v0.7.0/install.sh
         </tbody>
       </table></div>
     </div>
-    <p>Storage checks, the B codes, test the S3 server instead of the config, and cannot be accepted (<a href="#ref-storage-codes">Storage checks</a>). D001, D002 and I002 were the checks of dump jobs, which 0.6.0 removed; the codes are retired and not used again.</p>
+    <p>Storage checks, the B codes, test the S3 server instead of the config, and cannot be accepted (<a href="#ref-storage-codes">Storage checks</a>).</p>
   </div>
 
   <div class="sub" id="snapshots">
@@ -1242,7 +1242,7 @@ holdfast restore web01.example.com 4f2a91c3 --to /srv/old --overwrite if-newer</
       <li><strong>The host sets the bounds</strong> in its <code>agent.yaml</code> (<a href="#install-agents">Agents</a>), so a stolen admin login cannot write over a host's files unless that host allows it.</li>
       <li><strong>Restore both versions to diff on the host</strong> (editors): <code>holdfast restore pair &lt;fqdn&gt; &lt;id&gt; &lt;other id&gt; &lt;path&gt; --wait</code> restores one file from two snapshots into a root-only folder and prints the <code>diff -u</code> command to run on the host.</li>
       <li><strong>Onto another host</strong>, the target reads the source host's repository through the gateway, read-only, for that one restore, and gets the source's password once. Both hosts' histories record it.</li>
-      <li>SELinux labels are restored as the snapshot has them, except for a dump snapshot from before 0.6.0 and a restore from another host, which get the label the host gives a new file.</li>
+      <li>SELinux labels are restored as the snapshot has them, except for a restore from another host, which gets the label the host gives a new file.</li>
     </ul>
     <p>The UI's snapshot page has the same: <strong>Restore only this</strong> on each file or folder, and a <strong>Restore</strong> tab that restores everything, or leaves out the paths you list. The <strong>Restores</strong> page lists every restore in the fleet: who, what, where, and the result.</p>
   </div>
@@ -1283,7 +1283,6 @@ systemctl start pg-export.service      <span class="c"># once now, to see that i
     <p><strong>If the export fails</strong>, the unit fails and the last good file stays, so the job backs it up again, which costs nothing as restic deduplicates it. The failed unit is what alerts. Holdfast does not wait for the export or check the file's age; that is on purpose (decision 052). Keep the margin longer than the export takes, and remember that <code>OnCalendar=</code> is in the host's time zone and the job in the server's default zone unless it gives <code>--zone</code>. <code>TimeoutStartSec=</code> stops an export that hangs, and <code>SuccessExitStatus=</code> lets a tool whose exit code means a warning count as done.</p>
     <p>Leave the database's own files out of other jobs, such as a job of <code>/</code>: <code>--exclude /var/lib/postgresql</code> on Ubuntu, <code>--exclude /var/lib/pgsql</code> on RHEL.</p>
     <p><strong>To restore</strong>, restore the snapshot into a new folder, then load the file on the host, as root: <code>runuser -u postgres -- psql -d postgres &lt; /var/restore/…/var/backups/postgresql/all.sql</code>. The folder is root's only, so root's shell reads the file.</p>
-    <p><strong>Dump jobs from 0.5.0.</strong> Until 0.6.0 a dump job backed up what a command in the host's <code>agent.yaml</code> printed. Such a job no longer runs: its runs fail with the reason, and saving the config is refused until it has paths or is removed. Set the export up as above, then give the job its paths: <code>holdfast job set db01.example.com pg --path /var/backups/postgresql --exclude '*.tmp'</code>. Remove <code>dumps:</code> from <code>agent.yaml</code>; while it is there, the agent logs that it is ignored. Snapshots that dump jobs made are still restored as before: one file, into a new folder only.</p>
   </div>
 
   <div class="sub" id="deleting">
@@ -1790,7 +1789,7 @@ systemctl restart holdfast-server</code></pre></div>
 
   <div class="sub" id="ref-agent-yaml">
     <h3>agent.yaml</h3>
-    <p><code>/etc/holdfast/agent.yaml</code> on each host, written by <code>holdfast-agent enroll</code>. <code>restore:</code> is the host's own, and enrolling again keeps it. A <code>dumps:</code> from 0.5.0 is ignored, and the agent logs so: Holdfast runs no command on a host (<a href="#dumps">Databases and other exports</a>).</p>
+    <p><code>/etc/holdfast/agent.yaml</code> on each host, written by <code>holdfast-agent enroll</code>. <code>restore:</code> is the host's own, and enrolling again keeps it.</p>
     <div class="tablebox"><table class="ref">
       <thead><tr><th>Key</th><th>Meaning</th></tr></thead>
       <tbody>

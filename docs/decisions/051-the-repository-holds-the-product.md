@@ -13,7 +13,8 @@ runbooks and the documentation site. The working papers of its development leave
 - the research notes in `docs/research/`;
 - the proof of concept, `poc/`, and the UI mockup, `mockup/`, which the product has replaced.
 
-The git history keeps them, and the tag v0.5.0 still has them.
+The git history keeps them: commit 637f069 still has them. (It was tagged v0.5.0, a development release withdrawn when
+the numbering started again at 0.1.0.)
 
 A plan is still written before code, but in the issue or the pull request it belongs to. When the work ships, its
 answers are in `docs/spec.md`, and the ones that are decisions get a record here.

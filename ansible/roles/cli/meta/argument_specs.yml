@@ -8,7 +8,7 @@ argument_specs:
       holdfast_version:
         type: str
         default: latest
-        description: The release to install, such as 0.5.0.
+        description: The release to install, such as 0.1.0.
       holdfast_download_url:
         type: str
         default: ""

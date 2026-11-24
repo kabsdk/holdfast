@@ -30,9 +30,8 @@ This path is walked in the lab (`lab/README.md`, the rebuild test).
    - or into a new directory, to copy from: `holdfast restore web01.example.com <id> --wait`, which prints the
      directory under `/var/restore`;
    - a database: restore its export into a new directory, then load it on the host, as root, such as
-     `runuser -u postgres -- psql -d postgres < /var/restore/…/var/backups/postgresql/all.sql`. A dump snapshot from
-     before 0.6.0 is restored the same way, and holds the one file. The export's systemd timer comes back with the
-     host's configuration management, or with `/etc/systemd/system` from the restore.
+     `runuser -u postgres -- psql -d postgres < /var/restore/…/var/backups/postgresql/all.sql`. The export's systemd
+     timer comes back with the host's configuration management, or with `/etc/systemd/system` from the restore.
 7. **Check** that the next backup succeeds: `holdfast host events web01.example.com`.
 
 **A different FQDN**, such as a spare taking over, is a restore onto another host (spec §5.4): the spare's

@@ -88,7 +88,7 @@ lacks. Unlike the installer, the roles read no host name from the machine: give 
 FQDN as `holdfast_fqdn`. They need no gathered facts.
 
 ```
-ansible-galaxy collection install https://github.com/kabsdk/holdfast/releases/download/v0.6.0/kabsdk-holdfast-0.6.0.tar.gz
+ansible-galaxy collection install https://github.com/kabsdk/holdfast/releases/download/v0.1.0/kabsdk-holdfast-0.1.0.tar.gz
 ansible-playbook -i inventory.yml kabsdk.holdfast.site
 ```
 
@@ -140,39 +140,7 @@ several servers.
 
 ## Upgrading
 
-**From a release before M8, every agent enrolls again** (decision 041): it had a bearer token and an S3 key, and
-is known by its own certificate from now on, and backs up through the server. Upgrade the server, give it its
-gateway key and TLS, then for each host: upgrade the agent's package, `holdfast host enroll-code <fqdn>`, and run
-the printed `holdfast-agent enroll …` on the host. Its repository and password stay. Delete the host's old S3 key
-at your S3 server once it has backed up through the gateway. An M7 vault is not upgraded: remove its package, and
-give the server `offsite:` with a new, empty bucket and a key for it; the copies start again from the snapshots the
-primary has. The vault's old bucket keeps its copies, with the passwords in its own escrow files.
-
-**From a release before M9**, give the maintenance key `s3:GetObject`, `s3:PutObject` and `s3:DeleteObject` on
-`meta/*` in each bucket ([storage.md](storage.md)): the nightly export goes there, and B016 fails without them.
-
-**From a release before M10:**
-- give the maintenance key `s3:GetObject` on `escrow/*` too: a rebuilt server reads the escrow files of hosts added
-  after the export, and B012 fails without it;
-- remove `holdfast-freshness` where it runs, its list-only key, and its scrape job; the server reads the bucket itself
-  (decision 045);
-- write the recovery file, `holdfast-server recovery-file -config /etc/holdfast/server.yaml holdfast-recovery.txt`, add
-  your age key's `AGE-SECRET-KEY-…` line to it, and keep it offline (decision 047). `holdfast escrow export` is gone;
-- scripts that ran `host add` with a job's flags run `holdfast job set` after it (decision 048);
-- for alerts without Prometheus, add `notify:` to `server.yaml` (decision 046). For the web UI without an OIDC
-  provider, set `ui:` and log in with `holdfast ui-login` (decision 049). An upgrade does not change `server.yaml`.
-
-**From 0.5.0**, dump jobs are gone (decision 052): Holdfast runs no command on a host.
-- Before upgrading, have each host that had a dump write the export itself, with a systemd timer, as *Databases and
-  other exports* in the documentation shows.
-- After upgrading the server, give each dump job paths, such as `holdfast job set db01.example.com pg --path
-  /var/backups/postgresql --exclude '*.tmp'`, or remove it. Until no dump job is left, the server refuses to save the
-  config, with that reason. An agent of 0.6.0 fails a dump job's runs; one still at 0.5.0 runs it until it is upgraded.
-- Take `dumps:` out of each host's `/etc/holdfast/agent.yaml`. The agent ignores it, and logs so, until you do.
-- With Ansible, give the server and every host `holdfast_fqdn`, write each job in `holdfast_jobs` as a mapping of
-  `holdfast job set`'s flags, and drop `holdfast_dumps` (`ansible/README.md`).
-
-**Otherwise, upgrade the server first, then the agents, in any order and at any pace.** The agent sends its protocol
+**Upgrade the server first, then the agents, in any order and at any pace.** The agent sends its protocol
 version with every poll, and the server answers with the range it accepts:
 - a server accepts every agent from its `MinProtocol` on, so agents can be upgraded one by one, after it;
 - an agent that is too old is refused with that range, and logs "the server needs a newer agent". It keeps

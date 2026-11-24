@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # A release: the packages, install.sh, VERSION, SHA256SUMS and the Ansible collection, built at one version from a clean
 # checkout, the commit tagged v<version>, and all of it published as a GitHub release (gh, logged in).
-#   scripts/release.sh 0.5.0 [--draft]
+#   scripts/release.sh 0.1.0 [--draft]
 # Run the tests first: make test e2e install-test ansible-test.
 set -euo pipefail
 cd "$(dirname "$0")/.."
