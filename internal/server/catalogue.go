@@ -238,10 +238,24 @@ func (s *Server) pgRestoreNames(ctx context.Context, fqdn string, list []store.S
 	if err != nil {
 		return err
 	}
-	jobs := head.Config.Hosts[fqdn].Jobs
+	type pgJob struct {
+		j  config.Job
+		ok bool
+	}
+	jobs := map[string]pgJob{} // a removed job is looked up in the config history once
 	for i := range list {
-		if j, ok := jobs[list[i].JobID]; ok && j.PostgreSQL != nil && !j.PostgreSQL.Globals && j.PostgreSQL.Database != "" {
-			list[i].RestoreDatabase = s.pgRestoreName(j.PostgreSQL.Database, list[i].Time)
+		id := list[i].JobID
+		pj, seen := jobs[id]
+		if !seen {
+			pj.j, pj.ok = s.pgJobOf(ctx, head, fqdn, id)
+			jobs[id] = pj
+		}
+		if !pj.ok {
+			continue
+		}
+		list[i].PostgreSQL = pj.j.PostgreSQL
+		if !pj.j.PostgreSQL.Globals && pj.j.PostgreSQL.Database != "" {
+			list[i].RestoreDatabase = s.pgRestoreName(pj.j.PostgreSQL.Database, list[i].Time)
 		}
 	}
 	return nil

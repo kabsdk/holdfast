@@ -469,6 +469,25 @@ func pgProblems(v HostView) []Problem {
 
 /* ---------------- restores into a database ---------------- */
 
+// pgJobOf is the PostgreSQL job a snapshot belongs to: as the config has it, or, for a job removed since, as the newest
+// revision that had it. A removed job's snapshots stay (§3.5), and its dumps restore as they did.
+func (s *Server) pgJobOf(ctx context.Context, head store.Revision, fqdn, jobID string) (config.Job, bool) {
+	if jobID == "" {
+		return config.Job{}, false
+	}
+	j, ok := head.Config.Hosts[fqdn].Jobs[jobID]
+	if !ok {
+		raw, err := s.st.Q().LastJob(ctx, fqdn, jobID)
+		if err != nil {
+			s.log.Warn("reading a removed job from the config history", "host", fqdn, "job", jobID, "err", err)
+		}
+		if err != nil || raw == nil || json.Unmarshal(raw, &j) != nil {
+			return config.Job{}, false
+		}
+	}
+	return j, j.IsPostgreSQL() && j.PostgreSQL != nil
+}
+
 // pgRestoreName is the database a dump restores into beside the original: <database>-restore-<date>-<time>, the dump's
 // time in the server's zone, cut to PostgreSQL's 63 bytes.
 func (s *Server) pgRestoreName(db string, t time.Time) string {

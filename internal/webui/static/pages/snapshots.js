@@ -151,7 +151,8 @@ export function Snapshot({ fqdn, id, tab, vault, hosts, settings }) {
   const p = point(snap.unknown ? null : snap, copy, off, !!oj?.excluded, snap.id);
   const aGone = p.sa === 'deleted';
   const bHolds = off && (p.sb === 'copied' || p.sb === 'waits');
-  const job = h.jobs.find((j) => j.id === snap.job_id);
+  // A removed PostgreSQL job's dumps still restore into a database: the snapshot list carries what the job was.
+  const job = h.jobs.find((j) => j.id === snap.job_id) || (snap.postgresql ? { id: snap.job_id, engine: 'postgresql', postgresql: snap.postgresql, removed: true } : undefined);
   const pg = isPG(job);
   const older = all.data.filter((s) => s.job_id === snap.job_id && !s.gone_at && s.time < snap.time);
   const base = link('agents', fqdn, 'snapshots', snap.id);

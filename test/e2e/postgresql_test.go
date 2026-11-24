@@ -505,7 +505,23 @@ SELECT setval('shop.customer_id_seq', 7000);`)
 		return goneSnap != ""
 	})
 	pg.sql(t, "postgres", "DROP DATABASE gone; DROP ROLE goner; DROP ROLE reader;")
-	ev = restore(goneSnap, "--to-database", "-m", "e2e: a database and its owner are gone")
+	// Its job removed too, as when a database is retired: the snapshot still knows it is gone's dump, from the config
+	// history, and names the restore's database.
+	e.cli("job", "remove", name, "gone", "-m", "e2e: gone was dropped")
+	type pgListed struct {
+		ShortID    string `json:"short_id"`
+		PostgreSQL *struct {
+			Database string `json:"database"`
+		} `json:"postgresql"`
+		RestoreDatabase string `json:"restore_database"`
+	}
+	var goneListed []pgListed
+	must(t, json.Unmarshal(e.cli("snapshot", "list", name), &goneListed))
+	if i := slices.IndexFunc(goneListed, func(s pgListed) bool { return s.ShortID == goneSnap }); i < 0 || goneListed[i].PostgreSQL == nil ||
+		goneListed[i].PostgreSQL.Database != "gone" || !strings.HasPrefix(goneListed[i].RestoreDatabase, "gone-restore-") {
+		t.Fatalf("a removed job's dump must still be listed as gone's: %+v", goneListed)
+	}
+	ev = restore(goneSnap, "--to-database", "-m", "e2e: a database, its owner and its job are gone")
 	if ev.Status != "success" || ev.Detail["no_owner"] != "true" || ev.Detail["owner"] != "holdfast_restore" {
 		t.Fatalf("restoring a database whose owner is gone: %+v", ev)
 	}

@@ -101,6 +101,18 @@ func (q *Q) UnfinishedPGTest(ctx context.Context, fqdn, connection string, since
 	return id, err
 }
 
+// LastJob returns a job as the newest revision that has it had it, as JSON, or nil if no revision ever had it: a job
+// removed since keeps, for its snapshots, what it was.
+func (q *Q) LastJob(ctx context.Context, fqdn, jobID string) (json.RawMessage, error) {
+	var raw []byte
+	err := q.db.QueryRow(ctx, `SELECT (config->'hosts'->$1::text->'jobs'->$2::text)::text FROM revisions
+		WHERE config->'hosts'->$1::text->'jobs'->$2::text IS NOT NULL ORDER BY number DESC LIMIT 1`, fqdn, jobID).Scan(&raw)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	return raw, err
+}
+
 // PGTestDetail decodes a test event's result, or returns nil.
 func PGTestDetail[T any](e Event) *T {
 	var r T

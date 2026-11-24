@@ -399,7 +399,9 @@ disappeared (§3.6).
 ### 3.5 Removing and decommissioning
 
 - Removing a job or a host never deletes data.
-  - A removed job leaves the config. Its snapshots stay, and the daily run no longer touches them.
+  - A removed job leaves the config. Its snapshots stay, and the daily run no longer touches them. A removed
+    PostgreSQL job's dumps still restore into a database, as they did: the server takes the job, its connection and
+    database, from the newest revision that had it, and the snapshot list carries them (`postgresql`).
   - A removed host is retired: its agent's certificate stops working, and its repository stays and can still be
     browsed. Adding the same name again brings it back, with its repository, after a new enrollment.
   - A PostgreSQL connection is removed only when no job uses it, and its passwords go with it.

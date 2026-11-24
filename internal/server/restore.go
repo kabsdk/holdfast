@@ -148,7 +148,7 @@ func (s *Server) Restore(ctx context.Context, a Actor, fqdn, snapshotID string, 
 	// A PostgreSQL job's dump (decision 055): into a new database beside the original, in place, or as the file.
 	var pgSpec *proto.PGRestore
 	if head, err := s.head(ctx, s.st.Q()); err == nil {
-		if j, ok := head.Config.Hosts[fqdn].Jobs[sn.JobID]; ok && j.IsPostgreSQL() && j.PostgreSQL != nil {
+		if j, ok := s.pgJobOf(ctx, head, fqdn, sn.JobID); ok {
 			if pgSpec, err = s.pgRestoreSpec(ctx, a, fqdn, j, sn, &in, ag, agErr); err != nil {
 				return RestoreResult{}, err
 			}
