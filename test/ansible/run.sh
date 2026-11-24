@@ -225,15 +225,18 @@ play again-1 "$work/inv-1.yml"
 unchanged again-1
 ok "run again, nothing changes"
 
+# hook_has PATTERN: whether the webhook's log has a line matching PATTERN. The log is read whole first: grep -q stops at
+# its first match, and docker logs, still writing, would die of SIGPIPE, which pipefail counts as a failure.
+hook_has() { local log; log=$(docker logs hf-ansible-hook 2>&1); grep -q -- "$1" <<<"$log"; }
 out=$(docker exec $srv holdfast notify test 2>&1) || fail "notify test: $out"
-for _ in $(seq 10); do docker logs hf-ansible-hook 2>&1 | grep -q '^POST /alert-1 .*"text"' && break; sleep 1; done
-docker logs hf-ansible-hook 2>&1 | grep -q '^POST /alert-1 .*"text"' || fail "the test alert did not reach the webhook: $out"
+for _ in $(seq 10); do hook_has '^POST /alert-1 .*"text"' && break; sleep 1; done
+hook_has '^POST /alert-1 .*"text"' || fail "the test alert did not reach the webhook: $out"
 inventory alert-1b >"$work/inv-1.yml"
 play change-1 "$work/inv-1.yml"
 grep -q 'RUNNING HANDLER \[kabsdk.holdfast.server : Restart holdfast-server\]' "$work/change-1.log" || fail "a changed setting did not restart the server"
 docker exec $srv holdfast notify test >/dev/null 2>&1 || fail "notify test after the change"
-for _ in $(seq 10); do docker logs hf-ansible-hook 2>&1 | grep -q '^POST /alert-1b ' && break; sleep 1; done
-docker logs hf-ansible-hook 2>&1 | grep -q '^POST /alert-1b ' || fail "the changed webhook does not get the alerts"
+for _ in $(seq 10); do hook_has '^POST /alert-1b ' && break; sleep 1; done
+hook_has '^POST /alert-1b ' || fail "the changed webhook does not get the alerts"
 ok "a changed setting reaches server.yaml, and the server restarts on it"
 
 # The server lost and replaced on a new machine, from the recovery file and the same inventory.

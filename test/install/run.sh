@@ -57,6 +57,9 @@ machine() { # machine NAME IMAGE: a container with systemd as PID 1, on the test
 	done
 	fail "$1: systemd did not come up"
 }
+# hook_has PATTERN: whether the webhook's log has a line matching PATTERN. The log is read whole first: grep -q stops at
+# its first match, and docker logs, still writing, would die of SIGPIPE, which pipefail counts as a failure.
+hook_has() { local log; log=$(docker logs hf-install-hook 2>&1); grep -q -- "$1" <<<"$log"; }
 mcx() { docker run --rm --network $net --entrypoint /usr/bin/mc -e MC_HOST_hf="http://hfroot:hfroot-install-secret@hf-install-minio:9000" -v "$work:/work:ro" "$MC_IMAGE" "$@"; }
 # backups SERVER AGENT: how many successful backups the agent has; 0 before the first (grep finds none, which pipefail
 # would make an error).
@@ -228,10 +231,10 @@ EOF
 
 	if $least; then
 		out=$(docker exec $srv holdfast notify test 2>&1) || fail "notify test: $out"
-		for _ in $(seq 10); do docker logs hf-install-hook 2>&1 | grep -q "^POST /alert-$n .*\"text\"" && break; sleep 1; done
-		docker logs hf-install-hook 2>&1 | grep -q "^POST /alert-$n .*\"text\"" || fail "the test alert did not reach the webhook: $out"
-		for _ in $(seq 90); do docker logs hf-install-hook 2>&1 | grep -q "^GET /beat-$n " && break; sleep 2; done
-		docker logs hf-install-hook 2>&1 | grep -q "^GET /beat-$n " || fail "no heartbeat"
+		for _ in $(seq 10); do hook_has "^POST /alert-$n .*\"text\"" && break; sleep 1; done
+		hook_has "^POST /alert-$n .*\"text\"" || fail "the test alert did not reach the webhook: $out"
+		for _ in $(seq 90); do hook_has "^GET /beat-$n " && break; sleep 2; done
+		hook_has "^GET /beat-$n " || fail "no heartbeat"
 		ok "$srv_image: holdfast notify test reaches the webhook, and the heartbeat is called"
 	fi
 
