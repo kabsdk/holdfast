@@ -30,6 +30,7 @@
     that:
       - packages_release is match('^[0-9A-Za-z.~+]+-[0-9]+$')
       - holdfast_version == 'latest' or packages_release.rsplit('-', 1)[0] == holdfast_version
+        or (holdfast_version is match('^[0-9]+\.[0-9]+-dev$') and packages_release is match('^' ~ (holdfast_version[:-4] | regex_escape) ~ '\.[0-9]+~dev'))
     fail_msg: "{{ packages_base }}/VERSION holds '{{ packages_release }}', not Holdfast {{ holdfast_version }}"
     quiet: true
 

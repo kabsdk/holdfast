@@ -1,6 +1,6 @@
 # Holdfast specification
 
-Status: describes Holdfast 0.1.0 and the main branch after it.
+Status: describes Holdfast 0.1-dev, the development release before 0.1.0 (decision 054), and the main branch.
 
 This document describes how Holdfast behaves. When behaviour changes, this file changes in the same pull request.
 The reasons behind the decisions are in [decisions/](decisions/), and the rules every change keeps are in
@@ -836,8 +836,10 @@ Search finds:
    schedule and retention.
 4. Holdfast shows a single-use enrollment code, valid for 15 minutes, and the one line to run on the host as root
    (decision 044), `install_script`: `curl -sfL <release>/install.sh | HOLDFAST_SERVER=<url> HOLDFAST_FQDN=<fqdn>
-   HOLDFAST_CODE=<code> HOLDFAST_CA_SHA256=<pin> HOLDFAST_VERSION=<the server's version> sh -`, which installs the
-   agent's packages, checked against the release's `SHA256SUMS`, and enrolls. With `download_url` in `server.yaml`
+   HOLDFAST_CODE=<code> HOLDFAST_CA_SHA256=<pin> HOLDFAST_VERSION=<the server's release> sh -`, which installs the
+   agent's packages, checked against the release's `SHA256SUMS`, and enrolls. The server's release is its version, or,
+   for a build between releases such as `0.1.0~dev90`, the development release of the next one, `0.1-dev`, whose
+   newest build the line installs (decision 054). With `download_url` in `server.yaml`
    the line fetches from that mirror instead. For a host whose packages are installed already, `install_command` is
    the enrollment alone: `holdfast-agent enroll --server <url> --fqdn <fqdn> --code <code> --ca-sha256 <pin>`.
 5. Enrolling makes the agent an ECDSA key and a self-signed certificate on the host, in a root-only file; the

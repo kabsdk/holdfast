@@ -12,7 +12,7 @@ argument_specs:
       holdfast_version:
         type: str
         default: latest
-        description: The release to install, such as 0.1.0. Pin it; a newer one upgrades. Upgrade the server first.
+        description: The release to install, such as 0.1-dev. Pin it; a newer one upgrades. Upgrade the server first.
       holdfast_download_url:
         type: str
         default: ""

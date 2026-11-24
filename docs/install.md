@@ -88,7 +88,7 @@ lacks. Unlike the installer, the roles read no host name from the machine: give 
 FQDN as `holdfast_fqdn`. They need no gathered facts.
 
 ```
-ansible-galaxy collection install https://github.com/kabsdk/holdfast/releases/download/v0.1.0/kabsdk-holdfast-0.1.0.tar.gz
+ansible-galaxy collection install https://github.com/kabsdk/holdfast/releases/download/v0.1-dev/kabsdk-holdfast-0.1-dev.tar.gz
 ansible-playbook -i inventory.yml kabsdk.holdfast.site
 ```
 

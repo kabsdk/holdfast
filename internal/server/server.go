@@ -378,12 +378,27 @@ func (s *Server) installScript(fqdn, code string) string {
 	case base != "":
 		vars = append(vars, "HOLDFAST_DOWNLOAD_URL="+shellWord(base))
 	case Version != "" && Version != "dev":
-		base = Releases + "/download/v" + Version
-		vars = append(vars, "HOLDFAST_VERSION="+shellWord(Version))
+		rel := releaseOf(Version)
+		base = Releases + "/download/v" + rel
+		vars = append(vars, "HOLDFAST_VERSION="+shellWord(rel))
 	default:
 		base = Releases + "/latest/download"
 	}
 	return "curl -sfL " + shellWord(base+"/install.sh") + " | " + strings.Join(vars, " ") + " sh -"
+}
+
+// releaseOf is the release a build's packages are published in: its own version, or, for a build between releases
+// such as 0.1.0~dev90, the development release of the next one, 0.1-dev, whose tag moves on as the work does.
+func releaseOf(v string) string {
+	i := strings.Index(v, "~dev")
+	if i < 0 {
+		return v
+	}
+	parts := strings.SplitN(v[:i], ".", 3)
+	if len(parts) < 2 {
+		return v
+	}
+	return parts[0] + "." + parts[1] + "-dev"
 }
 
 // AddHostResult is the outcome of AddHost.

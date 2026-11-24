@@ -29,7 +29,8 @@ before it changes anything, and stops with the list of what is missing or wrong.
 already it only upgrades the packages, and ignores the settings.
 
 Every role:
-  HOLDFAST_VERSION        the release to install, such as 1.0.0 (default: the latest)
+  HOLDFAST_VERSION        the release to install, such as 1.0.0, or 0.1-dev for the newest build of a
+                          development release (default: the latest)
   HOLDFAST_DOWNLOAD_URL   a mirror holding install.sh, VERSION, SHA256SUMS and the packages of one release:
                           https://, http://, or file:/// for a directory here (default: the release on GitHub)
 
@@ -176,13 +177,18 @@ packages() {
 	fetch "$base/VERSION" "$tmp/VERSION"
 	pkgver=$(tr -d ' \r\n' <"$tmp/VERSION")
 	case "$pkgver" in '' | *[!0-9A-Za-z.~+-]*) die "$base/VERSION does not hold a version" ;; esac
-	if [ -n "${HOLDFAST_VERSION:-}" ] && [ "${pkgver%-*}" != "$HOLDFAST_VERSION" ]; then
-		die "$base holds Holdfast $pkgver, not $HOLDFAST_VERSION"
-	fi
+	# A development release, such as 0.1-dev, holds a build between releases, such as 0.1.0~dev90.
+	case "${HOLDFAST_VERSION:-}" in
+	'') ;;
+	*-dev) case "${pkgver%-*}" in "${HOLDFAST_VERSION%-dev}".*~dev*) ;; *) die "$base holds Holdfast $pkgver, not a build of $HOLDFAST_VERSION" ;; esac ;;
+	*) [ "${pkgver%-*}" = "$HOLDFAST_VERSION" ] || die "$base holds Holdfast $pkgver, not $HOLDFAST_VERSION" ;;
+	esac
 	fetch "$base/SHA256SUMS" "$tmp/SHA256SUMS"
 	files=
+	# A file's name spells the version's "~" as ".", as GitHub renames a release's files.
+	fv=$(printf '%s' "$pkgver" | tr '~' '.')
 	for p in "$@"; do
-		if [ "$fmt" = deb ]; then f=holdfast-${p}_${pkgver}_amd64.deb; else f=holdfast-$p-$pkgver.x86_64.rpm; fi
+		if [ "$fmt" = deb ]; then f=holdfast-${p}_${fv}_amd64.deb; else f=holdfast-$p-$fv.x86_64.rpm; fi
 		want=$(awk -v f="$f" '$2 == f { print $1 }' "$tmp/SHA256SUMS")
 		[ -n "$want" ] || die "$f is not in $base/SHA256SUMS"
 		fetch "$base/$f" "$tmp/$f"

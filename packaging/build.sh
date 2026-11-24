@@ -48,8 +48,12 @@ for pkg in holdfast-restic holdfast-agent holdfast-server holdfast-cli; do
 done
 
 # A release is what dist/ holds: the packages, install.sh (decision 044), SHA256SUMS of this build's packages and
-# install.sh, and VERSION, which install.sh reads to name the packages.
+# install.sh, and VERSION, which install.sh reads to name the packages. A file's name spells the version's "~" as ".",
+# as GitHub renames a release's files: a build between releases, such as 0.1.0~dev90, is in holdfast-agent_0.1.0.dev90-1_amd64.deb.
+# The package inside keeps its "~", so it sorts before 0.1.0.
 install -m 0755 scripts/install.sh dist/install.sh
-( cd dist && sha256sum ./*_"${HOLDFAST_VERSION}"-1_amd64.deb ./*-"${HOLDFAST_VERSION}"-1.x86_64.rpm ./install.sh | sed 's# \./# #' >SHA256SUMS )
+for f in dist/*~*; do [ -e "$f" ] && mv "$f" "${f//\~/.}"; done
+fv=${HOLDFAST_VERSION//\~/.}
+( cd dist && sha256sum ./*_"${fv}"-1_amd64.deb ./*-"${fv}"-1.x86_64.rpm ./install.sh | sed 's# \./# #' >SHA256SUMS )
 echo "$HOLDFAST_VERSION-1" >dist/VERSION
 cat dist/SHA256SUMS

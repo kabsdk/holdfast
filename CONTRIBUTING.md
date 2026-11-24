@@ -55,6 +55,14 @@ By contributing, you agree that your contribution is licensed under the Apache L
 
 ## Making a release
 
+Until 0.1.0, Holdfast is released as **0.1-dev**, a development release (decision 054). Its notes are the
+`## 0.1-dev` section of `CHANGELOG.md`, where each change adds its line. `scripts/release.sh 0.1-dev`, on a clean
+`main`, builds the packages and the collection at this commit's build, such as `0.1.0~dev90` (`scripts/version.sh`),
+deletes the release v0.1-dev and its tag, tags the commit v0.1-dev again, and publishes the new release. Nothing else
+changes.
+
+A release with a version of its own:
+
 1. Move the *Unreleased* notes in `CHANGELOG.md` under the new version, and set `version:` in `ansible/galaxy.yml`
    to it.
 2. Run `scripts/release.sh <version>` on a clean `main`. It builds the packages and the collection at that version,

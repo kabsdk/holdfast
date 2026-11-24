@@ -6,9 +6,11 @@ packages_base: >-
 packages_release: "{{ packages_version_file.content | default('') | trim }}"
 packages_deb: "{{ ansible_facts.pkg_mgr == 'apt' }}"
 packages_wanted: "{{ packages_names | map('regex_replace', '^', 'holdfast-') | list }}"
+# A file's name spells the version's "~" as ".", as GitHub renames a release's files (packaging/build.sh).
 packages_files: >-
   {{ packages_wanted | map('regex_replace', '$',
-       ('_' ~ packages_release ~ '_amd64.deb') if packages_deb else ('-' ~ packages_release ~ '.x86_64.rpm')) | list }}
+       ('_' ~ (packages_release | replace('~', '.')) ~ '_amd64.deb') if packages_deb
+       else ('-' ~ (packages_release | replace('~', '.')) ~ '.x86_64.rpm')) | list }}
 packages_install: >-
   {{ ['apt-get', 'install', '-y', '-q', '--no-install-recommends'] if packages_deb
      else ['dnf', 'install', '-y', '-q', '--disablerepo=*'] }}

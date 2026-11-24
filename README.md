@@ -13,6 +13,9 @@ tells you by mail or chat when something is wrong.
 
 **[Read the documentation →](https://kabsdk.github.io/holdfast/)**
 
+The current release, **0.1-dev**, is a development release and subject to change: until 0.1.0, newer builds replace
+it under the same name.
+
 ![The Overview of Holdfast's web UI: tiles counting stale, failed and incomplete jobs, and four hosts with their backup jobs, last and next backups; a failed job's problem shows under its host](website/img/overview.png)
 
 ## What you get
@@ -66,7 +69,7 @@ holdfast job set web01.example.com system --path /etc --path /home
 Or install everything with Ansible, with the same settings:
 
 ```sh
-ansible-galaxy collection install https://github.com/kabsdk/holdfast/releases/download/v0.1.0/kabsdk-holdfast-0.1.0.tar.gz
+ansible-galaxy collection install https://github.com/kabsdk/holdfast/releases/download/v0.1-dev/kabsdk-holdfast-0.1-dev.tar.gz
 ansible-playbook -i inventory.yml kabsdk.holdfast.site
 ```
 

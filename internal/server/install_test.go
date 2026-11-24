@@ -19,6 +19,15 @@ func TestInstallScript(t *testing.T) {
 		t.Fatalf("release:\n got %s\nwant %s", got, want)
 	}
 
+	// A build between releases is published in the development release of the next one, whose tag moves on.
+	for v, rel := range map[string]string{"0.1.0~dev90": "0.1-dev", "0.1.0~dev90.20261124093000": "0.1-dev", "1.2.0~dev3": "1.2-dev"} {
+		Version = v
+		if got := s.installScript("web01.example.com", "C"); !strings.HasPrefix(got, "curl -sfL "+Releases+"/download/v"+rel+"/install.sh | ") ||
+			!strings.Contains(got, " HOLDFAST_VERSION="+rel+" sh -") {
+			t.Fatalf("build %s: %s", v, got)
+		}
+	}
+
 	// A build that is not a release: the latest release.
 	Version = "dev"
 	if got := s.installScript("web01.example.com", "C"); !strings.HasPrefix(got, "curl -sfL "+Releases+"/latest/download/install.sh | ") ||

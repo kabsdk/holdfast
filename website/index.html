@@ -496,7 +496,7 @@ rm /root/holdfast-recovery.txt /root/holdfast.env</code></pre></div></li>
 holdfast job set web01.example.com system --path /etc --path /home</code></pre></div>
       <p>The job backs up daily at 02:00 and keeps one backup per day for 14 days, per week for 8 weeks, per month for a year and per year for 3 years; <a href="#jobs">Jobs and schedules</a> changes that. <code>host add</code> prints one line, with a code that works once, for 15 minutes; the UI shows the same line.</p></li>
     <li><strong>Run that line on the host</strong>, as root. It installs the agent, enrolls it with the server and starts it:
-      <div class="cmd"><pre><code>curl -sfL https://github.com/kabsdk/holdfast/releases/download/v0.1.0/install.sh | HOLDFAST_SERVER=https://holdfast.example.com:8443 HOLDFAST_FQDN=web01.example.com HOLDFAST_CODE=3DK5-TM2E-28V6 HOLDFAST_CA_SHA256=2315…d08c HOLDFAST_VERSION=0.1.0 sh -</code></pre></div></li>
+      <div class="cmd"><pre><code>curl -sfL https://github.com/kabsdk/holdfast/releases/download/v0.1-dev/install.sh | HOLDFAST_SERVER=https://holdfast.example.com:8443 HOLDFAST_FQDN=web01.example.com HOLDFAST_CODE=3DK5-TM2E-28V6 HOLDFAST_CA_SHA256=2315…d08c HOLDFAST_VERSION=0.1-dev sh -</code></pre></div></li>
     <li><strong>Watch the first backup.</strong> It starts as soon as the agent has enrolled; the UI's Add host page follows it from <em>waiting</em> to <em>first backup done</em>. After that the job follows its schedule. In the CLI:
       <div class="cmd"><pre><code>holdfast host events web01.example.com
 holdfast snapshot list web01.example.com</code></pre></div></li>
@@ -651,7 +651,8 @@ holdfast snapshot list web01.example.com</code></pre></div></li>
     <li><strong>Run again, it upgrades.</strong> On a machine that is set up already, it only upgrades the packages, and says that the settings are ignored.</li>
     <li><strong>You can read it first.</strong> <code>curl -sfLO …/install.sh</code>, read it, then <code>sh install.sh server</code>. <code>sh install.sh help</code> lists every setting.</li>
   </ul>
-  <p>Here <code>…/install.sh</code> is <code>https://github.com/kabsdk/holdfast/releases/latest/download/install.sh</code>, the newest release. To pin a release, use <code>https://github.com/kabsdk/holdfast/releases/download/v0.1.0/install.sh</code> and <code>HOLDFAST_VERSION=0.1.0</code>.</p>
+  <p>Here <code>…/install.sh</code> is <code>https://github.com/kabsdk/holdfast/releases/latest/download/install.sh</code>, the newest release. To pin a release, use <code>https://github.com/kabsdk/holdfast/releases/download/v0.1-dev/install.sh</code> and <code>HOLDFAST_VERSION=0.1-dev</code>.</p>
+  <p><strong>0.1-dev is a development release, subject to change.</strong> Until 0.1.0, newer builds replace it under the same name, and each installs as an upgrade of the one before: its packages are builds such as <code>0.1.0~dev90</code>, which sort before 0.1.0.</p>
 
   <div class="sub" id="before">
     <h3>Before you start</h3>
@@ -769,7 +770,7 @@ curl -sfL https://github.com/kabsdk/holdfast/releases/latest/download/install.sh
       <li>Opens the agent port, 8443, and the UI's, 443, in firewalld or ufw if one of them runs. Starts <code>holdfast-server</code>, which runs as root, and waits until it answers. SELinux may stay enforcing: the tested servers had it on.</li>
     </ol>
     <p>It ends like this:</p>
-    <div class="cmd"><pre><code>[holdfast] The Holdfast server 0.1.0-1 runs.
+    <div class="cmd"><pre><code>[holdfast] The Holdfast server 0.1.0~dev90-1 runs.
   The web UI          https://holdfast.example.com: log in with the link that holdfast ui-login prints, as root here
                       Browsers warn about its certificate until you trust /etc/holdfast/tls/ca.crt, or install with HOLDFAST_UI_TLS_CERT
   Agents connect to   https://holdfast.example.com:8443, and pin 2315269dbd8dcb02b9b627167cd4db94c5a53a7448e10654d39eb45a0d8cd08c
@@ -934,9 +935,9 @@ scrape_configs:
     <h3>Mirrors and closed networks</h3>
     <p>Hosts that cannot reach GitHub can install from a mirror: any directory that holds one release's files as published (<code>install.sh</code>, <code>VERSION</code>, <code>SHA256SUMS</code> and the packages), served over HTTPS or HTTP, or mounted on every host.</p>
     <div class="cmd"><pre><code><span class="c"># the server, from the mirror</span>
-curl -sfL https://mirror.example.com/holdfast/0.1.0/install.sh | HOLDFAST_DOWNLOAD_URL=https://mirror.example.com/holdfast/0.1.0 sh -s - server
+curl -sfL https://mirror.example.com/holdfast/0.1-dev/install.sh | HOLDFAST_DOWNLOAD_URL=https://mirror.example.com/holdfast/0.1-dev sh -s - server
 <span class="c"># or from a directory on the machine</span>
-HOLDFAST_DOWNLOAD_URL=file:///srv/holdfast/0.1.0 sh /srv/holdfast/0.1.0/install.sh server</code></pre></div>
+HOLDFAST_DOWNLOAD_URL=file:///srv/holdfast/0.1-dev sh /srv/holdfast/0.1-dev/install.sh server</code></pre></div>
     <p>A server installed from a mirror writes <code>download_url</code> into its <code>server.yaml</code>, so the line <code>host add</code> prints fetches from the same mirror. Set or change <code>download_url</code> by hand for a server installed otherwise. The packages are still checked against the mirror's <code>SHA256SUMS</code>.</p>
   </div>
 
@@ -944,7 +945,7 @@ HOLDFAST_DOWNLOAD_URL=file:///srv/holdfast/0.1.0 sh /srv/holdfast/0.1.0/install.
     <h3>With Ansible</h3>
     <p>The collection <code>kabsdk.holdfast</code>, released beside the packages, does what the script does, as three roles: <code>server</code>, <code>agent</code> and <code>cli</code>. It takes the same settings in lower case: <code>HOLDFAST_S3_BUCKET</code> is <code>holdfast_s3_bucket</code>. The certificates and the recovery file are paths on the Ansible controller, and mail recipients and admins are lists. A second run with nothing to do changes nothing.</p>
     <p><strong>The server and each host need <code>holdfast_fqdn</code></strong>, their FQDN: the roles read no host name from the machine. On the server, the URLs, the alerts' sender and the names in Holdfast's certificates default to it. On a host, <code>holdfast_hostname_autodetect: true</code> takes the host's own name (<code>hostname -f</code>) instead. The playbook gathers no facts, and the roles gather the little they need themselves, so it works with <code>gathering = explicit</code> in <code>ansible.cfg</code>.</p>
-    <div class="cmd"><pre><code>ansible-galaxy collection install https://github.com/kabsdk/holdfast/releases/download/v0.1.0/kabsdk-holdfast-0.1.0.tar.gz
+    <div class="cmd"><pre><code>ansible-galaxy collection install https://github.com/kabsdk/holdfast/releases/download/v0.1-dev/kabsdk-holdfast-0.1-dev.tar.gz
 ansible-playbook -i inventory.yml kabsdk.holdfast.site     <span class="c"># groups holdfast_server, holdfast_agents, holdfast_cli</span></code></pre></div>
     <div class="cmd"><pre><code><span class="c"># inventory.yml: the server's settings, and each host's jobs (secrets in Ansible Vault)</span>
 all:
@@ -1031,7 +1032,7 @@ openssl x509 -in ca.crt -outform DER | sha256sum                 <span class="c"
     <div class="tablebox"><table class="ref">
       <thead><tr><th>Setting</th><th>Role</th><th>Meaning</th></tr></thead>
       <tbody>
-        <tr><td>HOLDFAST_VERSION</td><td>all</td><td>The release to install, such as <code>0.1.0</code>. Default: the latest.</td></tr>
+        <tr><td>HOLDFAST_VERSION</td><td>all</td><td>The release to install, such as <code>0.1-dev</code>. Default: the latest.</td></tr>
         <tr><td>HOLDFAST_DOWNLOAD_URL</td><td>all</td><td>A mirror holding one release's files: <code>https://</code>, <code>http://</code> or <code>file:///</code>. Default: the release on GitHub.</td></tr>
         <tr><td>HOLDFAST_SERVER</td><td>agent</td><td><span class="pill x">to enroll</span> The server's URL for agents, such as <code>https://holdfast.example.com:8443</code>.</td></tr>
         <tr><td>HOLDFAST_CODE</td><td>agent</td><td><span class="pill x">to enroll</span> The host's enrollment code. On an enrolled host, a code enrolls it again; without one the packages are only upgraded, and no other setting is needed.</td></tr>
@@ -1075,7 +1076,7 @@ curl -sfL https://github.com/kabsdk/holdfast/releases/download/v0.2.0/install.sh
 <span class="c"># on each host, the same version</span>
 curl -sfL https://github.com/kabsdk/holdfast/releases/download/v0.2.0/install.sh | HOLDFAST_VERSION=0.2.0 sh -</code></pre></div>
     <ul class="plain">
-      <li>Pin the version, as above, so a release published between the server's upgrade and a host's cannot make an agent newer than its server. <code>dpkg-query -W holdfast-server</code> or <code>rpm -q holdfast-server</code> on the server shows its version. The line <code>host add</code> prints is pinned to the server's version already.</li>
+      <li>Pin the version, as above, so a release published between the server's upgrade and a host's cannot make an agent newer than its server. A development release, such as 0.1-dev, is not one build: it installs its newest, so once a newer build is out, upgrade the server to it before a host. <code>dpkg-query -W holdfast-server</code> or <code>rpm -q holdfast-server</code> on the server shows its version. The line <code>host add</code> prints is pinned to the server's version already.</li>
       <li>The server migrates its database when it starts. Its upgrade restarts it; agents wait meanwhile and carry on. There is no downgrade: to go back, build a new server at the old version from the export you wrote before the upgrade, as for an older export in <a href="#lost-server">A lost server</a>.</li>
       <li>The agent and the server agree on a protocol version at every poll. A server accepts every agent from its minimum on. An agent that is too old is refused with the range it needs: it keeps backing up on its saved config, the server still takes its reports, and the host shows <code>agent_too_old</code> until it is upgraded. An agent newer than its server logs "upgrade the server first".</li>
       <li>An agent restarted in the middle of a backup reports that run as interrupted; the job's next run backs up as usual. Upgrade agents outside their backup windows, or check <code>holdfast host events</code> afterwards.</li>

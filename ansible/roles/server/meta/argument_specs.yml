@@ -13,7 +13,7 @@ argument_specs:
       holdfast_version:
         type: str
         default: latest
-        description: The release to install, such as 0.1.0. Pin it; a newer one upgrades.
+        description: The release to install, such as 0.1-dev. Pin it; a newer one upgrades.
       holdfast_download_url:
         type: str
         default: ""

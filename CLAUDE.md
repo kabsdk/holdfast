@@ -79,6 +79,8 @@ These also follow from the spec:
 - Holdfast is under Apache-2.0 (decision 043). Anything linked into a program or vendored into the UI must be under a
   licence that allows that: MIT, BSD, ISC, Apache-2.0, MPL-2.0. The GPL family, the SSPL and the BUSL are not allowed;
   `scripts/third-party-notices.sh` stops the package build if one appears.
-- Holdfast was built in ten milestones, M1 to M10, before its first release, 0.1.0. Decision records and comments
-  still name them, and two development releases that were withdrawn, 0.5.0 and 0.6.0. The plans themselves are in the
-  git history: commit 637f069, which was 0.5.0, still has them.
+- Holdfast was built in ten milestones, M1 to M10, before its first release. Decision records and comments still
+  name them, and two development releases that were withdrawn, 0.5.0 and 0.6.0. The plans themselves are in the git
+  history: commit 637f069, which was 0.5.0, still has them.
+- Until 0.1.0, Holdfast is released as 0.1-dev, which each new build replaces under the same tag (decision 054). Its
+  changes go in the `## 0.1-dev` section of `CHANGELOG.md`.

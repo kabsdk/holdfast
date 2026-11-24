@@ -15,7 +15,7 @@ argument_specs:
       holdfast_version:
         type: str
         default: latest
-        description: The release, such as 0.1.0, or latest.
+        description: The release, such as 0.1-dev, or latest.
       holdfast_download_url:
         type: str
         default: ""
