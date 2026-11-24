@@ -117,7 +117,7 @@ for vm in "${vms[@]}"; do
 	fqdn=$vm.$HF_DOMAIN
 	online=
 	for ((i = 0; i < 60; i++)); do
-		online=$(hf host show "$fqdn" --json 2>/dev/null | js 'print(j.get("online") and j.get("state") == "enrolled")' 2>/dev/null || true)
+		online=$(hf agent show "$fqdn" --json 2>/dev/null | js 'print(j.get("online") and j.get("state") == "enrolled")' 2>/dev/null || true)
 		[[ $online == True ]] && break
 		sleep 5
 	done
@@ -139,7 +139,7 @@ say "$backup_vm: holdfast job run $fqdn fidelity"
 cmd=$(hf job run "$fqdn" fidelity --json | js 'print(j["command"])')
 status=
 for ((i = 0; i < 60; i++)); do
-	status=$(hf host events "$fqdn" --json | js 'r = [e for e in j or [] if e.get("command_id") == sys.argv[1]]
+	status=$(hf agent events "$fqdn" --json | js 'r = [e for e in j or [] if e.get("command_id") == sys.argv[1]]
 print(r[0]["status"] if r else "")' "$cmd")
 	[[ -n $status ]] && break
 	sleep 5

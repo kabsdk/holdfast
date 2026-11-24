@@ -58,13 +58,18 @@ age.key`, then `age -d -i age.key 2026-11-22.age | tar -xz` gives `manifest.json
 3. **Check**:
    - `holdfast status`: `recovery_file` is expected until step 5; `holdfast export list` says the server was restored,
      from which export;
-   - `holdfast host list`: every agent enrolled before the export comes back online within a minute or two, by
-     itself: the export holds each one's pinned certificate, and the CA they pin. Its snapshots are listed again;
+   - `holdfast agent list`: every agent enrolled before the export comes back online within a minute or two, by
+     itself: the export holds each one's pinned certificate, and the CA they pin. Its snapshots are listed again, and
+     its PostgreSQL connections are back, their passwords still sealed with the credentials key;
    - a host that shows **"ahead"** ran a change made after the export. Its agent keeps that config, and the server
      sends it nothing, until you make the change again (`holdfast job set …`). A host with no such change needs nothing.
 4. **Hosts added after the export** came back from their escrow files, with their repositories and passwords and no
-   job; `restore-export` names each one. For each: `holdfast host enroll-code <fqdn>`, run the line it prints on the
-   host as root (the agent makes a new certificate), and set its jobs again with `holdfast job set`.
+   job; `restore-export` names each one. For each: `holdfast agent enroll-code <agent>`, run the line it prints on the
+   host as root (the agent makes a new certificate), and set its jobs again with `holdfast job set`. An agent that
+   backed up PostgreSQL needs its connections again first (`holdfast agent connection set`), with their passwords:
+   the escrow file holds only the repository's. An agent in Kubernetes takes the new code from its Secret
+   (`/run/holdfast/enroll/code`) once its volume no longer holds an enrollment; give it a new volume, or remove
+   `agent.pem` from it.
 5. **Delete the recovery file from the server** once hosts are back; the `recovery_file` problem then ends.
 6. **The next export** is written by the new server at 00:30, or at once with `holdfast export now`.
 

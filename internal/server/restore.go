@@ -44,6 +44,9 @@ type RestoreInput struct {
 	// FromOffsite restores the off-site copy of the snapshot (decisions 039 and 041). The snapshot is the copy's ID or
 	// the original's here. The host reads the copy through the gateway's off-site endpoint, read-only, for this restore.
 	FromOffsite bool `json:"from_offsite,omitempty"`
+	// Confirm, for a PostgreSQL dump restored in place, is the database's name, typed: it replaces that database
+	// (decision 055). A dump's targets are database (a new database beside the original), in_place, or new (the file).
+	Confirm string `json:"confirm,omitempty"`
 }
 
 // RestoreResult is a queued restore.
@@ -118,7 +121,8 @@ func (s *Server) Restore(ctx context.Context, a Actor, fqdn, snapshotID string, 
 			return RestoreResult{}, &ValidationError{config.Problems{{Path: "target", Message: "an off-site copy is restored into a new or another directory, never in place"}}}
 		}
 	}
-	if in.Target != proto.TargetNew {
+	// A dump into a new database beside the original writes nothing that exists: restore.new_dir, as a new folder.
+	if in.Target != proto.TargetNew && in.Target != proto.TargetDatabase {
 		if err := s.allowed(ctx, a, access.RestoreInPlace, target); err != nil {
 			return RestoreResult{}, err
 		}
@@ -136,9 +140,22 @@ func (s *Server) Restore(ctx context.Context, a Actor, fqdn, snapshotID string, 
 		if copied, err = s.offsiteCopy(ctx, fqdn, snapshotID); err != nil {
 			return RestoreResult{}, err
 		}
-		sn = store.Snapshot{ID: copied.ID, JobID: copied.JobID}
+		sn = store.Snapshot{ID: copied.ID, JobID: copied.JobID, Time: copied.Time}
 	} else if sn, err = s.snapshot(ctx, fqdn, snapshotID); err != nil {
 		return RestoreResult{}, err
+	}
+	ag, agErr := s.st.Q().GetAgent(ctx, target)
+	// A PostgreSQL job's dump (decision 055): into a new database beside the original, in place, or as the file.
+	var pgSpec *proto.PGRestore
+	if head, err := s.head(ctx, s.st.Q()); err == nil {
+		if j, ok := head.Config.Hosts[fqdn].Jobs[sn.JobID]; ok && j.IsPostgreSQL() && j.PostgreSQL != nil {
+			if pgSpec, err = s.pgRestoreSpec(ctx, a, fqdn, j, sn, &in, ag, agErr); err != nil {
+				return RestoreResult{}, err
+			}
+		}
+	}
+	if in.Target == proto.TargetDatabase && pgSpec == nil {
+		return RestoreResult{}, &ValidationError{config.Problems{{Path: "target", Message: "only a PostgreSQL job's dump restores into a database"}}}
 	}
 	// A dump is one file: into a new directory only, and loading it is the admin's job (decision 037).
 	dump := copied.Dump || slices.ContainsFunc(sn.Tags, func(t string) bool { return strings.HasPrefix(t, "dump=") })
@@ -146,6 +163,7 @@ func (s *Server) Restore(ctx context.Context, a Actor, fqdn, snapshotID string, 
 		return RestoreResult{}, &ValidationError{config.Problems{{Path: "target", Message: "a dump is restored into a new directory only; load it into the database on the host"}}}
 	}
 	switch in.Target {
+	case proto.TargetDatabase:
 	case proto.TargetNew, proto.TargetInPlace:
 		if in.Directory != "" {
 			return RestoreResult{}, &ValidationError{config.Problems{{Path: "directory", Message: "a directory goes only with the target directory"}}}
@@ -175,7 +193,6 @@ func (s *Server) Restore(ctx context.Context, a Actor, fqdn, snapshotID string, 
 			return RestoreResult{}, &ValidationError{config.Problems{{Path: "overwrite", Message: "a new directory is empty, so there is nothing to overwrite"}}}
 		}
 	}
-	ag, agErr := s.st.Q().GetAgent(ctx, target)
 	if agErr == nil && ag.RestoreBounds != nil {
 		switch b := ag.RestoreBounds; {
 		case in.Target == proto.TargetInPlace && !b.AllowInPlace:
@@ -187,7 +204,7 @@ func (s *Server) Restore(ctx context.Context, a Actor, fqdn, snapshotID string, 
 		}
 	}
 	spec := proto.RestoreSpec{Snapshot: sn.ID, Target: in.Target, Directory: in.Directory, Exclude: in.Exclude, Include: in.Include,
-		DryRun: in.DryRun, JobID: sn.JobID, User: restoreUser(a), Overwrite: in.Overwrite, Dump: dump}
+		DryRun: in.DryRun, JobID: sn.JobID, User: restoreUser(a), Overwrite: in.Overwrite, Dump: dump, PostgreSQL: pgSpec}
 	var sealed []byte
 	if in.ToHost != "" {
 		if agErr != nil || (proto.Facts{Protocol: ag.Protocol}).AgentProtocol() < proto.ProtocolRecovery {
@@ -201,7 +218,7 @@ func (s *Server) Restore(ctx context.Context, a Actor, fqdn, snapshotID string, 
 	now := s.now()
 	res := RestoreResult{Command: newID(), Snapshot: sn.ID, Target: in.Target, ExpiresAt: now.Add(RestoreExpiry)}
 	if in.FromOffsite {
-		if agErr != nil || (proto.Facts{Protocol: ag.Protocol}).AgentProtocol() < proto.Protocol {
+		if agErr != nil || (proto.Facts{Protocol: ag.Protocol}).AgentProtocol() < proto.ProtocolOffsite {
 			return RestoreResult{}, fmt.Errorf("%s's agent does not know restores from off-site: upgrade holdfast-agent there first: %w", target, ErrConflict)
 		}
 		// The off-site instance checks the copy is still there, and audits the grant in its own log.
@@ -222,6 +239,9 @@ func (s *Server) Restore(ctx context.Context, a Actor, fqdn, snapshotID string, 
 	err = s.st.InTx(ctx, func(q *store.Q) error {
 		detail := map[string]any{"command": res.Command, "snapshot": sn.ID, "target": in.Target, "directory": in.Directory, "dry_run": in.DryRun,
 			"left_out": len(in.Exclude), "only": len(in.Include), "overwrite": in.Overwrite, "message": in.Message}
+		if pgSpec != nil {
+			detail["connection"], detail["database"], detail["in_place"], detail["new_database"] = pgSpec.Connection, pgSpec.Database, pgSpec.InPlace, pgSpec.Name
+		}
 		if err := q.EnqueueCommand(ctx, store.Command{ID: res.Command, FQDN: target, Kind: proto.CommandRestore, JobID: spec.JobID, CreatedAt: now,
 			CreatedBy: a.Name, Payload: payload, ExpiresAt: &res.ExpiresAt, Sealed: sealed}); err != nil {
 			return err

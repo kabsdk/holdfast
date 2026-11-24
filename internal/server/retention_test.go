@@ -180,8 +180,12 @@ func TestRetentionProtectionPruneAndDelete(t *testing.T) {
 	if p, err := s.PruneNowPlan(ctx, fqdn); err != nil || p.Confirm != "web01" || len(p.Commands) != 3 {
 		t.Fatalf("Prune now preview: %+v %v", p, err)
 	}
-	if _, err := s.DeleteSnapshot(ctx, root, fqdn, snapC[:8], DeleteSnapshotInput{Now: true}); !errors.As(err, &ve) {
+	if _, err := s.DeleteSnapshot(ctx, root, fqdn, snapC[:8], DeleteSnapshotInput{Now: true, Message: "test"}); !errors.As(err, &ve) {
 		t.Fatalf("Delete now without the name: %v", err)
+	}
+	// A deletion always says why (decision 055).
+	if _, err := s.DeleteSnapshot(ctx, root, fqdn, snapC[:8], DeleteSnapshotInput{Message: "  "}); !errors.As(err, &ve) {
+		t.Fatalf("a deletion without a reason: %v", err)
 	}
 
 	// A deletion waits 7 days and can be cancelled; Delete now forgets at once and leaves the prune for later.
@@ -189,16 +193,23 @@ func TestRetentionProtectionPruneAndDelete(t *testing.T) {
 	if err != nil || del.Status != "pending" || del.PrunableAt == nil {
 		t.Fatalf("delete: %+v %v", del, err)
 	}
-	if _, err := s.DeleteSnapshot(ctx, root, fqdn, snapC[:8], DeleteSnapshotInput{}); !errors.Is(err, ErrConflict) {
+	if _, err := s.DeleteSnapshot(ctx, root, fqdn, snapC[:8], DeleteSnapshotInput{Message: "again"}); !errors.Is(err, ErrConflict) {
 		t.Fatalf("asked twice: %v", err)
 	}
-	if plan, _ := s.Pending(ctx, fqdn); !slices.Equal(pendingIDs(plan), []string{snapC}) || plan.Pending[0].Reason != PendingDeletion {
-		t.Fatalf("the deletion is pending: %+v", plan.Pending)
+	if plan, _ := s.Pending(ctx, fqdn); !slices.Equal(pendingIDs(plan), []string{snapC}) || plan.Pending[0].Reason != PendingDeletion ||
+		plan.Pending[0].Message != "a password in it" {
+		t.Fatalf("the deletion is pending, with its reason: %+v", plan.Pending)
+	}
+	if sn, err := s.st.Q().GetSnapshot(ctx, fqdn, snapC); err != nil || sn.DeletionReason != "a password in it" || sn.DeletionRequestedBy != root.Name {
+		t.Fatalf("the snapshot keeps who asked and why: %+v %v", sn, err)
 	}
 	if err := s.CancelDeletion(ctx, root, fqdn, snapC[:8]); err != nil {
 		t.Fatal(err)
 	}
-	now, err := s.DeleteSnapshot(ctx, root, fqdn, snapC[:8], DeleteSnapshotInput{Now: true, Confirm: "web01"})
+	if sn, _ := s.st.Q().GetSnapshot(ctx, fqdn, snapC); sn.DeletionReason != "" {
+		t.Fatalf("a cancelled deletion leaves no reason: %+v", sn)
+	}
+	now, err := s.DeleteSnapshot(ctx, root, fqdn, snapC[:8], DeleteSnapshotInput{Now: true, Confirm: "web01", Message: "a password in it, now"})
 	if err != nil {
 		t.Fatal(err)
 	}

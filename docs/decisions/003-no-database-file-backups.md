@@ -1,6 +1,8 @@
 # 003: Database files on hosts are not backed up
 
-Status: accepted, 2026-11-21
+Status: accepted, 2026-11-21. **Fulfilled for PostgreSQL by [decision 055](055-postgresql-databases.md)
+(2026-11-24):** a PostgreSQL job dumps the database with pg_dump into restic. Database files are still not backed up as
+files; other databases are still backed up from an export the host writes.
 
 ## Decision
 

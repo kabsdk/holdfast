@@ -165,7 +165,7 @@ type rollbackOut struct {
 func (e *env) rollback(fqdn string, to time.Time) rollbackOut {
 	e.t.Helper()
 	var r rollbackOut
-	out, err := e.cliErr("host", "rollback", fqdn, "--to", to.UTC().Format(time.RFC3339), "--confirm", fqdn, "--wait", "-m", "e2e")
+	out, err := e.cliErr("agent", "rollback", fqdn, "--to", to.UTC().Format(time.RFC3339), "--confirm", fqdn, "--wait", "-m", "e2e")
 	if jerr := json.Unmarshal(out, &r); jerr != nil {
 		e.t.Fatalf("rollback: %v %v\n%s", err, jerr, out)
 	}
@@ -207,7 +207,7 @@ func TestRollback(t *testing.T) {
 		SnapshotsBack     []string `json:"snapshots_back"`
 		SnapshotsSetAside []string `json:"snapshots_set_aside"`
 	}
-	must(t, json.Unmarshal(e.cli("host", "rollback", fqdn, "--to", good.UTC().Format(time.RFC3339)), &p))
+	must(t, json.Unmarshal(e.cli("agent", "rollback", fqdn, "--to", good.UTC().Format(time.RFC3339)), &p))
 	want := append([]string(nil), ids[:2]...)
 	slices.Sort(want)
 	if p.Refused != "" || !slices.Equal(p.SnapshotsBack, want) || len(p.SnapshotsSetAside) != 0 {

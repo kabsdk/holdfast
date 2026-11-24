@@ -23,17 +23,22 @@ type restoreEvent struct {
 }
 
 func restoreCmd() *cobra.Command {
-	var to, overwrite, msg, toHost string
-	var inPlace, dryRun, wait, fromOffsite bool
+	var to, overwrite, msg, toHost, confirm string
+	var inPlace, dryRun, wait, fromOffsite, toDatabase bool
 	var leaveOut, only []string
-	c := &cobra.Command{Use: "restore <fqdn> <snapshot>", Short: "Restore a snapshot on its host, or onto another one (--to-host), through the agent (a new root-only directory by default)",
+	c := &cobra.Command{Use: "restore <agent> <snapshot>", Short: "Restore a snapshot on its agent, or onto another one (--to-host), through the agent (a new root-only directory by default)",
+		Long: "Restore a snapshot on its agent, into a new root-only directory by default.\n\nA PostgreSQL job's dump restores as its file into a new directory (the default), into a new database beside the\n" +
+			"original (--to-database, named <database>-restore-<date>-<time>), or in place (--in-place --confirm <database>: an\n" +
+			"admin's, after a safety dump, in one transaction, where the agent's agent.yaml allows it).",
 		Args: cobra.ExactArgs(2), RunE: func(_ *cobra.Command, a []string) error {
 			in := map[string]any{"target": "new", "exclude": leaveOut, "include": only, "dry_run": dryRun, "overwrite": overwrite, "message": msg}
 			switch {
-			case inPlace && to != "":
-				return errors.New("give --in-place or --to, not both")
+			case (inPlace && to != "") || (toDatabase && (inPlace || to != "")):
+				return errors.New("give one of --in-place, --to and --to-database")
 			case inPlace:
-				in["target"] = "in_place"
+				in["target"], in["confirm"] = "in_place", confirm
+			case toDatabase:
+				in["target"] = "database"
 			case to != "":
 				in["target"], in["directory"] = "directory", to
 			}
@@ -48,7 +53,7 @@ func restoreCmd() *cobra.Command {
 				Command   string    `json:"command"`
 				ExpiresAt time.Time `json:"expires_at"`
 			}
-			raw, err := call("POST", "/api/v1/hosts/"+url.PathEscape(a[0])+"/snapshots/"+url.PathEscape(a[1])+"/restore", in, &res)
+			raw, err := call("POST", "/api/v1/agents/"+url.PathEscape(a[0])+"/snapshots/"+url.PathEscape(a[1])+"/restore", in, &res)
 			if err != nil {
 				return err
 			}
@@ -68,7 +73,7 @@ func restoreCmd() *cobra.Command {
 			}
 			for {
 				var evs []json.RawMessage
-				if _, err := call("GET", "/api/v1/hosts/"+url.PathEscape(runsOn)+"/events?limit=200", nil, &evs); err != nil {
+				if _, err := call("GET", "/api/v1/agents/"+url.PathEscape(runsOn)+"/events?limit=200", nil, &evs); err != nil {
 					return err
 				}
 				for _, rawEv := range evs {
@@ -102,6 +107,8 @@ func restoreCmd() *cobra.Command {
 	c.Flags().StringVarP(&msg, "message", "m", "", "why, for the audit log")
 	c.Flags().StringVar(&toHost, "to-host", "", "admin: restore onto this other host, which must allow it (agent.yaml restore.allow_other_hosts); it reads this host's repository through the gateway, for this restore only")
 	c.Flags().BoolVar(&fromOffsite, "from-offsite", false, "restore the off-site copy of the snapshot (holdfast offsite copies lists them)")
+	c.Flags().BoolVar(&toDatabase, "to-database", false, "PostgreSQL: restore the dump into a new database beside the original, named for you")
+	c.Flags().StringVar(&confirm, "confirm", "", "PostgreSQL, with --in-place: the database's name, which the restore replaces")
 	c.AddCommand(restorePairCmd())
 	return c
 }
@@ -109,13 +116,13 @@ func restoreCmd() *cobra.Command {
 func restorePairCmd() *cobra.Command {
 	var msg string
 	var wait bool
-	c := &cobra.Command{Use: "pair <fqdn> <snapshot> <other-snapshot> <path>", Short: "Restore one file from two snapshots, to compare them on the host with diff -u",
+	c := &cobra.Command{Use: "pair <agent> <snapshot> <other-snapshot> <path>", Short: "Restore one file from two snapshots, to compare them on the host with diff -u",
 		Args: cobra.ExactArgs(4), RunE: func(_ *cobra.Command, a []string) error {
 			var res struct {
 				Path     string    `json:"path"`
 				Commands [2]string `json:"commands"`
 			}
-			raw, err := call("POST", "/api/v1/hosts/"+url.PathEscape(a[0])+"/snapshots/"+url.PathEscape(a[1])+"/restore-pair",
+			raw, err := call("POST", "/api/v1/agents/"+url.PathEscape(a[0])+"/snapshots/"+url.PathEscape(a[1])+"/restore-pair",
 				map[string]any{"path": a[3], "against": a[2], "message": msg}, &res)
 			if err != nil {
 				return err
@@ -136,7 +143,7 @@ func restorePairCmd() *cobra.Command {
 					Diff   string `json:"diff"`
 					Error  string `json:"error"`
 				}
-				raw, err := call("GET", "/api/v1/hosts/"+url.PathEscape(a[0])+"/restore-pair?"+q.Encode(), nil, &st)
+				raw, err := call("GET", "/api/v1/agents/"+url.PathEscape(a[0])+"/restore-pair?"+q.Encode(), nil, &st)
 				if err != nil {
 					return err
 				}
@@ -165,10 +172,17 @@ func printRestore(ev restoreEvent) {
 	if d := ev.Detail["directory"]; d != "" {
 		fmt.Printf(" into %s", d)
 	}
+	if db := ev.Detail["database"]; db != "" {
+		fmt.Printf(" into database %s on %s", db, ev.Detail["connection"])
+	}
 	if ev.Detail["dry_run"] == "true" {
 		fmt.Print(" (dry run)")
 	}
-	fmt.Printf(": %s of %d files, %s", ev.Detail["files_restored"], ev.TotalFiles, human(uint64(ev.TotalBytes)))
+	if t := ev.Detail["tables"]; t != "" {
+		fmt.Printf(": %s tables", t)
+	} else {
+		fmt.Printf(": %s of %d files, %s", ev.Detail["files_restored"], ev.TotalFiles, human(uint64(ev.TotalBytes)))
+	}
 	if p := ev.Detail["pre_restore"]; p != "" {
 		fmt.Printf("; safety backup %.8s", p)
 	}

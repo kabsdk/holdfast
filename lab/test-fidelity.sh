@@ -7,14 +7,14 @@
 #      statements in the bucket policy, keeping the bucket's data, and lab/rgw-offsite-layout.sh, the off-site bucket.
 #      No host has an RGW user: hosts back up through the server's gateway (decision 041)
 #   1. the fixture, made anew: hf-fidelity build /srv/hf-fixture
-#   2. Holdfast, on the server: holdfast host add <fqdn>, then holdfast job set <fqdn> fidelity --path /srv/hf-fixture --daily 03:00 --keep-daily 14d --keep-monthly 12mo;
+#   2. Holdfast, on the server: holdfast agent add <fqdn>, then holdfast job set <fqdn> fidelity --path /srv/hf-fixture --daily 03:00 --keep-daily 14d --keep-monthly 12mo;
 #      on the VM: holdfast-agent enroll against https://<server>:8443 with the lab CA's pin, which makes the agent's own
 #      key and certificate, restore.root /var/restore in agent.yaml, and holdfast-agent.service enabled and started. The
 #      first backup runs at once. A host Holdfast knows whose agent is enrolled to this server with a certificate:
 #      holdfast job run <fqdn> fidelity instead. A host Holdfast knows whose agent is not (an agent from before M8 has
 #      a token, not a certificate), or whose repository is gone (restic exit 10: the bucket was made again): a new code
-#      (holdfast host enroll-code), and the agent enrolled afresh, which makes Holdfast initialise the repository.
-#   3. the backup's event (holdfast host events --json), the job's newest snapshot (holdfast snapshot list --refresh --json),
+#      (holdfast agent enroll-code), and the agent enrolled afresh, which makes Holdfast initialise the repository.
+#   3. the backup's event (holdfast agent events --json), the job's newest snapshot (holdfast snapshot list --refresh --json),
 #      a restore of it through the agent into a new directory (holdfast restore --wait --json), then on the VM
 #      hf-fidelity compare /srv/hf-fixture <directory>/srv/hf-fixture. The restores of earlier runs are removed first.
 #   4. on SELinux VMs, the denials (AVC, SELINUX_ERR) logged since the VM's run began; on a failure, the agent's and the
@@ -129,7 +129,7 @@ run_vm() {
 		{ fail "hf-fidelity build $fixture failed"; return 1; }
 
 	# 2. The host in Holdfast, and its agent.
-	hosts=$(hf host list --json) || { fail "holdfast host list failed"; return 1; }
+	hosts=$(hf agent list --json) || { fail "holdfast agent list failed"; return 1; }
 	hstate=$(js 'h = [h for h in j or [] if h["fqdn"] == sys.argv[1]]
 print(h[0]["state"] if h else "absent")' "$fqdn" <<<"$hosts")
 	enrolled=$(vm_ssh "$vm" "f=/etc/holdfast/agent.yaml; test -s /var/lib/holdfast-agent/agent.pem &&
@@ -138,9 +138,9 @@ print(h[0]["state"] if h else "absent")' "$fqdn" <<<"$hosts")
 	echo "Holdfast's state of $fqdn: $hstate; its agent enrolled to $server_url with the lab's pin: $enrolled"
 	ids0=
 	if [[ $hstate != absent ]]; then
-		out=$(hf host events "$fqdn" --json) || { fail "holdfast host events failed"; return 1; }
+		out=$(hf agent events "$fqdn" --json) || { fail "holdfast agent events failed"; return 1; }
 		ids0=$(js 'print(" ".join(e["id"] for e in j or []))' <<<"$out")
-		out=$(hf host show "$fqdn" --json) || { fail "holdfast host show failed"; return 1; }
+		out=$(hf agent show "$fqdn" --json) || { fail "holdfast agent show failed"; return 1; }
 		if [[ $(js 'print(" ".join(next((x["paths"] for x in j.get("jobs") or [] if x["id"] == sys.argv[1]), ["-"])))' "$job" <<<"$out") != "$fixture" ]]; then
 			say "  $vm: holdfast job set $fqdn $job --path $fixture --daily 03:00 --keep-daily 14d --keep-monthly 12mo"
 			hf job set "$fqdn" "$job" --path "$fixture" --daily 03:00 --keep-daily 14d --keep-monthly 12mo -m "lab/lab test: the fidelity fixture" || { fail "holdfast job set failed"; return 1; }
@@ -163,21 +163,21 @@ print(h[0]["state"] if h else "absent")' "$fqdn" <<<"$hosts")
 		vm_ssh "$vm" 'systemctl disable -q --now holdfast-agent 2>/dev/null; rm -rf /etc/holdfast/agent.yaml /etc/holdfast/credentials /var/lib/holdfast-agent' </dev/null
 		local code
 		if [[ $hstate == absent ]]; then
-			say "  $vm: holdfast host add $fqdn; holdfast job set $fqdn $job --path $fixture --daily 03:00 --keep-daily 14d --keep-monthly 12mo"
-			out=$(vm_ssh "$HF_SERVER_VM" "holdfast host add $fqdn -m 'lab/lab test: the fidelity fixture' --json" \
-				</dev/null) || { fail "holdfast host add failed (the log has its answer)"; return 1; }
+			say "  $vm: holdfast agent add $fqdn; holdfast job set $fqdn $job --path $fixture --daily 03:00 --keep-daily 14d --keep-monthly 12mo"
+			out=$(vm_ssh "$HF_SERVER_VM" "holdfast agent add $fqdn -m 'lab/lab test: the fidelity fixture' --json" \
+				</dev/null) || { fail "holdfast agent add failed (the log has its answer)"; return 1; }
 			code=$(js 'print(j["enrollment"]["code"])' <<<"$out")
 			js 'print("added in revision %s; storage checks: %s%s" % (j["revision"], ", ".join(f["code"] for f in (j.get("storage") or {}).get("findings") or []) or "all passed", "; warning: " + j["warning"] if j.get("warning") else ""))' <<<"$out"
 			vm_ssh "$HF_SERVER_VM" "holdfast job set $fqdn $job --path $fixture --daily 03:00 --keep-daily 14d --keep-monthly 12mo -m 'lab/lab test: the fidelity fixture' --json" \
 				</dev/null >/dev/null || { fail "holdfast job set failed (the log has its answer)"; return 1; }
 		else
-			say "  $vm: Holdfast has $fqdn ($hstate); a new enrollment code: holdfast host enroll-code $fqdn"
-			out=$(hf host enroll-code "$fqdn" --json) || { fail "holdfast host enroll-code failed"; return 1; }
+			say "  $vm: Holdfast has $fqdn ($hstate); a new enrollment code: holdfast agent enroll-code $fqdn"
+			out=$(hf agent enroll-code "$fqdn" --json) || { fail "holdfast agent enroll-code failed"; return 1; }
 			code=$(js 'print(j["code"])' <<<"$out")
 		fi
 		out=
-		say "  $vm: holdfast-agent enroll --server $server_url --fqdn $fqdn --ca-sha256 $pin --restic $restic --code (on stdin)"
-		if ! vm_ssh "$vm" "read -r code && holdfast-agent enroll --server $server_url --fqdn $fqdn --ca-sha256 $pin --restic $restic --code \"\$code\"" <<<"$code"; then
+		say "  $vm: holdfast-agent enroll --server $server_url --name $fqdn --ca-sha256 $pin --restic $restic --code (on stdin)"
+		if ! vm_ssh "$vm" "read -r code && holdfast-agent enroll --server $server_url --name $fqdn --ca-sha256 $pin --restic $restic --code \"\$code\"" <<<"$code"; then
 			code=
 			fail "holdfast-agent enroll failed (the log has its error)"
 			return 1
@@ -218,7 +218,7 @@ EOF
 	fi
 	ev=
 	for ((i = 0; i < 180; i++)); do
-		if out=$(hf host events "$fqdn" --json 2>/dev/null); then
+		if out=$(hf agent events "$fqdn" --json 2>/dev/null); then
 			ev=$(js 'ids0, cmd, job = set(sys.argv[1].split()), sys.argv[2], sys.argv[3]
 for e in j or []:
     if e.get("kind") == "backup" and e.get("job_id") == job and e["id"] not in ids0 and e.get("status") != "skipped" \
@@ -229,7 +229,7 @@ for e in j or []:
 		[[ -z $ev ]] || break
 		sleep 5
 	done
-	[[ -n $ev ]] || { fail "no backup of $job within 15 minutes (holdfast host events $fqdn)"; return 1; }
+	[[ -n $ev ]] || { fail "no backup of $job within 15 minutes (holdfast agent events $fqdn)"; return 1; }
 	printf '%s\n' "$ev" >"$res/backup.json"
 	echo "the backup's event: $ev"
 	status=$(js 'print(j.get("status", ""))' <<<"$ev")

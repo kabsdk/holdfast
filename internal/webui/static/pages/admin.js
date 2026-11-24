@@ -10,14 +10,14 @@ export function Audit({ hosts }) {
   const older = useAction();
   const rows = [...(first.data || []), ...pages];
   return html`<h1>Audit log</h1>
-    <p class="muted">Every action, with who did it, when, and the warnings they accepted. It is append-only. You see the entries of your hosts.</p>
+    <p class="muted">Every action, with who did it, when, and the warnings they accepted. It is append-only. You see the entries of your agents.</p>
     <div class="row panel">
-      <label>Host <select value=${host} onChange=${(e) => setHost(e.target.value)}><option value="">all you can see</option>${hosts.map((h) => html`<option>${h.fqdn}</option>`)}</select></label>
+      <label>Agent <select value=${host} onChange=${(e) => setHost(e.target.value)}><option value="">all you can see</option>${hosts.map((h) => html`<option>${h.fqdn}</option>`)}</select></label>
       <label>Action <input placeholder="such as restore.requested" value=${action} onInput=${(e) => setAction(e.target.value.trim())} /></label>
     </div>
     <${ErrorBox} error=${first.error || older.error} />
     ${!first.data ? html`<${Loading} />` : html`<table>
-      <thead><tr><th>When</th><th>Who</th><th>Action</th><th>Host</th><th>Reason and details</th></tr></thead>
+      <thead><tr><th>When</th><th>Who</th><th>Action</th><th>Agent</th><th>Reason and details</th></tr></thead>
       <tbody>${rows.map((a) => html`<tr><td>${fmtTime(a.at)}</td><td>${a.actor} <span class="muted">${a.source}</span></td><td><code>${a.action}</code></td>
         <td>${a.fqdn}${a.job_id ? ' · ' + a.job_id : ''}</td>
         <td>${a.detail?.message && html`<div>${a.detail.message}</div>`}<span class="muted mono wrap">${JSON.stringify(Object.fromEntries(Object.entries(a.detail || {}).filter(([k]) => k !== 'message')))}</span></td></tr>`)}</tbody>
@@ -36,14 +36,14 @@ export function Access({ me }) {
   const save = useAction();
   const end = useAction();
   useEffect(() => { if (acc.data) setRows(acc.data.bindings.map((b) => ({ ...b, hosts: b.hosts.join(' ') }))); }, [acc.data]);
-  if (!me.admin_everywhere) return html`<div class="banner warning">The bindings are for admins on every host.</div>`;
+  if (!me.admin_everywhere) return html`<div class="banner warning">The bindings are for admins on every agent.</div>`;
   if (acc.error) return html`<${ErrorBox} error=${acc.error} />`;
   if (!rows) return html`<${Loading} />`;
   const set = (i, k, v) => setRows(rows.map((r, j) => (j === i ? { ...r, [k]: v } : r)));
   return html`<h1>Access</h1>
-    <p class="muted">A binding gives a group from the login provider one role on the hosts its patterns match (* for any characters). Several bindings combine per host. A host no binding of yours covers does not exist for you. There are three roles and no custom ones (decision 035).</p>
+    <p class="muted">A binding gives a group from the login provider one role on the agents its patterns match (* for any characters). Several bindings combine per agent. An agent no binding of yours covers does not exist for you. There are three roles and no custom ones (decision 035).</p>
     <table>
-      <thead><tr><th>Group</th><th>Role</th><th>Hosts</th><th></th></tr></thead>
+      <thead><tr><th>Group</th><th>Role</th><th>Agents</th><th></th></tr></thead>
       <tbody>${rows.map((r, i) => html`<tr>
         <td><input value=${r.group} onInput=${(e) => set(i, 'group', e.target.value)} /></td>
         <td><select value=${r.role} onChange=${(e) => set(i, 'role', e.target.value)}>${Object.keys(acc.data.roles).map((x) => html`<option>${x}</option>`)}</select></td>
@@ -99,7 +99,7 @@ export function Settings({ settings, me }) {
   return html`<h1>Settings</h1>
     <p class="muted">What <code>server.yaml</code> says, without secrets. Changing it needs root on the server (spec §3.3).</p>
     <div class="panel"><dl class="facts">
-      ${s.role === 'vault' ? html`<dt>Off-site copies</dt><dd>made by ${s.node}, every host's snapshots copied with restic copy, under their own retention</dd>`
+      ${s.role === 'vault' ? html`<dt>Off-site copies</dt><dd>made by ${s.node}, every agent's snapshots copied with restic copy, under their own retention</dd>`
         : html`<dt>Server</dt><dd>${s.node} · agents connect to ${s.agent_url}${s.ui_url ? ` · people to ${s.ui_url}` : ''}</dd>
           <dt>Off-site copies</dt><dd>${s.offsite ? 'on: see the Off-site copies pages' : 'off: server.yaml has no offsite: section'}</dd>`}
       <dt>Default time zone</dt><dd>${s.default_zone}</dd>

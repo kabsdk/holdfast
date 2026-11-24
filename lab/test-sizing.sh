@@ -36,7 +36,7 @@ js() { python3 -I -c "import json, sys
 j = json.load(sys.stdin)
 $1" "${@:2}"; }
 # event <fqdn> <command id>: the run's own event, as JSON, or nothing while it runs.
-event() { hf host events "$1" --json | js 'r = [e for e in j or [] if e.get("command_id") == sys.argv[1]]
+event() { hf agent events "$1" --json | js 'r = [e for e in j or [] if e.get("command_id") == sys.argv[1]]
 print(json.dumps(r[0]) if r else "")' "$2"; }
 counters() { vm_ssh "$HF_SERVER_VM" "head -1 /proc/stat; awk '/eth0:/ {print \"rx\", \$2}' /proc/net/dev" </dev/null; }
 
@@ -69,7 +69,7 @@ for vm in "${vms[@]}"; do
 done
 for vm in "${vms[@]}"; do
 	for ((i = 0; i < 60; i++)); do
-		[[ $(hf host show "$vm.$HF_DOMAIN" --json | js 'print(j.get("in_sync"))') == True ]] && break
+		[[ $(hf agent show "$vm.$HF_DOMAIN" --json | js 'print(j.get("in_sync"))') == True ]] && break
 		sleep 2
 	done
 done

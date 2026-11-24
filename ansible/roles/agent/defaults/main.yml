@@ -1,26 +1,33 @@
 ---
-# Each setting is the installer's, in lower case: HOLDFAST_FQDN is holdfast_fqdn
+# Each setting is the installer's, in lower case: HOLDFAST_AGENT_NAME is holdfast_agent_name
 # (https://kabsdk.github.io/holdfast/#installer-ref).
 holdfast_version: latest
 holdfast_download_url: ""
 
-# The host's FQDN, its identity in Holdfast. Required, unless holdfast_hostname_autodetect is true: then the role takes
-# the host's own (its fqdn fact, what hostname -f says).
-holdfast_fqdn: ""
-holdfast_hostname_autodetect: false
+# The agent's name, its identity in Holdfast and its repository's name (decision 056): required. It is never read from
+# the machine. A machine's FQDN is a fine name, such as web01.example.com; so is matrix.
+holdfast_agent_name: ""
 
-# The server's host in the inventory: the role adds the host there, gets its enrollment code and gives it its jobs, with
+# The server's host in the inventory: the role adds the agent there, gets its enrollment code and gives it its jobs, with
 # the holdfast command as root on the server. Without one, give holdfast_server and holdfast_code as the installer takes
-# them (holdfast host add prints them).
+# them (holdfast agent add prints them).
 holdfast_server_host: "{{ groups['holdfast_server'] | default([]) | first | default('') }}"
 holdfast_server: ""
 holdfast_code: ""
 holdfast_ca_sha256: ""
 holdfast_reenroll: false
 
-# Jobs the host should have, by name, each a mapping of holdfast job set's flags: {path: [/etc], daily: "02:00"}. A job
-# the host lacks is made; one it has is left as it is, for Holdfast's UI and CLI to change.
+# Jobs the agent should have, by name, each a mapping of holdfast job set's flags: {path: [/etc], daily: "02:00"}, or
+# for a PostgreSQL database {connection: main, database: app, every: 6h}. A job the agent lacks is made; one it has is
+# left as it is, for Holdfast's UI and CLI to change.
 holdfast_jobs: {}
 
-# Merged over the restore bounds in agent.yaml, which only root on the host can change; null leaves them as they are.
+# Merged over the restore bounds in agent.yaml, which only root on the machine can change; null leaves them as they are.
 holdfast_restore: null   # root, allow_in_place, allow_other_directories, allow_other_hosts
+
+# PostgreSQL (decision 055): the directory with pg_dump, pg_dumpall, pg_restore and psql, such as
+# /usr/pgsql-18/bin or /usr/lib/postgresql/18/bin. Empty leaves agent.yaml's postgresql settings as they are; without
+# them the agent takes no PostgreSQL job. The connections themselves are set on the server, never here.
+holdfast_postgresql_bin_dir: ""
+# Whether a dump may be restored over the database it came from, after a safety dump. Only root here can allow it.
+holdfast_postgresql_allow_in_place_restore: false

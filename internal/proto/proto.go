@@ -21,8 +21,15 @@ const Base = "/agent/v1"
 // before M5 sent none, and speak 1. 2 (M6): dump jobs, restores from another host, pause and resume. 3 (M7):
 // restores of the host's own snapshots from a vault's copies, as M7 made them. 4 (M8, decision 041): the agent is known by its own
 // certificate, which the server pins at enrollment, and no longer by a token, and it backs up through the server's
-// gateway with no S3 key; an agent before 4 cannot log in at all, and enrolls again after its upgrade.
-const Protocol = 4
+// gateway with no S3 key; an agent before 4 cannot log in at all, and enrolls again after its upgrade. 5 (decision
+// 055): PostgreSQL connections and jobs, the connection test, and restores into a database.
+const Protocol = 5
+
+// ProtocolPostgreSQL is the first protocol with PostgreSQL jobs (decision 055).
+const ProtocolPostgreSQL = 5
+
+// ProtocolOffsite is the first protocol with restores from off-site through the gateway (M8, decision 041).
+const ProtocolOffsite = 4
 
 // ProtocolRecovery is the first protocol with M6's dump jobs, restores from another host, and pausing.
 const ProtocolRecovery = 2
@@ -58,6 +65,18 @@ type Facts struct {
 	// RestoreBounds are the host's own limits on restores, from agent.yaml. The server shows them and
 	// refuses early, but the agent decides (decision 030).
 	RestoreBounds *RestoreBounds `json:"restore_bounds,omitempty"`
+	// PostgreSQL is what the agent has for PostgreSQL jobs (decision 055): nil when agent.yaml sets no
+	// postgresql.bin_dir, and then the agent takes no PostgreSQL job.
+	PostgreSQL *PGFacts `json:"postgresql,omitempty"`
+}
+
+// PGFacts are an agent's PostgreSQL client, and its own limit on restores into a database, from agent.yaml.
+type PGFacts struct {
+	// Client is pg_dump's version, such as "18.1"; empty if bin_dir holds no pg_dump that runs.
+	Client string `json:"client"`
+	// AllowInPlaceRestore lets a restore replace a database that exists, after a safety dump. Off unless root on the
+	// agent turns it on (postgresql.allow_in_place_restore).
+	AllowInPlaceRestore bool `json:"allow_in_place_restore"`
 }
 
 // RestoreBounds limit what a restore may do on this host. Only root on the host can change them.
@@ -108,6 +127,73 @@ type RestoreSpec struct {
 	Source *RestoreSource `json:"source,omitempty"`
 	// Dump says the snapshot is a dump's (decision 037): it is restored into a new directory only.
 	Dump bool `json:"dump,omitempty"`
+	// PostgreSQL restores a database's dump into its server (decision 055), with Target TargetDatabase. A dump restored
+	// as a file has Target TargetNew and this unset.
+	PostgreSQL *PGRestore `json:"postgresql,omitempty"`
+}
+
+// TargetDatabase restores a dump into its PostgreSQL server: a new database beside the original, or in place.
+const TargetDatabase = "database"
+
+// PGRestore is a restore of a dump into the server it came from, through the job's connection and its restore user.
+type PGRestore struct {
+	Connection string `json:"connection"`
+	// Database is the original's name; File is the dump's name in the snapshot, such as authelia.dump.
+	Database string `json:"database"`
+	File     string `json:"file"`
+	// InPlace replaces Database, after a safety dump of it, in one transaction; or makes it again if it is gone. Without
+	// it, the dump goes into a new database, Name, which the server names from the dump's time.
+	InPlace bool   `json:"in_place,omitempty"`
+	Name    string `json:"name,omitempty"`
+}
+
+// PGConnection is how the agent reaches a PostgreSQL server (decision 055), as the server sends it: never a password.
+type PGConnection struct {
+	URL         string `json:"url"`
+	User        string `json:"user"`
+	RestoreUser string `json:"restore_user,omitempty"`
+}
+
+// PGJob is what a PostgreSQL job backs up: a database of a connection, or its globals.
+type PGJob struct {
+	Connection string `json:"connection"`
+	Database   string `json:"database,omitempty"`
+	Globals    bool   `json:"globals,omitempty"`
+}
+
+// PGSecret is a connection's passwords, sent with the credentials only. RestorePassword is empty without a restore
+// user; Password is empty for peer authentication.
+type PGSecret struct {
+	Password        string `json:"password,omitempty"`
+	RestorePassword string `json:"restore_password,omitempty"`
+}
+
+// PGTestResult is what the agent found when it tested a connection, as a postgresql_test event's detail "result".
+// No password, no data: names, sizes, owners and versions.
+type PGTestResult struct {
+	Connection    string       `json:"connection"`
+	ServerVersion string       `json:"server_version,omitempty"` // such as "16.3"
+	ServerNum     int          `json:"server_version_num,omitempty"`
+	Client        string       `json:"client,omitempty"` // the agent's pg_dump
+	TLS           string       `json:"tls,omitempty"`    // such as "TLSv1.3", or "" for none
+	Databases     []PGDatabase `json:"databases,omitempty"`
+	// RestoreUser is what the restore user may do, when the connection has one.
+	RestoreUser *PGRestoreRights `json:"restore_user,omitempty"`
+	Error       string           `json:"error,omitempty"`
+}
+
+// PGDatabase is one database a connection reaches.
+type PGDatabase struct {
+	Name  string `json:"name"`
+	Bytes int64  `json:"bytes"`
+	Owner string `json:"owner"`
+}
+
+// PGRestoreRights is what the restore user may do: create databases, and act as which roles.
+type PGRestoreRights struct {
+	CreateDB bool     `json:"createdb"`
+	ActsAs   []string `json:"acts_as"`
+	Error    string   `json:"error,omitempty"`
 }
 
 // Paused is what a paused agent reports with every poll: the pause command, and until when.
@@ -167,6 +253,8 @@ type JobConfig struct {
 	// Dump is set on a dump job from before 0.6.0, which removed dump jobs (decision 052). An agent of 0.6.0 or
 	// later fails the job with that reason, and runs no command.
 	Dump string `json:"dump,omitempty"`
+	// PostgreSQL is what a job of the postgresql engine dumps (protocol 5, decision 055).
+	PostgreSQL *PGJob `json:"postgresql,omitempty"`
 }
 
 // HostConfig is the desired state of one host.
@@ -177,6 +265,8 @@ type HostConfig struct {
 	Repository string       `json:"repository"`
 	Jobs       []JobConfig  `json:"jobs"`
 	Check      *CheckConfig `json:"check,omitempty"` // nil: no daily check, only checks on request
+	// PostgreSQL are the agent's connections, by name, without passwords (decision 055).
+	PostgreSQL map[string]PGConnection `json:"postgresql,omitempty"`
 }
 
 // CheckConfig is the agent's daily repository check (decision 030). After a backup, once a day, the
@@ -207,6 +297,8 @@ func (hc HostConfig) ComputeSHA256() string {
 type Credentials struct {
 	Version      int    `json:"version"`
 	RepoPassword string `json:"repo_password"`
+	// PostgreSQL are the passwords of the agent's PostgreSQL connections, by connection (decision 055).
+	PostgreSQL map[string]PGSecret `json:"postgresql,omitempty"`
 }
 
 // Command kinds.
@@ -218,6 +310,9 @@ const (
 	// A run under way finishes first; the agent reports Paused once it is idle.
 	CommandPause  = "pause"
 	CommandResume = "resume"
+	// CommandPGTest has the agent connect to a PostgreSQL connection, as it would to back up, and report what it
+	// finds (protocol 5).
+	CommandPGTest = "postgresql_test"
 )
 
 // Command is work queued for the agent. Commands are re-sent until acknowledged; the agent
@@ -228,6 +323,8 @@ type Command struct {
 	JobID   string       `json:"job_id,omitempty"`
 	Restore *RestoreSpec `json:"restore,omitempty"`
 	Until   *time.Time   `json:"until,omitempty"` // for CommandPause
+	// Connection is the PostgreSQL connection CommandPGTest tests.
+	Connection string `json:"connection,omitempty"`
 }
 
 // PollResponse answers a poll. Config and Credentials are present only when they changed.
@@ -263,6 +360,7 @@ const (
 	KindNotice     = "notice"      // something the agent found and repaired, such as changed credential files
 	KindRestore    = "restore"     // a restore, or its dry run
 	KindPreRestore = "pre_restore" // the safety backup an in-place restore takes first
+	KindPGTest     = "postgresql_test"
 )
 
 // Event is the final result of one run. The agent spools it on disk until the server acknowledges it.

@@ -1,0 +1,47 @@
+# Publishes the agent's container image (decision 055) to ghcr.io/kabsdk/holdfast-agent when scripts/release.sh tags a
+# release: tagged with the release, such as 0.1.0 or 0.1-dev, and with the build's own version, such as 0.1.0-dev90,
+# which stays when a development release moves on.
+name: Image
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: image-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  image:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # scripts/version.sh counts the commits
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Version
+        id: v
+        run: |
+          release=${GITHUB_REF_NAME#v}
+          if [[ $release =~ -dev$ ]]; then pkg=$(sh scripts/version.sh); else pkg=$release; fi
+          echo "release=$release" >>"$GITHUB_OUTPUT"
+          echo "pkg=$pkg" >>"$GITHUB_OUTPUT"
+          echo "build=${pkg//\~/-}" >>"$GITHUB_OUTPUT"
+      - name: Build
+        run: make image HOLDFAST_VERSION='${{ steps.v.outputs.pkg }}' IMAGE='ghcr.io/kabsdk/holdfast-agent:${{ steps.v.outputs.release }}'
+      - name: Push
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "$TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          img=ghcr.io/kabsdk/holdfast-agent
+          docker tag "$img:${{ steps.v.outputs.release }}" "$img:${{ steps.v.outputs.build }}"
+          docker push "$img:${{ steps.v.outputs.release }}"
+          docker push "$img:${{ steps.v.outputs.build }}"

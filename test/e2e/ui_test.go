@@ -89,28 +89,37 @@ func TestUIPages(t *testing.T) {
 
 	// Overview, Settings, Audit log, Access, Config history, Restores render; the old Problems page opens the Overview.
 	for _, p := range []struct{ hash, text string }{
-		{"#/", "1 of 1 jobs OK"}, {"#/problems", "All hosts"}, {"#/settings", "0.19.1, which the packages ship"}, {"#/audit", "host.add"},
+		{"#/", "1 of 1 jobs OK"}, {"#/problems", "All agents"}, {"#/settings", "0.19.1, which the packages ship"}, {"#/audit", "host.add"},
 		{"#/access", "holdfast-admins"}, {"#/history", "Revisions"}, {"#/restores", "Choose a snapshot"},
 	} {
 		open(t, ctx, p.hash)
 		waitText(t, ctx, p.text)
 	}
 
-	// Overview: a tile filters the hosts by what it counts. Nothing has failed, so Failed leaves none.
+	// Overview: a tile filters the agents by what it counts. Nothing has failed, so Failed leaves none.
 	open(t, ctx, "#/")
 	waitText(t, ctx, web)
+	// Under its name, the address the agent connects from: never a hostname it reports (decision 056).
+	var sub string
+	run(t, ctx, "the line under the agent's name", chromedp.Text(`.hostrow .sub`, &sub, chromedp.ByQuery))
+	if !strings.HasPrefix(sub, "from ") {
+		t.Fatalf("under the agent's name: %q, want the address it connects from", sub)
+	}
 	clickText(t, ctx, "button", "last run failed")
-	waitText(t, ctx, "No host matches.")
-	clickText(t, ctx, "button", "Show all hosts")
+	waitText(t, ctx, "No agent matches.")
+	clickText(t, ctx, "button", "Show all agents")
 	waitText(t, ctx, web)
 
-	// Host: a row per job with its last 14 days, and Back up now.
+	// Agent: a row per job with what it backs up and its last 14 days, and Back up now. The old #/hosts/ address opens it.
 	open(t, ctx, "#/hosts/"+web)
 	waitText(t, ctx, "Last 14 days")
+	open(t, ctx, "#/agents/"+web)
+	waitText(t, ctx, "Backs up")
+	waitText(t, ctx, "Set in its agent.yaml")
 	clickText(t, ctx, "button", "Back up now")
 	waitText(t, ctx, "Queued")
 
-	// The days the host page draws, as the API and the CLI give them: today has both backups, and all went well.
+	// The days the agent page draws, as the API and the CLI give them: today has both backups, and all went well.
 	var hd struct {
 		Jobs []struct {
 			JobID string `json:"job_id"`
@@ -121,7 +130,7 @@ func TestUIPages(t *testing.T) {
 			}
 		}
 	}
-	must(t, json.Unmarshal(e.cli("host", "days", web), &hd))
+	must(t, json.Unmarshal(e.cli("agent", "days", web), &hd))
 	if len(hd.Jobs) != 1 || hd.Jobs[0].JobID != "system" || len(hd.Jobs[0].Days) != 14 {
 		t.Fatalf("host days: %+v", hd)
 	}
@@ -130,8 +139,9 @@ func TestUIPages(t *testing.T) {
 	}
 
 	// Configure: the checks come from the server as you type, and the save makes a revision.
-	open(t, ctx, "#/hosts/"+web+"/configure/system")
+	open(t, ctx, "#/agents/"+web+"/configure/system")
 	waitText(t, ctx, "What you get")
+	waitText(t, ctx, "Files where the agent runs")
 	waitText(t, ctx, "holdfast job set "+web+" system")
 	field(t, ctx, "Exclude", "*.tmp")
 	waitText(t, ctx, "excludes[0]") // the diff of the change
@@ -141,35 +151,35 @@ func TestUIPages(t *testing.T) {
 	clickText(t, ctx, "label", "I accept")
 	waitText(t, ctx, "Ready to save")
 	clickText(t, ctx, "button", "Save")
-	waitText(t, ctx, "Last 14 days") // back on the host page
+	waitText(t, ctx, "Last 14 days") // back on the agent page
 	var revs []struct{ Message string }
 	must(t, json.Unmarshal(e.cli("revision", "list"), &revs))
 	if revs[0].Message != "exclude temporary files, from the UI" {
 		t.Fatalf("the UI's save is not the newest revision: %+v", revs[0])
 	}
 
-	// Job: what restic keeps as a row of squares per rule, and the snapshots with restic's reasons for keeping each.
-	// The old snapshot list's address opens the job's page. Then the calendar of every kept snapshot.
+	// Job: one calendar of restore points, a square a day, with restic's rules as chips that count what each keeps;
+	// today is chosen, and lists its restore points. The old snapshot list's and calendar's addresses open it too.
 	open(t, ctx, "#/hosts/"+web+"/jobs/system/snapshots")
-	waitText(t, ctx, "What restic keeps")
-	waitText(t, ctx, "One per day") // --keep-daily 7d
-	waitText(t, ctx, "kept:")
-	var squares int
-	run(t, ctx, "the squares", chromedp.Evaluate(`document.querySelectorAll('a.slot').length`, &squares))
-	if squares < 2 {
-		t.Fatalf("the job page shows %d kept snapshots as squares, want at least 2", squares)
+	waitText(t, ctx, "Restore points")
+	waitText(t, ctx, "SITE A")
+	waitText(t, ctx, "one per day for 7 days") // --keep-daily 7d
+	var days, points int
+	run(t, ctx, "the calendar's days with restore points", chromedp.Evaluate(`document.querySelectorAll('.cal button.cell:not(.c-none):not(.c-before)').length`, &days))
+	run(t, ctx, "today's restore points", chromedp.Evaluate(`[...document.querySelectorAll('.gt:not(.head)')].filter((r) => r.querySelector('a.mono')).length`, &points))
+	if days < 1 || points < 2 {
+		t.Fatalf("the calendar shows %d days with restore points and %d restore points today, want at least 1 and 2", days, points)
 	}
-	clickText(t, ctx, "a", "Calendar")
-	waitText(t, ctx, "every kept snapshot")
-	waitText(t, ctx, "with a kept snapshot")
+	open(t, ctx, "#/agents/"+web+"/jobs/system/calendar")
+	waitText(t, ctx, "Restore points")
 
 	// Snapshot: Files, Changes, and a restore's dry run through the agent.
-	open(t, ctx, "#/hosts/"+web+"/snapshots/"+snaps[0]+"/files")
+	open(t, ctx, "#/agents/"+web+"/snapshots/"+snaps[0]+"/files")
 	waitText(t, ctx, "Restore only this")
-	open(t, ctx, "#/hosts/"+web+"/snapshots/"+snaps[0]+"/changes")
+	open(t, ctx, "#/agents/"+web+"/snapshots/"+snaps[0]+"/changes")
 	waitText(t, ctx, "added")
 	// Restore: a tree of ticks. Unticking a folder leaves it out; the dry run goes through the agent.
-	open(t, ctx, "#/hosts/"+web+"/snapshots/"+snaps[0]+"/restore")
+	open(t, ctx, "#/agents/"+web+"/snapshots/"+snaps[0]+"/restore")
 	waitText(t, ctx, "Everything in the snapshot")
 	run(t, ctx, "untick the snapshot's first path", chromedp.Click(`.tree [role=treeitem] input[type=checkbox]`, chromedp.ByQuery))
 	waitText(t, ctx, "Left out")
@@ -177,20 +187,35 @@ func TestUIPages(t *testing.T) {
 	clickText(t, ctx, "button", "Dry run")
 	waitText(t, ctx, "nothing was written")
 
-	// Delete is in the snapshot's ⋯ menu, as a dialog; Keep it closes it and deletes nothing.
+	// The rarer actions are in the snapshot's ⋯ menu, which opens inside the window, even this narrow one, and its item
+	// takes the click.
 	run(t, ctx, "open the snapshot's menu", chromedp.Click(`button[aria-label="More snapshot actions"]`, chromedp.ByQuery))
-	// The menu opens inside the window, even this narrow one, and its item takes the click.
 	var left float64
 	run(t, ctx, "where the menu opens", chromedp.Evaluate(`document.querySelector('.menu-pop').getBoundingClientRect().left`, &left))
 	if left < 0 {
 		t.Fatalf("the menu opens %v px off the window's left edge", -left)
 	}
-	clickText(t, ctx, "button", "Delete snapshot…")
+	clickText(t, ctx, "button", "Copy the full ID")
+	// Delete… is on the page, as a dialog that always asks why (decision 055): Delete in 7 days stays off until a reason
+	// is given. Keep it closes it and deletes nothing.
+	clickText(t, ctx, "button", "Delete…")
 	waitText(t, ctx, "Delete in 7 days")
+	deleteOff := func() bool {
+		var off bool
+		run(t, ctx, "the Delete in 7 days button", chromedp.Evaluate(`[...document.querySelectorAll('.dialog button')].find(b => b.textContent.includes('Delete in 7 days')).disabled`, &off))
+		return off
+	}
+	if !deleteOff() {
+		t.Fatal("Delete in 7 days must stay off until a reason is given")
+	}
+	field(t, ctx, "Why", "a test of the dialog; nothing is deleted")
+	if deleteOff() {
+		t.Fatal("Delete in 7 days stays off with a reason given")
+	}
 	clickText(t, ctx, "button", "Keep it")
 
 	// Prune now: the preview, and the button stays off until the short name is typed.
-	open(t, ctx, "#/hosts/"+web+"/prune-now")
+	open(t, ctx, "#/agents/"+web+"/prune-now")
 	waitText(t, ctx, "The restic commands")
 	var disabled bool
 	run(t, ctx, "the Prune button", chromedp.Evaluate(`[...document.querySelectorAll('button')].find(b => b.textContent.includes('snapshots now')).disabled`, &disabled))
@@ -198,15 +223,16 @@ func TestUIPages(t *testing.T) {
 		t.Fatal("Prune now must stay disabled until the short name is typed")
 	}
 
-	// Add host, with no S3 key (decision 041): the enrollment code and the install command.
-	const added = "app07.example.com"
-	open(t, ctx, "#/add-host")
-	field(t, ctx, "FQDN", added)
+	// Add agent, with no S3 key (decision 041): the enrollment code and the install command. Its name need not be an
+	// FQDN (decision 056).
+	const added = "app07"
+	open(t, ctx, "#/add-agent")
+	field(t, ctx, "Name", added)
 	field(t, ctx, "Paths", "/etc")
-	clickText(t, ctx, "button", "Add host and issue enrollment code")
+	clickText(t, ctx, "button", "Add agent and issue enrollment code")
 	waitText(t, ctx, "holdfast-agent enroll")
-	if out, err := e.cliErr("host", "show", added); err != nil {
-		t.Fatalf("the UI's new host is not there: %v %s", err, out)
+	if out, err := e.cliErr("agent", "show", added); err != nil {
+		t.Fatalf("the UI's new agent is not there: %v %s", err, out)
 	}
 
 	if errs := errs(); len(errs) > 0 {

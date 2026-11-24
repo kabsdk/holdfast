@@ -386,7 +386,7 @@ func (s *Server) Decommission(ctx context.Context, a Actor, fqdn string, in Deco
 	}
 	switch {
 	case h.State != "retired":
-		return store.Decommission{}, fmt.Errorf("only a removed host can be decommissioned; remove %s first (holdfast host remove): %w", fqdn, ErrConflict)
+		return store.Decommission{}, fmt.Errorf("only a removed host can be decommissioned; remove %s first (holdfast agent remove): %w", fqdn, ErrConflict)
 	case decommissioned(h):
 		return store.Decommission{}, fmt.Errorf("host %s was decommissioned on %s: %w", fqdn, h.Decommission.DoneAt.Format(time.DateOnly), ErrConflict)
 	case h.Decommission != nil:

@@ -37,6 +37,10 @@ type Snapshot struct {
 	// Holdfast deleted it and pruned, when S3's old versions of its data expire.
 	DeletionRequestedAt *time.Time `json:"deletion_requested_at,omitempty"`
 	ReallyGoneBy        *time.Time `json:"really_gone_by,omitempty"`
+	// Who asked to delete it and why (decision 055), kept after Holdfast deleted it, and when it did.
+	DeletionRequestedBy string     `json:"deletion_requested_by,omitempty"`
+	DeletionReason      string     `json:"deletion_reason,omitempty"`
+	DeletedOnRequest    *time.Time `json:"deleted_on_request_at,omitempty"`
 	// Filled in for one job's list on request (spec §5.2): why the current retention keeps it, in restic's
 	// words, or, if only an older policy still keeps it, from when the daily run may forget it.
 	KeptBy       []string   `json:"kept_by,omitempty"`
@@ -80,13 +84,22 @@ func (q *Q) RecordCatalogueError(ctx context.Context, fqdn, msg string) error {
 const snapshotCols = `s.fqdn, s.id, s.short_id, s.time, s.hostname, s.job_id, s.tags, s.paths, s.parent, s.total_files, s.total_bytes,
 	s.data_added, s.first_seen, s.gone_at, s.deleted_by_holdfast, s.acknowledged_at,
 	EXISTS (SELECT 1 FROM events e WHERE e.fqdn = s.fqdn AND e.snapshot_id = s.id), s.original,
-	(SELECT p.deleted_at FROM primary_deleted p WHERE p.fqdn = s.fqdn AND p.original = s.original AND s.original <> '')`
+	(SELECT p.deleted_at FROM primary_deleted p WHERE p.fqdn = s.fqdn AND p.original = s.original AND s.original <> ''),
+	s.deletion_requested_by, s.deletion_reason, s.deleted_on_request_at`
 
 func scanSnapshot(row pgx.Row) (Snapshot, error) {
 	var s Snapshot
 	err := row.Scan(&s.FQDN, &s.ID, &s.ShortID, &s.Time, &s.Hostname, &s.JobID, &s.Tags, &s.Paths, &s.Parent, &s.TotalFiles, &s.TotalBytes,
-		&s.DataAdded, &s.FirstSeen, &s.GoneAt, &s.DeletedByUs, &s.Acknowledged, &s.MadeByHoldfast, &s.Original, &s.DeletedInPrimary)
+		&s.DataAdded, &s.FirstSeen, &s.GoneAt, &s.DeletedByUs, &s.Acknowledged, &s.MadeByHoldfast, &s.Original, &s.DeletedInPrimary,
+		&s.DeletionRequestedBy, &s.DeletionReason, &s.DeletedOnRequest)
 	return s, notFound(err)
+}
+
+// SetDeletionReason keeps on a snapshot who asked to delete it and why (decision 055); empty strings clear them, as a
+// cancelled deletion does.
+func (q *Q) SetDeletionReason(ctx context.Context, fqdn, id, by, reason string) error {
+	_, err := q.db.Exec(ctx, `UPDATE snapshots SET deletion_requested_by = $3, deletion_reason = $4 WHERE fqdn = $1 AND id = $2`, fqdn, id, by, reason)
+	return err
 }
 
 // SnapshotFilter narrows ListSnapshots.

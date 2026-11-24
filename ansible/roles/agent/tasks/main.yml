@@ -1,13 +1,20 @@
 ---
-# A host Holdfast backs up: the agent and restic, enrolled with the server, its restore bounds in agent.yaml, and the
+# An agent Holdfast backs up: the agent and restic, enrolled with the server, its own settings in agent.yaml, and the
 # jobs it lacks. The installer's agent role, kept so.
 - name: Refuse holdfast_dumps, which 0.6.0 removed
   ansible.builtin.assert:
     that: holdfast_dumps is not defined or holdfast_dumps is none
     fail_msg: >-
-      holdfast_dumps was removed in 0.6.0: Holdfast runs no command on a host (decision 052). Have a systemd timer on
-      the host write the export into a directory, and back that directory up with a job's path.
+      holdfast_dumps was removed in 0.6.0: Holdfast runs no command on a host (decision 052). Back a PostgreSQL database
+      up with a PostgreSQL job (decision 055); anything else from the export a systemd timer writes, with a job's path.
     quiet: true
+
+- name: Refuse holdfast_fqdn or holdfast_hostname_autodetect in place of holdfast_agent_name
+  ansible.builtin.fail:
+    msg: >-
+      The agent's name is holdfast_agent_name now (decision 056): give it, such as holdfast_agent_name: web01.example.com.
+      It is never read from the machine, so holdfast_hostname_autodetect is gone. An enrolled agent keeps its name.
+  when: holdfast_agent_name | length == 0 and (holdfast_fqdn is defined or holdfast_hostname_autodetect is defined)
 
 - name: Refuse jobs that are not mappings of holdfast job set's flags
   ansible.builtin.assert:
@@ -17,22 +24,20 @@
       The flags string of 0.5.0 is no longer taken.
     quiet: true
 
-- name: Read the host's own name, as holdfast_hostname_autodetect asks
-  ansible.builtin.setup:
-    gather_subset: [min]
-  when: holdfast_hostname_autodetect | bool and holdfast_fqdn | length == 0 and ansible_facts.fqdn is not defined
-
-- name: Take the host's own name as its FQDN
-  ansible.builtin.set_fact:
-    holdfast_fqdn: "{{ ansible_facts.fqdn }}"
-  when: holdfast_hostname_autodetect | bool and holdfast_fqdn | length == 0
-
-- name: Refuse a host without its FQDN
+- name: Refuse an agent without its name
   ansible.builtin.assert:
-    that: holdfast_fqdn is match('^[a-z0-9-]+([.][a-z0-9-]+)+$')
+    that:
+      - holdfast_agent_name is match('^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?([.][a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$')
+      - holdfast_agent_name | length <= 253
     fail_msg: >-
-      holdfast_fqdn: give this host's FQDN, such as web01.example.com, its identity in Holdfast; or set
-      holdfast_hostname_autodetect: true to take the host's own (hostname -f). It is "{{ holdfast_fqdn }}".
+      holdfast_agent_name: give the agent's name, its identity in Holdfast, such as web01.example.com or matrix:
+      lower-case letters, digits and hyphens, in dot-separated parts. It is "{{ holdfast_agent_name }}".
+    quiet: true
+
+- name: Refuse in-place restores of databases without a PostgreSQL client
+  ansible.builtin.assert:
+    that: not (holdfast_postgresql_allow_in_place_restore | bool) or holdfast_postgresql_bin_dir | length > 0
+    fail_msg: holdfast_postgresql_allow_in_place_restore goes with holdfast_postgresql_bin_dir, the directory with pg_dump
     quiet: true
 
 - name: Install the agent and restic
@@ -46,11 +51,29 @@
     path: /etc/holdfast/agent.yaml
   register: agent_conf
 
+- name: Read the name it is enrolled with
+  ansible.builtin.slurp:
+    src: /etc/holdfast/agent.yaml
+  register: agent_enrolled_yaml
+  when: agent_conf.stat.exists
+
+- name: Refuse to rename an enrolled agent
+  ansible.builtin.assert:
+    that: agent_enrolled_name | length == 0 or agent_enrolled_name == holdfast_agent_name or holdfast_reenroll | bool
+    fail_msg: >-
+      This machine's agent is enrolled as {{ agent_enrolled_name }}, not {{ holdfast_agent_name }}: its name is its
+      identity and its repository's, and renaming an agent is not designed. Set holdfast_agent_name: {{ agent_enrolled_name }}.
+    quiet: true
+  when: agent_conf.stat.exists
+  vars:
+    agent_enrolled_conf: "{{ agent_enrolled_yaml.content | b64decode | from_yaml }}"
+    agent_enrolled_name: "{{ agent_enrolled_conf.agent_name | default(agent_enrolled_conf.fqdn | default(''), true) }}"
+
 - name: Enroll it with the server
   ansible.builtin.include_tasks: enroll.yml
   when: not agent_conf.stat.exists or holdfast_reenroll | bool
 
-- name: Its restore bounds in agent.yaml
+- name: Its own settings in agent.yaml
   ansible.builtin.include_tasks: agentyaml.yml
 
 - name: Restart it now if agent.yaml changed

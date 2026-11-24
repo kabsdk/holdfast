@@ -1,6 +1,8 @@
 # 002: Kubernetes is out of scope
 
-Status: accepted, 2026-11-21
+Status: accepted, 2026-11-21. **Narrowed by [decision 055](055-postgresql-databases.md) (2026-11-24):** Kubernetes
+volumes and API objects stay out, but a PostgreSQL server in Kubernetes is backed up like any database server, by the
+agent's container image in a pod, with pg_dump over the network.
 
 ## Decision
 

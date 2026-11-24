@@ -1,6 +1,9 @@
 # 004: The FQDN is the host identity, with one repository per host
 
-Status: accepted, 2026-11-21
+Status: accepted, 2026-11-21. **Amended by [decision 056](056-agents-named-in-their-own-config.md) (2026-11-24):**
+the identity is the agent's name, set in its `agent.yaml` and never read from the machine. A machine's FQDN is one such
+name; `matrix` or `k3s-postgres-main` is another. One repository per agent, under `repos/<name>`, stays. And with
+[decision 055](055-postgresql-databases.md), an agent may stand for a database server rather than a machine.
 
 ## Decision
 

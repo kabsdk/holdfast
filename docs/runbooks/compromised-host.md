@@ -18,7 +18,7 @@ So the attacker can read this host's backups, and can add new snapshots, but can
 1. **Rotate the repository password and unpin the agent's certificate:**
 
    ```
-   holdfast host rotate web01.example.com -m "INC-1234: suspected compromise"
+   holdfast agent rotate web01.example.com -m "INC-1234: suspected compromise"
    ```
 
    This adds a new restic password, removes the old one, unpins the agent's certificate and issues a new
@@ -28,15 +28,28 @@ So the attacker can read this host's backups, and can add new snapshots, but can
    If it warns that the old key could not be removed (a backup held the lock for too long, say), run it
    again. The host shows the `rotation` error until the old key is gone.
 
-2. **Look for restic passwords added outside Holdfast.** If `holdfast host show` lists any (the
+2. **Look for restic passwords added outside Holdfast.** If `holdfast agent show` lists any (the
    `foreign_keys` alert), an attacker may have added one before the rotation, and it is still there. Remove each
    one you did not add, with plain restic, the maintenance key and the new password from the escrow file, then
    acknowledge:
 
    ```
    restic -r s3:https://s3.example.internal/holdfast/repos/web01.example.com key remove <id>
-   holdfast host acknowledge web01.example.com
+   holdfast agent acknowledge web01.example.com
    ```
+
+3. **Change the PostgreSQL passwords it had.** An agent with PostgreSQL connections (`holdfast agent connection list
+   web01.example.com`) holds their passwords, and the backup user reads every database. On each database server,
+   give the backup user, and the restore user if there is one, a new password, then set it in Holdfast, which sends it
+   to the agent only once it enrolls again:
+
+   ```
+   holdfast agent connection set web01.example.com main --url "…" --user holdfast_backup \
+     --password-file /root/holdfast_backup.pw -m "INC-1234: new password"
+   ```
+
+   Give `--url` and `--user` as `connection list` shows them, and `--restore-user` with
+   `--restore-password-file` too if the connection has one.
 
 There is no S3 key to delete: a host never had one.
 
@@ -55,14 +68,14 @@ The attacker may have added snapshots, and may have changed files before the las
 
 1. Rebuild the host, or clean it if you are sure you can. Restore what you need from the last good
    snapshot. Once it is enrolled, a restore runs through its agent (spec §5.4).
-2. Install the agent, and enroll it with the code `holdfast host rotate` printed. Enrolling makes the agent a new
+2. Install the agent, and enroll it with the code `holdfast agent rotate` printed. Enrolling makes the agent a new
    key and certificate, and the server pins that one. If the code has expired (after 15 minutes), get a new one:
 
    ```
-   holdfast host enroll-code web01.example.com
+   holdfast agent enroll-code web01.example.com
    ```
 
-3. Check that the next backup succeeds: `holdfast host events web01.example.com`.
+3. Check that the next backup succeeds: `holdfast agent events web01.example.com`.
 
 ## 4. Keep the record
 

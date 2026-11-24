@@ -29,9 +29,9 @@ export function History({ me, hosts }) {
     ${cuts.data && (cuts.data.length === 0 ? html`<p class="muted">Nothing is waiting.</p>` : cuts.data.map((c) => html`<div class="banner warning">
       <strong>${c.fqdn} · ${c.job_id}</strong>: ${retentionText(c.from)} → ${retentionText(c.to)}. Cut in r${c.revision} by ${c.changed_by}, ${fmtTime(c.changed_at)}; what it drops may go from ${fmtTime(c.prunable_from)}.
       <div class="row" style="margin-top:.4rem">
-        <a class="button small" href=${link('hosts', c.fqdn, 'pending')}>What waits</a>
+        <a class="button small" href=${link('agents', c.fqdn, 'pending')}>What waits</a>
         ${may(c.fqdn, 'config.jobs') && html`<button class="small" onClick=${() => act.run(() => api.keepLonger(c.fqdn, c.job_id, {})).then(cuts.reload)}>Keep the old retention</button>`}
-        ${may(c.fqdn, 'retention.cut') && html`<a class="button small" href=${link('hosts', c.fqdn, 'prune-now')}>Prune now…</a>`}
+        ${may(c.fqdn, 'retention.cut') && html`<a class="button small" href=${link('agents', c.fqdn, 'prune-now')}>Prune now…</a>`}
       </div></div>`))}
     <h2>Revisions</h2>
     <${ErrorBox} error=${revs.error} />
@@ -43,7 +43,7 @@ export function History({ me, hosts }) {
     <h2>Past prunes</h2>
     <${ErrorBox} error=${prunes.error} />
     ${prunes.data && (prunes.data.length === 0 ? html`<p class="muted">Nothing was forgotten or pruned yet.</p>` : html`<table>
-      <thead><tr><th>Started</th><th>Host</th><th>Kind</th><th>Who</th><th>Status</th><th>Forgotten</th><th>Freed</th><th>Really gone by</th></tr></thead>
+      <thead><tr><th>Started</th><th>Agent</th><th>Kind</th><th>Who</th><th>Status</th><th>Forgotten</th><th>Freed</th><th>Really gone by</th></tr></thead>
       <tbody>${prunes.data.map((p) => html`<tr><td>${fmtTime(p.started_at)}</td><td>${p.fqdn}</td><td>${p.kind.replace('_', ' ')}</td><td>${p.actor}</td>
         <td><${Pill} kind=${p.status === 'success' ? 'ok' : p.status === 'failed' ? 'error' : ''}>${p.status}<//>${p.error ? ' ' + p.error : ''}</td>
         <td>${p.forgotten.length}</td><td>${p.pruned ? p.freed : '—'}</td><td>${fmtDay(p.really_gone_by)}</td></tr>`)}</tbody></table>`)}`;
@@ -88,7 +88,7 @@ export function PruneNow({ fqdn }) {
     ${typed && typed !== p.confirm && html`<p class="muted">Type ${p.confirm} exactly to confirm.</p>`}
     <div class="row">
       <button class="danger" disabled=${typed !== p.confirm || act.busy || act.done} onClick=${() => act.run(() => api.pruneNow(fqdn, { confirm: typed, message: msg }))}>Prune ${p.count} snapshots now</button>
-      <a class="button" href=${link('hosts', fqdn, 'pending')}>Keep the old retention instead</a>
+      <a class="button" href=${link('agents', fqdn, 'pending')}>Keep the old retention instead</a>
       <button onClick=${() => history.back()}>Cancel</button>
     </div>
     <${ErrorBox} error=${act.error} />

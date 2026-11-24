@@ -259,7 +259,8 @@ func (s *Server) vaultFeed(ctx context.Context) (proto.VaultFeed, error) {
 		if err != nil {
 			return proto.VaultFeed{}, err
 		}
-		vh := proto.VaultHost{FQDN: h.FQDN, Repository: c.Repository, RepoPassword: pw, Jobs: []proto.VaultJob{}, DeletedInPrimary: del}
+		vh := proto.VaultHost{FQDN: h.FQDN, Repository: c.Repository, RepoPassword: pw, Jobs: []proto.VaultJob{}, DeletedInPrimary: del,
+			PostgreSQL: hc.PostgreSQL}
 		ids := make([]string, 0, len(hc.Jobs))
 		for id := range hc.Jobs {
 			ids = append(ids, id)
@@ -271,7 +272,8 @@ func (s *Server) vaultFeed(ctx context.Context) (proto.VaultFeed, error) {
 			if sch.Zone == "" {
 				sch.Zone = s.set.DefaultZone
 			}
-			vh.Jobs = append(vh.Jobs, proto.VaultJob{ID: id, Paths: j.Paths, Excludes: j.Excludes, Dump: j.Dump, Schedule: sch, Retention: j.Retention})
+			vh.Jobs = append(vh.Jobs, proto.VaultJob{ID: id, Engine: j.Engine, PostgreSQL: j.PostgreSQL, Paths: j.Paths, Excludes: j.Excludes, Dump: j.Dump,
+				Schedule: sch, Retention: j.Retention})
 		}
 		feed.Hosts = append(feed.Hosts, vh)
 	}

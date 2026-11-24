@@ -4,11 +4,11 @@ import { api } from './api.js';
 import { Overview } from './pages/overview.js';
 import { Host, Pending } from './pages/host.js';
 import { Snapshot } from './pages/snapshots.js';
-import { Job, Calendar } from './pages/job.js';
+import { Job } from './pages/job.js';
 import { Configure } from './pages/configure.js';
 import { Restores } from './pages/restores.js';
 import { History, PruneNow } from './pages/history.js';
-import { AddHost } from './pages/addhost.js';
+import { AddAgent } from './pages/addhost.js';
 import { Audit, Access, Settings, Exports } from './pages/admin.js';
 import { Rollback } from './pages/rollback.js';
 
@@ -25,13 +25,13 @@ function Search() {
   const pick = (href) => { setText(''); setRes(null); location.hash = href.slice(1); };
   const n = res && !res.error ? res.hosts.length + res.jobs.length + res.snapshots.length : 0;
   return html`<div class="searchbox">
-    <input type="search" placeholder="Search FQDN, job or snapshot ID" value=${text} onInput=${(e) => setText(e.target.value)} />
+    <input type="search" placeholder="Search agent, job or snapshot ID" value=${text} onInput=${(e) => setText(e.target.value)} />
     ${res && html`<div class="results">
       ${res.error && html`<p class="muted">${res.error}</p>`}
-      ${!res.error && n === 0 && html`<p class="muted">No host, job or snapshot matches “${text}”. Snapshot IDs need at least 4 hex characters.</p>`}
-      ${!res.error && res.hosts.map((h) => html`<a href="#" onClick=${(e) => { e.preventDefault(); pick(link('hosts', h)); }}>Host · ${h}</a>`)}
-      ${!res.error && res.jobs.map((j) => html`<a href="#" onClick=${(e) => { e.preventDefault(); pick(link('hosts', j.fqdn, 'jobs', j.job_id, 'snapshots')); }}>Job · ${j.fqdn} · ${j.job_id}</a>`)}
-      ${!res.error && res.snapshots.map((s) => html`<a href="#" onClick=${(e) => { e.preventDefault(); pick(link('hosts', s.fqdn, 'snapshots', s.id)); }}>
+      ${!res.error && n === 0 && html`<p class="muted">No agent, job or snapshot matches “${text}”. Snapshot IDs need at least 4 hex characters.</p>`}
+      ${!res.error && res.hosts.map((h) => html`<a href="#" onClick=${(e) => { e.preventDefault(); pick(link('agents', h)); }}>Agent · ${h}</a>`)}
+      ${!res.error && res.jobs.map((j) => html`<a href="#" onClick=${(e) => { e.preventDefault(); pick(link('agents', j.fqdn, 'jobs', j.job_id)); }}>Job · ${j.fqdn} · ${j.job_id}</a>`)}
+      ${!res.error && res.snapshots.map((s) => html`<a href="#" onClick=${(e) => { e.preventDefault(); pick(link('agents', s.fqdn, 'snapshots', s.id)); }}>
         ${s.state === 'present' ? 'Snapshot' : s.state === 'deleted' ? 'Deleted' : 'Disappeared'} · <span class="mono">${s.short_id}</span> · ${s.fqdn} · ${s.job_id}</a>`)}
       ${!res.error && n > 0 && html`<p class="muted">Same search: <code>holdfast search ${text.trim()}</code></p>`}
     </div>`}
@@ -42,7 +42,11 @@ function Shell({ me, settings }) {
   const path = useRoute();
   const hosts = usePoll(() => api.hosts(), []);
   const status = usePoll(() => api.status(), [], 60000); // the server's own problems, such as its export
-  const seg = path.split('/').filter(Boolean).map(decodeURIComponent);
+  // A query (?path=… on Files, ?connection=… on Add job) belongs to the page, not to the route.
+  const seg = path.split('?')[0].split('/').filter(Boolean).map(decodeURIComponent);
+  // Hosts became agents (decision 056): the old addresses still open the same pages.
+  if (seg[0] === 'hosts') seg[0] = 'agents';
+  if (seg[0] === 'add-host') seg[0] = 'add-agent';
   const errors = (hosts.data || []).filter((h) => (h.problems || []).some((p) => p.severity === 'error'));
   // The off-site pages are this UI in red, on the off-site API, with the off-site actions only (decisions 039, 041).
   const vault = settings.role === 'vault';
@@ -53,34 +57,33 @@ function Shell({ me, settings }) {
   if (seg.length === 0 || seg[0] === 'problems') page = html`<${Overview} ...${ctx} />`;
   else if (seg[0] === 'restores' && !vault) page = html`<${Restores} ...${ctx} />`;
   else if (seg[0] === 'history') page = html`<${History} ...${ctx} />`;
-  else if (seg[0] === 'add-host' && !vault) page = html`<${AddHost} ...${ctx} />`;
+  else if (seg[0] === 'add-agent' && !vault) page = html`<${AddAgent} ...${ctx} />`;
   else if (seg[0] === 'audit') page = html`<${Audit} ...${ctx} />`;
   else if (seg[0] === 'access' && !vault) page = html`<${Access} ...${ctx} />`;
   else if (seg[0] === 'settings') page = html`<${Settings} ...${ctx} />`;
   else if (seg[0] === 'exports' && !vault) page = html`<${Exports} ...${ctx} />`;
-  else if (seg[0] === 'hosts' && seg[1]) {
+  else if (seg[0] === 'agents' && seg[1]) {
     const fqdn = seg[1];
     if (seg.length === 2) page = html`<${Host} fqdn=${fqdn} ...${ctx} />`;
     else if (seg[2] === 'pending') page = html`<${Pending} fqdn=${fqdn} ...${ctx} />`;
     else if (seg[2] === 'prune-now') page = html`<${PruneNow} fqdn=${fqdn} ...${ctx} />`;
     else if (seg[2] === 'rollback') page = html`<${Rollback} fqdn=${fqdn} ...${ctx} />`;
     else if (seg[2] === 'configure') page = html`<${Configure} fqdn=${fqdn} job=${seg[3] || ''} ...${ctx} />`;
-    // A job's page; …/snapshots, its old snapshot list, opens it too.
-    else if (seg[2] === 'jobs' && seg[3] && seg[4] === 'calendar') page = html`<${Calendar} key=${fqdn + '/' + seg[3]} fqdn=${fqdn} job=${seg[3]} ...${ctx} />`;
-    else if (seg[2] === 'jobs' && seg[3] && (!seg[4] || seg[4] === 'snapshots')) page = html`<${Job} key=${fqdn + '/' + seg[3]} fqdn=${fqdn} job=${seg[3]} ...${ctx} />`;
+    // A job's page, with its calendar of restore points; …/snapshots and …/calendar, its old pages, open it too.
+    else if (seg[2] === 'jobs' && seg[3] && (!seg[4] || seg[4] === 'snapshots' || seg[4] === 'calendar')) page = html`<${Job} key=${fqdn + '/' + seg[3]} fqdn=${fqdn} job=${seg[3]} ...${ctx} />`;
     else if (seg[2] === 'snapshots' && seg[3]) page = html`<${Snapshot} fqdn=${fqdn} id=${seg[3]} tab=${seg[4] || 'files'} ...${ctx} />`;
   }
   if (!page) page = html`<h1>Not found</h1><p><a href=${link()}>Back to the overview</a></p>`;
 
   const here = location.hash || '#/';
-  // Overview stays marked on the pages under it: a host, its jobs and snapshots.
-  const under = here === link() || here.startsWith(link('hosts')) || here.startsWith(link('problems'));
+  // Overview stays marked on the pages under it: an agent, its jobs and snapshots.
+  const under = here === link() || here.startsWith(link('agents')) || here.startsWith(link('hosts')) || here.startsWith(link('problems'));
   const nav = (href, label, extra) => html`<a href=${href} class=${(href === link() ? under : here.startsWith(href)) ? 'on' : ''}>${label}${extra}</a>`;
   return html`<div class=${'layout' + (vault ? ' vault' : '')}>
     <nav class="side">
       <a class="brand" href=${link()}>Holdfast${vault ? ' off-site' : ''}</a>
       ${vault && html`<div class="badge" title=${'The off-site copies, in ' + settings.storage.bucket}>OFF-SITE · ${settings.storage.bucket}</div>`}
-      ${nav(link(), vault ? 'Copied hosts' : 'Overview', errors.length > 0 && html`<span class="count" aria-label=${errors.length + ' hosts with errors'}>${errors.length}</span>`)}
+      ${nav(link(), vault ? 'Copied agents' : 'Overview', errors.length > 0 && html`<span class="count" aria-label=${errors.length + ' agents with errors'}>${errors.length}</span>`)}
       ${!vault && nav(link('restores'), 'Restores')}
       ${nav(link('history'), vault ? 'Off-site history' : 'Config history')}
       ${nav(link('audit'), vault ? 'Off-site audit log' : 'Audit log')}
@@ -94,7 +97,7 @@ function Shell({ me, settings }) {
       <header class="top">
         <div class="crumbs"><a href=${link()}>Holdfast${vault ? ' off-site' : ''}</a> / ${seg.length && seg[0] !== 'problems' ? seg.slice(0, 2).join(' / ') : 'Overview'}</div>
         <${Search} />
-        <span>${me.name} · ${me.admin_everywhere ? 'admin' : 'by host'} · via ${me.name === 'local:root' ? 'holdfast ui-login' : settings.login.issuer ? new URL(settings.login.issuer).host : 'the root socket'}</span>
+        <span>${me.name} · ${me.admin_everywhere ? 'admin' : 'by agent'} · via ${me.name === 'local:root' ? 'holdfast ui-login' : settings.login.issuer ? new URL(settings.login.issuer).host : 'the root socket'}</span>
         <button class="small" onClick=${async () => { try { await api.logout(); } finally { location.href = '/'; } }}>Log out</button>
       </header>
       ${hosts.error && html`<${ErrorBox} error=${hosts.error} />`}

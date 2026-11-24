@@ -53,7 +53,7 @@ func TestPermissions(t *testing.T) {
 		a    Actor
 		want []string
 	}{{admin, []string{"db01.example.com", "web01.example.com"}}, {web, []string{"web01.example.com"}}, {nobody, nil}} {
-		_, body := apiAs(t, h, tc.a, "GET", "/api/v1/hosts", nil)
+		_, body := apiAs(t, h, tc.a, "GET", "/api/v1/agents", nil)
 		var hosts []HostView
 		_ = json.Unmarshal(body, &hosts)
 		var got []string
@@ -76,20 +76,20 @@ func TestPermissions(t *testing.T) {
 		body   any
 		want   int
 	}{
-		{"a host you cannot see does not exist", web, "GET", "/api/v1/hosts/db01.example.com", nil, 404},
-		{"nor its snapshots", web, "GET", "/api/v1/hosts/db01.example.com/snapshots", nil, 404},
-		{"a host you can see", web, "GET", "/api/v1/hosts/web01.example.com", nil, 200},
-		{"a viewer sees no file names", viewer, "GET", "/api/v1/hosts/web01.example.com/find?pattern=passwd", nil, 403},
-		{"a viewer cannot back up", viewer, "POST", "/api/v1/hosts/web01.example.com/jobs/system/run", nil, 403},
-		{"an editor can", editor, "POST", "/api/v1/hosts/web01.example.com/jobs/system/run", nil, 202},
-		{"an editor cannot restore in place", editor, "POST", "/api/v1/hosts/web01.example.com/snapshots/aaaaaaaa/restore", map[string]any{"target": "in_place"}, 403},
-		{"an editor cannot add a host", editor, "POST", "/api/v1/hosts", map[string]any{"fqdn": "new01.example.com"}, 403},
-		{"an editor cannot Prune now", editor, "GET", "/api/v1/hosts/web01.example.com/prune-now", nil, 403},
-		{"an editor cannot delete a snapshot", editor, "POST", "/api/v1/hosts/web01.example.com/snapshots/aaaaaaaa/delete", map[string]any{}, 403},
-		{"an editor cannot acknowledge", editor, "POST", "/api/v1/hosts/web01.example.com/acknowledge", nil, 403},
-		{"an editor cannot rotate the password", editor, "POST", "/api/v1/hosts/web01.example.com/rotate", nil, 403},
-		{"an editor cannot decommission", editor, "POST", "/api/v1/hosts/web01.example.com/decommission", map[string]any{"confirm": "web01.example.com"}, 403},
-		{"an admin cannot decommission a host still in the config", admin, "POST", "/api/v1/hosts/web01.example.com/decommission", map[string]any{"confirm": "web01.example.com"}, 409},
+		{"a host you cannot see does not exist", web, "GET", "/api/v1/agents/db01.example.com", nil, 404},
+		{"nor its snapshots", web, "GET", "/api/v1/agents/db01.example.com/snapshots", nil, 404},
+		{"a host you can see", web, "GET", "/api/v1/agents/web01.example.com", nil, 200},
+		{"a viewer sees no file names", viewer, "GET", "/api/v1/agents/web01.example.com/find?pattern=passwd", nil, 403},
+		{"a viewer cannot back up", viewer, "POST", "/api/v1/agents/web01.example.com/jobs/system/run", nil, 403},
+		{"an editor can", editor, "POST", "/api/v1/agents/web01.example.com/jobs/system/run", nil, 202},
+		{"an editor cannot restore in place", editor, "POST", "/api/v1/agents/web01.example.com/snapshots/aaaaaaaa/restore", map[string]any{"target": "in_place"}, 403},
+		{"an editor cannot add a host", editor, "POST", "/api/v1/agents", map[string]any{"fqdn": "new01.example.com"}, 403},
+		{"an editor cannot Prune now", editor, "GET", "/api/v1/agents/web01.example.com/prune-now", nil, 403},
+		{"an editor cannot delete a snapshot", editor, "POST", "/api/v1/agents/web01.example.com/snapshots/aaaaaaaa/delete", map[string]any{}, 403},
+		{"an editor cannot acknowledge", editor, "POST", "/api/v1/agents/web01.example.com/acknowledge", nil, 403},
+		{"an editor cannot rotate the password", editor, "POST", "/api/v1/agents/web01.example.com/rotate", nil, 403},
+		{"an editor cannot decommission", editor, "POST", "/api/v1/agents/web01.example.com/decommission", map[string]any{"confirm": "web01.example.com"}, 403},
+		{"an admin cannot decommission a host still in the config", admin, "POST", "/api/v1/agents/web01.example.com/decommission", map[string]any{"confirm": "web01.example.com"}, 409},
 		{"an editor cannot see the bindings", editor, "GET", "/api/v1/access", nil, 403},
 		{"an admin can", admin, "GET", "/api/v1/access", nil, 200},
 		{"nor the sessions", editor, "GET", "/api/v1/sessions", nil, 403},

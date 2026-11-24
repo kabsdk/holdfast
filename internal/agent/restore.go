@@ -92,6 +92,24 @@ func (a *Agent) runRestore(ctx context.Context, c proto.Command) bool {
 	if (spec.Dump || isDump(sn)) && spec.Target != proto.TargetNew && spec.Target != "" {
 		return fail("refused: a dump is restored into a new directory only")
 	}
+	// A PostgreSQL job's dump into its server: a new database beside the original, or in place (decision 055).
+	if spec.Target == proto.TargetDatabase {
+		if spec.PostgreSQL == nil || otherHost {
+			return fail("refused: a restore into a database names its connection, and runs on the dump's own agent")
+		}
+		a.mark(runMarker{Kind: proto.KindRestore, CommandID: c.ID, Started: started, Revision: rev})
+		defer os.Remove(a.path("running.json"))
+		err := a.runPGRestore(ctx, c, r, sn, &ev)
+		if ctx.Err() != nil {
+			return false
+		}
+		if err != nil {
+			return fail("%v", err)
+		}
+		ev.Status, ev.Finished = proto.StatusSuccess, a.now().UTC()
+		a.spool(ev)
+		return true
+	}
 
 	b := a.cfg.Restore
 	var target string
@@ -153,7 +171,7 @@ func (a *Agent) runRestore(ctx context.Context, c proto.Command) bool {
 	opts := restic.RestoreOptions{Target: target, Include: spec.Include, Exclude: spec.Exclude, DryRun: spec.DryRun, Overwrite: spec.Overwrite}
 	// A dump's file has no SELinux label in the snapshot, and another host's labels belong to its policy: the
 	// restored files keep the label this host gives them (found in the lab, on el9 and ol9).
-	if spec.Dump || isDump(sn) || otherHost {
+	if spec.Dump || isDump(sn) || otherHost || a.isPGJob(spec.JobID) {
 		opts.ExcludeXattr = []string{"security.selinux"}
 	}
 	sum, err := r.RestoreWith(rctx, sn.ID, opts)
@@ -177,6 +195,21 @@ func (a *Agent) runRestore(ctx context.Context, c proto.Command) bool {
 	}
 	a.spool(ev)
 	return true
+}
+
+// isPGJob says whether a job of this agent backs up a PostgreSQL database: its dump's file has no SELinux label.
+func (a *Agent) isPGJob(id string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.hc == nil || id == "" {
+		return false
+	}
+	for _, j := range a.hc.Jobs {
+		if j.ID == id {
+			return j.PostgreSQL != nil
+		}
+	}
+	return false
 }
 
 // isDump says whether a snapshot is a dump's: its tags hold dump=<name>.

@@ -102,7 +102,7 @@ func ParseAt(base, method, escapedPath string, query url.Values) (Request, error
 		return Request{}, ErrMalformed
 	}
 	parts := strings.Split(rest, "/")
-	if config.ValidFQDN(parts[0]) != nil {
+	if config.ValidAgentName(parts[0]) != nil {
 		return Request{}, ErrMalformed
 	}
 	r := Request{Repo: parts[0]}

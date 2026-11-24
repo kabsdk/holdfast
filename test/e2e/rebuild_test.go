@@ -131,7 +131,7 @@ func TestRebuildFromExport(t *testing.T) {
 	if after.Restored == nil || after.Restored.ExportName != ex.Name {
 		t.Fatalf("export list after the restore: %+v", after)
 	}
-	if hosts := string(e.offsite("host", "list")); !strings.Contains(hosts, web) {
+	if hosts := string(e.offsite("agent", "list")); !strings.Contains(hosts, web) {
 		t.Fatalf("the off-site tables after the restore: %s", hosts)
 	}
 
@@ -157,13 +157,13 @@ func TestRebuildFromExport(t *testing.T) {
 	plain, _ := json.Marshal(f)
 	file := filepath.Join(e.dir, "db01-escrow.json")
 	must(t, os.WriteFile(file, plain, 0o600))
-	if out, err := e.cliErr("host", "import", web, "--escrow-file", file); err == nil || !strings.Contains(string(out), "db01") {
+	if out, err := e.cliErr("agent", "import", web, "--escrow-file", file); err == nil || !strings.Contains(string(out), "db01") {
 		t.Fatalf("importing db01's file as web01: %v %s", err, out)
 	}
 	var code struct {
 		Code string `json:"code"`
 	}
-	must(t, json.Unmarshal(e.cli("host", "enroll-code", db), &code))
+	must(t, json.Unmarshal(e.cli("agent", "enroll-code", db), &code))
 	dbAgent.kill(syscall.SIGTERM)
 	e.startAgent(db, code.Code)
 	waitFor(t, "db01 back", time.Minute, func() bool { return e.host(db).Online })

@@ -1,7 +1,7 @@
-# /etc/holdfast/agent.yaml, written by `holdfast-agent enroll`. Enrolling again keeps restore:, which is the host's
-# own: only root here sets it, and the server cannot.
+# /etc/holdfast/agent.yaml, written by `holdfast-agent enroll`. Enrolling again keeps restore: and postgresql:, which
+# are the agent's own: only root here sets them, and the server cannot.
+agent_name: web01.example.com # the agent's name in Holdfast (decision 056): chosen, never read from the machine
 server: https://holdfast.example.internal:8443
-fqdn: web01.example.com
 ca_sha256: ""
 state_dir: /var/lib/holdfast-agent
 credentials_dir: /etc/holdfast/credentials
@@ -17,5 +17,11 @@ restore:
   allow_other_directories: false # into any other directory
   allow_other_hosts: false       # another host's snapshot, which the gateway lets this host read for that restore
 
-# Holdfast runs no command on a host (decision 052): there is no dumps: any more. A database is backed up from the
-# export a systemd timer on the host writes, with a paths job (spec §4.6).
+# PostgreSQL jobs (decision 055, spec §4.6). Without bin_dir this agent takes none. The connections, with their
+# passwords, are set in Holdfast (holdfast agent connection set), not here.
+# postgresql:
+#   bin_dir: /usr/lib/postgresql/18/bin   # pg_dump, pg_dumpall, pg_restore and psql; pg_dump at least as new as the server
+#   allow_in_place_restore: false         # true lets an admin restore a dump over the database it came from
+
+# Holdfast runs no command a person defines on a host (decision 052): there is no dumps: any more. Any other database
+# is backed up from the export a systemd timer on the host writes, with a paths job (spec §4.6).

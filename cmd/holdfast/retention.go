@@ -49,7 +49,7 @@ func day(t *time.Time) string {
 }
 
 func pendingCmd() *cobra.Command {
-	return &cobra.Command{Use: "pending [fqdn]", Short: "What waits out the 7 days before it is forgotten; without a host, the retention cuts of every host", Args: cobra.MaximumNArgs(1), RunE: func(_ *cobra.Command, a []string) error {
+	return &cobra.Command{Use: "pending [agent]", Short: "What waits out the 7 days before it is forgotten; without a host, the retention cuts of every host", Args: cobra.MaximumNArgs(1), RunE: func(_ *cobra.Command, a []string) error {
 		if len(a) == 0 {
 			return retentionCuts()
 		}
@@ -62,7 +62,7 @@ func pendingCmd() *cobra.Command {
 			} `json:"jobs"`
 			NoncurrentDays int `json:"noncurrent_days"`
 		}
-		raw, err := call("GET", "/api/v1/hosts/"+url.PathEscape(a[0])+"/pending", nil, &p)
+		raw, err := call("GET", "/api/v1/agents/"+url.PathEscape(a[0])+"/pending", nil, &p)
 		if err != nil {
 			return err
 		}
@@ -85,7 +85,7 @@ func pendingCmd() *cobra.Command {
 			if err := w.Flush(); err != nil {
 				return err
 			}
-			fmt.Printf("\nholdfast job keep-longer <fqdn> <job> brings an older retention back; holdfast snapshot delete --cancel cancels a deletion\n")
+			fmt.Printf("\nholdfast job keep-longer <agent> <job> brings an older retention back; holdfast snapshot delete --cancel cancels a deletion\n")
 		}
 		if len(p.Forget) > 0 {
 			fmt.Printf("%d snapshots are past the 7 days and go at the next daily run\n", len(p.Forget))
@@ -129,7 +129,7 @@ func retentionCuts() error {
 	if err := w.Flush(); err != nil {
 		return err
 	}
-	fmt.Println("\nholdfast pending <fqdn> shows the snapshots that wait; holdfast job keep-longer brings the old retention back")
+	fmt.Println("\nholdfast pending <agent> shows the snapshots that wait; holdfast job keep-longer brings the old retention back")
 	return nil
 }
 
@@ -146,10 +146,10 @@ func settingsCmd() *cobra.Command {
 
 func prunesCmd() *cobra.Command {
 	var all bool
-	c := &cobra.Command{Use: "prunes [fqdn]", Short: "Past forgets and prunes, newest first", Args: cobra.MaximumNArgs(1), RunE: func(_ *cobra.Command, a []string) error {
+	c := &cobra.Command{Use: "prunes [agent]", Short: "Past forgets and prunes, newest first", Args: cobra.MaximumNArgs(1), RunE: func(_ *cobra.Command, a []string) error {
 		path := "/api/v1/prunes"
 		if len(a) == 1 {
-			path = "/api/v1/hosts/" + url.PathEscape(a[0]) + "/prunes"
+			path = "/api/v1/agents/" + url.PathEscape(a[0]) + "/prunes"
 		}
 		if all {
 			path += "?all=1"
@@ -184,7 +184,7 @@ func waitRun(fqdn string, id int64, timeout time.Duration) (pruneRun, []byte, er
 	deadline := time.Now().Add(timeout)
 	for {
 		var runs []pruneRun
-		raw, err := call("GET", "/api/v1/hosts/"+url.PathEscape(fqdn)+"/prunes?all=1&limit=1000", nil, &runs)
+		raw, err := call("GET", "/api/v1/agents/"+url.PathEscape(fqdn)+"/prunes?all=1&limit=1000", nil, &runs)
 		if err != nil {
 			return pruneRun{}, nil, err
 		}
@@ -245,9 +245,9 @@ func retentionCmd() *cobra.Command {
 	c := &cobra.Command{Use: "retention", Short: "Retention"}
 	var wait bool
 	var timeout time.Duration
-	run := &cobra.Command{Use: "run <fqdn>", Short: "Run the daily forget and prune now, with the 7-day protection", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, a []string) error {
+	run := &cobra.Command{Use: "run <agent>", Short: "Run the daily forget and prune now, with the 7-day protection", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, a []string) error {
 		var res runStarted
-		raw, err := call("POST", "/api/v1/hosts/"+url.PathEscape(a[0])+"/retention/run", nil, &res)
+		raw, err := call("POST", "/api/v1/agents/"+url.PathEscape(a[0])+"/retention/run", nil, &res)
 		if err != nil {
 			return err
 		}
@@ -263,9 +263,9 @@ func pruneNowCmd() *cobra.Command {
 	var confirm, msg string
 	var wait bool
 	var timeout time.Duration
-	c := &cobra.Command{Use: "prune-now <fqdn>", Short: "Admin: forget what the current retention drops, without the 7-day protection, then prune. Without --confirm it only shows what would go",
+	c := &cobra.Command{Use: "prune-now <agent>", Short: "Admin: forget what the current retention drops, without the 7-day protection, then prune. Without --confirm it only shows what would go",
 		Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, a []string) error {
-			path := "/api/v1/hosts/" + url.PathEscape(a[0]) + "/prune-now"
+			path := "/api/v1/agents/" + url.PathEscape(a[0]) + "/prune-now"
 			if confirm == "" {
 				var p struct {
 					Confirm   string        `json:"confirm"`
@@ -330,63 +330,75 @@ func snapshotDeleteCmd() *cobra.Command {
 	var msg, confirm string
 	var now, cancel, wait bool
 	var timeout time.Duration
-	c := &cobra.Command{Use: "delete <fqdn> <snapshot>", Short: "Admin: delete one snapshot after 7 days (--cancel undoes it), or now with --now --confirm <short name>",
-		Args: cobra.ExactArgs(2), RunE: func(_ *cobra.Command, a []string) error {
-			path := "/api/v1/hosts/" + url.PathEscape(a[0]) + "/snapshots/" + url.PathEscape(a[1]) + "/delete"
-			if cancel {
-				raw, err := call("DELETE", path, nil, nil)
-				if err != nil {
-					return err
-				}
-				if asJSON {
-					printJSON(raw)
-					return nil
-				}
-				fmt.Printf("the deletion of %s is cancelled\n", a[1])
-				return nil
+	c := &cobra.Command{Use: "delete <agent> <snapshot>...", Short: "Admin: delete snapshots after 7 days (--cancel undoes it), or now with --now --confirm <agent>; always with a --reason",
+		Args: cobra.MinimumNArgs(2), RunE: func(_ *cobra.Command, a []string) error {
+			if !cancel && strings.TrimSpace(msg) == "" {
+				return errors.New("say why with --reason: it goes into the audit log and onto the snapshot")
 			}
 			if now && confirm == "" {
-				return fmt.Errorf("--now needs --confirm with the host's short name, %s", strings.SplitN(a[0], ".", 2)[0])
+				return fmt.Errorf("--now needs --confirm with the agent's short name, %s", strings.SplitN(a[0], ".", 2)[0])
 			}
-			var res struct {
-				SnapshotID string     `json:"snapshot_id"`
-				Status     string     `json:"status"`
-				PrunableAt *time.Time `json:"prunable_at"`
-				Run        int64      `json:"run"`
-				GoneBy     *time.Time `json:"really_gone_by"`
+			for _, id := range a[1:] {
+				if err := deleteOne(a[0], id, msg, confirm, now, cancel, wait, timeout); err != nil {
+					return fmt.Errorf("snapshot %s: %w", id, err)
+				}
 			}
-			raw, err := call("POST", path, map[string]any{"message": msg, "now": now, "confirm": confirm}, &res)
-			if err != nil {
-				return err
-			}
-			if res.Run != 0 {
-				return startedOrWait(raw, runStarted{Run: res.Run, FQDN: a[0]}, wait, timeout, "Delete now")
-			}
-			if asJSON {
-				printJSON(raw)
-				return nil
-			}
-			fmt.Printf("snapshot %s is pending deletion: the daily run forgets it from %s, and the next prune frees its space", res.SnapshotID[:min(8, len(res.SnapshotID))], res.PrunableAt.Local().Format("2006-01-02 15:04"))
-			if res.GoneBy != nil {
-				fmt.Printf("; S3's old versions expire by about %s", day(res.GoneBy))
-			}
-			fmt.Printf("\nholdfast snapshot delete %s %s --cancel undoes it\n", a[0], a[1])
 			return nil
 		}}
-	c.Flags().StringVarP(&msg, "message", "m", "", "why, for the audit log")
+	c.Flags().StringVarP(&msg, "reason", "m", "", "why, for the audit log: required")
 	c.Flags().BoolVar(&now, "now", false, "Delete now: forget it at once, without the 7-day wait")
-	c.Flags().StringVar(&confirm, "confirm", "", "with --now: the host's short name, typed to confirm")
+	c.Flags().StringVar(&confirm, "confirm", "", "with --now: the agent's short name, typed to confirm")
 	c.Flags().BoolVar(&cancel, "cancel", false, "cancel a pending deletion")
 	c.Flags().BoolVar(&wait, "wait", false, "with --now: wait for the forget to finish")
 	c.Flags().DurationVar(&timeout, "timeout", time.Hour, "with --wait: how long to wait")
 	return c
 }
 
+func deleteOne(agent, id, msg, confirm string, now, cancel, wait bool, timeout time.Duration) error {
+	path := "/api/v1/agents/" + url.PathEscape(agent) + "/snapshots/" + url.PathEscape(id) + "/delete"
+	if cancel {
+		raw, err := call("DELETE", path, nil, nil)
+		if err != nil {
+			return err
+		}
+		if asJSON {
+			printJSON(raw)
+			return nil
+		}
+		fmt.Printf("the deletion of %s is cancelled\n", id)
+		return nil
+	}
+	var res struct {
+		SnapshotID string     `json:"snapshot_id"`
+		Status     string     `json:"status"`
+		PrunableAt *time.Time `json:"prunable_at"`
+		Run        int64      `json:"run"`
+		GoneBy     *time.Time `json:"really_gone_by"`
+	}
+	raw, err := call("POST", path, map[string]any{"message": msg, "now": now, "confirm": confirm}, &res)
+	if err != nil {
+		return err
+	}
+	if res.Run != 0 {
+		return startedOrWait(raw, runStarted{Run: res.Run, FQDN: agent}, wait, timeout, "Delete now")
+	}
+	if asJSON {
+		printJSON(raw)
+		return nil
+	}
+	fmt.Printf("snapshot %s is pending deletion: the daily run forgets it from %s, and the next prune frees its space", res.SnapshotID[:min(8, len(res.SnapshotID))], res.PrunableAt.Local().Format("2006-01-02 15:04"))
+	if res.GoneBy != nil {
+		fmt.Printf("; S3's old versions expire by about %s", day(res.GoneBy))
+	}
+	fmt.Printf("\nholdfast snapshot delete %s %s --cancel undoes it\n", agent, id)
+	return nil
+}
+
 func keepLongerCmd() *cobra.Command {
 	var rev int64
 	var msg string
 	var accept []string
-	c := &cobra.Command{Use: "keep-longer <fqdn> <job>", Short: "Bring back an older retention that was in force during the last 7 days (a new revision)", Args: cobra.ExactArgs(2), RunE: func(_ *cobra.Command, a []string) error {
+	c := &cobra.Command{Use: "keep-longer <agent> <job>", Short: "Bring back an older retention that was in force during the last 7 days (a new revision)", Args: cobra.ExactArgs(2), RunE: func(_ *cobra.Command, a []string) error {
 		in := map[string]any{"message": msg, "accept": accept}
 		if rev != 0 {
 			in["revision"] = rev
@@ -396,7 +408,7 @@ func keepLongerCmd() *cobra.Command {
 			Findings []finding `json:"findings"`
 			Accepted []string  `json:"accepted_codes"`
 		}
-		raw, err := call("POST", "/api/v1/hosts/"+url.PathEscape(a[0])+"/jobs/"+url.PathEscape(a[1])+"/keep-longer", in, &res)
+		raw, err := call("POST", "/api/v1/agents/"+url.PathEscape(a[0])+"/jobs/"+url.PathEscape(a[1])+"/keep-longer", in, &res)
 		if err != nil {
 			return err
 		}

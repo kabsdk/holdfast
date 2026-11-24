@@ -82,7 +82,7 @@ groups:
         for: 2h
         labels: {severity: ticket}
         annotations:
-          summary: "{{ $labels.host }}: the server cannot read its repository from the bucket (holdfast host show {{ $labels.host }})"
+          summary: "{{ $labels.host }}: the server cannot read its repository from the bucket (holdfast agent show {{ $labels.host }})"
 
       - alert: HoldfastMaintenanceStale
         expr: time() - holdfast_maintenance_last_success_timestamp_seconds{kind="check"} > 3 * 86400
@@ -96,7 +96,7 @@ groups:
         expr: holdfast_snapshots_disappeared > 0
         labels: {severity: page}
         annotations:
-          summary: "{{ $labels.host }}: {{ $value }} snapshots disappeared without Holdfast deleting them (holdfast host show {{ $labels.host }})"
+          summary: "{{ $labels.host }}: {{ $value }} snapshots disappeared without Holdfast deleting them (holdfast agent show {{ $labels.host }})"
 
       - alert: HoldfastRepositoryKeyAdded
         # A restic password was added to the repository outside Holdfast (decision 032): whoever holds it
@@ -104,7 +104,7 @@ groups:
         expr: holdfast_repository_foreign_keys > 0
         labels: {severity: page}
         annotations:
-          summary: "{{ $labels.host }}: a restic password was added to its repository outside Holdfast (holdfast host show {{ $labels.host }})"
+          summary: "{{ $labels.host }}: a restic password was added to its repository outside Holdfast (holdfast agent show {{ $labels.host }})"
 
       - alert: HoldfastRetentionFailing
         # The host's last forget-and-prune failed. A repository check that fails before the prune blocks it,
@@ -129,7 +129,7 @@ groups:
         for: 1h
         labels: {severity: ticket}
         annotations:
-          summary: "{{ $labels.host }} runs another restic than the one Holdfast is tested with (holdfast host show {{ $labels.host }})"
+          summary: "{{ $labels.host }} runs another restic than the one Holdfast is tested with (holdfast agent show {{ $labels.host }})"
 
       - alert: HoldfastAgentTooOld
         # The agent speaks an older protocol than the server accepts (docs/install.md): it backs up on its cached
@@ -146,7 +146,7 @@ groups:
         expr: holdfast_storage_contract_failed == 1
         labels: {severity: page}
         annotations:
-          summary: "{{ $labels.host }}: storage check {{ $labels.code }} fails (holdfast host show {{ $labels.host }})"
+          summary: "{{ $labels.host }}: storage check {{ $labels.code }} fails (holdfast agent show {{ $labels.host }})"
 
       - alert: HoldfastEscrowNotWritten
         # The bucket's escrow file does not hold the host's current repository password (decision 036): the
@@ -155,7 +155,7 @@ groups:
         for: 1h
         labels: {severity: ticket}
         annotations:
-          summary: "{{ $labels.host }}: the escrow file in the bucket does not hold its current repository password (holdfast host show {{ $labels.host }})"
+          summary: "{{ $labels.host }}: the escrow file in the bucket does not hold its current repository password (holdfast agent show {{ $labels.host }})"
 
       - alert: HoldfastEscrowNotConfigured
         # server.yaml names no escrow.age_recipient: repository passwords are only in PostgreSQL, and no nightly export
@@ -190,7 +190,7 @@ groups:
         expr: holdfast_host_decommission_due_timestamp_seconds > 0 and time() - holdfast_host_decommission_due_timestamp_seconds > 3600
         labels: {severity: ticket}
         annotations:
-          summary: "{{ $labels.host }}: its decommission is overdue; the repository could not be deleted (holdfast host show {{ $labels.host }})"
+          summary: "{{ $labels.host }}: its decommission is overdue; the repository could not be deleted (holdfast agent show {{ $labels.host }})"
 
       - alert: HoldfastOffsiteLag
         # With offsite: (decisions 039 and 041): a job's newest off-site copy is more than twice the job's longest

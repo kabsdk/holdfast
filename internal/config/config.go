@@ -23,14 +23,18 @@ type Document struct {
 	Access  Access          `json:"access"`
 }
 
-// Host is one host, identified by its FQDN (the map key in Document.Hosts).
+// Host is one agent, identified by its name (the map key in Document.Hosts): the agent_name in its agent.yaml,
+// which may be a machine's FQDN or any other name (decision 056). Holdfast called them hosts until 0.1.0; the
+// document keeps the word.
 type Host struct {
 	Jobs map[string]Job `json:"jobs"` // key: job ID
+	// PostgreSQL are the agent's PostgreSQL connections, by name (decision 055). Their passwords are not here.
+	PostgreSQL map[string]PGConnection `json:"postgresql,omitempty"`
 }
 
 // Job is one backup job on one host.
 type Job struct {
-	Engine    string            `json:"engine"` // "restic"
+	Engine    string            `json:"engine"` // "restic": paths; "postgresql": a database (decision 055)
 	Paths     []string          `json:"paths"`
 	Excludes  []string          `json:"excludes,omitempty"`
 	Schedule  schedule.Schedule `json:"schedule"`
@@ -41,6 +45,8 @@ type Job struct {
 	// jobs: Holdfast runs no command on a host (decision 052). It is kept so that a revision from before reads, and
 	// a job that still has it is refused with a reason; snapshots it made are restored as any other.
 	Dump string `json:"dump,omitempty"`
+	// PostgreSQL is what a job of the postgresql engine backs up (decision 055); nil for any other.
+	PostgreSQL *PGJob `json:"postgresql,omitempty"`
 
 	// In a vault only (decisions 027 and 039): Retention is then the off-site retention, the vault's own;
 	// Primary is the source's, which the vault shows and never sets; Excluded stops copying and keeps the

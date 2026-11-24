@@ -62,6 +62,8 @@ type PendingSnapshot struct {
 	Reason      string     `json:"reason"`
 	KeptBy      int64      `json:"kept_by_revision,omitempty"` // the revision whose policy still keeps it
 	RequestedBy string     `json:"requested_by,omitempty"`
+	RequestedAt *time.Time `json:"requested_at,omitempty"`
+	Message     string     `json:"message,omitempty"`        // a deletion's reason (decision 055)
 	PrunableAt  time.Time  `json:"prunable_at"`              // from then, the daily run forgets and prunes it
 	GoneBy      *time.Time `json:"really_gone_by,omitempty"` // and S3's old versions of its data have expired
 }
@@ -169,7 +171,8 @@ func (s *Server) retentionPlan(ctx context.Context, fqdn string) (RetentionPlan,
 			}
 			continue
 		}
-		p := PendingSnapshot{ID: d.SnapshotID, ShortID: d.SnapshotID[:min(8, len(d.SnapshotID))], Reason: PendingDeletion, RequestedBy: d.RequestedBy, PrunableAt: due}
+		p := PendingSnapshot{ID: d.SnapshotID, ShortID: d.SnapshotID[:min(8, len(d.SnapshotID))], Reason: PendingDeletion, RequestedBy: d.RequestedBy,
+			RequestedAt: &d.RequestedAt, Message: d.Message, PrunableAt: due}
 		if sn, err := s.st.Q().GetSnapshot(ctx, fqdn, d.SnapshotID); err == nil {
 			p.ShortID, p.Time, p.JobID = sn.ShortID, sn.Time, sn.JobID
 		}
@@ -729,6 +732,10 @@ type DeleteSnapshotResult struct {
 // DeleteSnapshot asks restic to forget one snapshot: after the 7-day wait, or at once with Delete now.
 // The space is freed at the next prune.
 func (s *Server) DeleteSnapshot(ctx context.Context, a Actor, fqdn, id string, in DeleteSnapshotInput) (DeleteSnapshotResult, error) {
+	// A deletion always says why: the reason goes into the audit log and onto the snapshot (decision 055).
+	if strings.TrimSpace(in.Message) == "" {
+		return DeleteSnapshotResult{}, &ValidationError{config.Problems{{Path: "message", Message: "say why: deleting a snapshot needs a reason, which goes into the audit log"}}}
+	}
 	h, err := s.st.Q().GetHost(ctx, fqdn)
 	if err != nil {
 		return DeleteSnapshotResult{}, fmt.Errorf("host %s: %w", fqdn, err)
@@ -746,6 +753,9 @@ func (s *Server) DeleteSnapshot(ctx context.Context, a Actor, fqdn, id string, i
 		if err != nil {
 			return DeleteSnapshotResult{}, err
 		}
+		if err := s.st.Q().SetDeletionReason(ctx, fqdn, sn.ID, a.Name, in.Message); err != nil {
+			s.log.Warn("keeping a deletion's reason", "host", fqdn, "snapshot", sn.ID, "err", err)
+		}
 		_ = s.st.Q().Audit(ctx, store.AuditEntry{Actor: a.Name, Source: a.Source, Action: "snapshot.delete_now", FQDN: fqdn, JobID: sn.JobID,
 			Detail: map[string]any{"snapshot": sn.ID, "run": run, "message": in.Message}})
 		go s.runMaintenance(run, fqdn, store.RunDeleteNow, a, func(context.Context) ([]string, error) { return []string{sn.ID}, nil })
@@ -757,6 +767,9 @@ func (s *Server) DeleteSnapshot(ctx context.Context, a Actor, fqdn, id string, i
 			if errors.Is(err, store.ErrConflict) {
 				return fmt.Errorf("snapshot %s is pending deletion already: %w", sn.ShortID, ErrConflict)
 			}
+			return err
+		}
+		if err := q.SetDeletionReason(ctx, fqdn, sn.ID, a.Name, in.Message); err != nil {
 			return err
 		}
 		return q.Audit(ctx, store.AuditEntry{Actor: a.Name, Source: a.Source, Action: "snapshot.delete_requested", FQDN: fqdn, JobID: sn.JobID,
@@ -778,6 +791,9 @@ func (s *Server) CancelDeletion(ctx context.Context, a Actor, fqdn, id string) e
 	return s.st.InTx(ctx, func(q *store.Q) error {
 		if err := q.RemovePendingDeletion(ctx, fqdn, id); err != nil {
 			return fmt.Errorf("no pending deletion of snapshot %s on %s: %w", id, fqdn, err)
+		}
+		if err := q.SetDeletionReason(ctx, fqdn, id, "", ""); err != nil {
+			return err
 		}
 		return q.Audit(ctx, store.AuditEntry{Actor: a.Name, Source: a.Source, Action: "snapshot.delete_cancelled", FQDN: fqdn,
 			Detail: map[string]any{"snapshot": id}})

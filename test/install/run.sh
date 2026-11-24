@@ -6,7 +6,7 @@
 #   - the server installs with its own PostgreSQL, CA, the recovery file and the web UI, and starts. The odd scenarios
 #     take the least there is: the installer makes the age key, root logs in to the UI with holdfast ui-login, and
 #     alerts go to a webhook, with a heartbeat. The even ones give their own age key, UI certificate and OIDC;
-#   - `holdfast host add` prints the one line; on each agent it installs, enrolls, and a backup goes through the gateway;
+#   - `holdfast agent add` prints the one line; on each agent it installs, enrolls, and a backup goes through the gateway;
 #   - run again, it only upgrades, on the server and on an agent;
 #   - the CLI installs;
 #   - the server lost and replaced on a new machine: in the odd scenarios with the recovery file alone, as the docs have
@@ -58,17 +58,17 @@ machine() { # machine NAME IMAGE: a container with systemd as PID 1, on the test
 	fail "$1: systemd did not come up"
 }
 mcx() { docker run --rm --network $net --entrypoint /usr/bin/mc -e MC_HOST_hf="http://hfroot:hfroot-install-secret@hf-install-minio:9000" -v "$work:/work:ro" "$MC_IMAGE" "$@"; }
-# backups SERVER FQDN: how many successful backups the host has; 0 before the first (grep finds none, which pipefail
+# backups SERVER AGENT: how many successful backups the agent has; 0 before the first (grep finds none, which pipefail
 # would make an error).
-backups() { { docker exec "$1" holdfast host events "$2" --json | grep -o '"status": *"success"' || true; } | wc -l; }
-wait_backup() { # wait_backup SERVER FQDN BEFORE: until the host has more successful backups than BEFORE
+backups() { { docker exec "$1" holdfast agent events "$2" --json | grep -o '"status": *"success"' || true; } | wc -l; }
+wait_backup() { # wait_backup SERVER AGENT BEFORE: until the agent has more successful backups than BEFORE
 	local now=0
 	for _ in $(seq 90); do
 		now=$(backups "$1" "$2")
 		[ "$now" -gt "$3" ] && return 0
 		sleep 2
 	done
-	fail "$2: no backup: $(docker exec "$1" holdfast host events "$2")"
+	fail "$2: no backup: $(docker exec "$1" holdfast agent events "$2")"
 }
 
 docker network create $net >/dev/null
@@ -193,19 +193,19 @@ EOF
 	[ "$code" = 403 ] || fail "the link worked twice: $code"
 	ok "holdfast ui-login gives a link that logs in once, as an admin everywhere"
 
-	add=$(docker exec $srv holdfast host add agent$n-1.install.test --json) || fail "host add: $add"
+	add=$(docker exec $srv holdfast agent add agent$n-1.install.test --json) || fail "agent add: $add"
 	docker exec $srv holdfast job set agent$n-1.install.test etc --path /etc >/dev/null || fail "job set with the default schedule and retention"
 	line=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["enrollment"]["install_script"])' <<<"$add")
-	[[ $line == "curl -sfL file:///dist/install.sh | HOLDFAST_SERVER=https://$srv:8443 HOLDFAST_FQDN=agent$n-1.install.test "*" HOLDFAST_CA_SHA256=$pin HOLDFAST_DOWNLOAD_URL=file:///dist sh -" ]] ||
-		fail "host add's one line: $line"
-	ok "host add prints the one line: $line"
+	[[ $line == "curl -sfL file:///dist/install.sh | HOLDFAST_SERVER=https://$srv:8443 HOLDFAST_AGENT_NAME=agent$n-1.install.test "*" HOLDFAST_CA_SHA256=$pin HOLDFAST_DOWNLOAD_URL=file:///dist sh -" ]] ||
+		fail "agent add's one line: $line"
+	ok "agent add prints the one line: $line"
 
 	i=0
 	for img in $agent_images; do
 		i=$((i + 1))
 		fqdn=agent$n-$i.install.test
 		if [ $i -gt 1 ]; then
-			add=$(docker exec $srv holdfast host add $fqdn --json) || fail "host add: $add"
+			add=$(docker exec $srv holdfast agent add $fqdn --json) || fail "agent add: $add"
 			docker exec $srv holdfast job set $fqdn etc --path /etc >/dev/null || fail "job set with the defaults"
 			line=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["enrollment"]["install_script"])' <<<"$add")
 		fi

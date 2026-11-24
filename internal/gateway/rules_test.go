@@ -54,7 +54,7 @@ func TestParseRefusesTricks(t *testing.T) {
 		{"GET", Base + "web01.example.com/data/ab/" + anID},
 		{"GET", Base + "web01.example.com/escrow/" + anID},
 		{"GET", Base + "Web01.example.com/config"},
-		{"GET", Base + "web01/config"},
+		{"GET", Base + "Web01/config"}, // an agent's name is lower case: web01 alone is one (decision 056)
 		{"GET", Base + "web01.example.com"},
 		{"GET", Base + "web01.example.com/"},
 		{"POST", Base + "web01.example.com/"},

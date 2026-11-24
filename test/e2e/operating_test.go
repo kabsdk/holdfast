@@ -125,7 +125,7 @@ func TestEscrowSizeAndRotate(t *testing.T) {
 			Code string `json:"code"`
 		} `json:"enrollment"`
 	}
-	must(t, json.Unmarshal(e.cli("host", "rotate", fqdn, "-m", "e2e: suspected compromise"), &rot))
+	must(t, json.Unmarshal(e.cli("agent", "rotate", fqdn, "-m", "e2e: suspected compromise"), &rot))
 	if rot.Warning != "" || len(rot.RemovedKeys) != 1 || !rot.Escrowed || rot.Enrollment.Code == "" || rot.NewKey == "" {
 		t.Fatalf("rotate: %+v", rot)
 	}
@@ -189,25 +189,25 @@ func TestDecommission(t *testing.T) {
 	}
 
 	// Only a removed host can be decommissioned.
-	if out, err := e.cliErr("host", "decommission", fqdn, "--confirm", fqdn); err == nil || !strings.Contains(string(out), "remove") {
+	if out, err := e.cliErr("agent", "decommission", fqdn, "--confirm", fqdn); err == nil || !strings.Contains(string(out), "remove") {
 		t.Fatalf("a host in the config was decommissioned: %v %s", err, out)
 	}
-	e.cli("host", "remove", fqdn)
+	e.cli("agent", "remove", fqdn)
 	waitFor(t, "the host to be retired", time.Minute, func() bool { return e.host(fqdn).State == "retired" })
-	if out, err := e.cliErr("host", "decommission", fqdn, "--confirm", "dec01"); err == nil || !strings.Contains(string(out), "FQDN") {
+	if out, err := e.cliErr("agent", "decommission", fqdn, "--confirm", "dec01"); err == nil || !strings.Contains(string(out), "FQDN") {
 		t.Fatalf("decommission without the FQDN typed: %v %s", err, out)
 	}
 
 	// Asked for, cancelled, asked for again.
-	e.cli("host", "decommission", fqdn, "--confirm", fqdn, "-m", "e2e")
+	e.cli("agent", "decommission", fqdn, "--confirm", fqdn, "-m", "e2e")
 	if h := e.host(fqdn); h.Decommission == nil || time.Until(h.Decommission.DueAt) < 6*24*time.Hour {
 		t.Fatalf("decommission waits 7 days: %+v", h.Decommission)
 	}
-	e.cli("host", "decommission", fqdn, "--cancel")
+	e.cli("agent", "decommission", fqdn, "--cancel")
 	if h := e.host(fqdn); h.Decommission != nil {
 		t.Fatalf("cancelled: %+v", h.Decommission)
 	}
-	e.cli("host", "decommission", fqdn, "--confirm", fqdn)
+	e.cli("agent", "decommission", fqdn, "--confirm", fqdn)
 	if h := e.host(fqdn); !hasProblem(h, "decommission") {
 		t.Fatalf("a waiting decommission is shown: %+v", h.Problems)
 	}

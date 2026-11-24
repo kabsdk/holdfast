@@ -236,10 +236,11 @@ func hostStatus(h hostView) string {
 }
 
 func hostCmd() *cobra.Command {
-	c := &cobra.Command{Use: "host", Short: "Hosts"}
+	c := &cobra.Command{Use: "agent", Short: "Agents: the machines and pods that back up, each with its own repository"}
+	c.AddCommand(connectionCmd())
 	c.AddCommand(&cobra.Command{Use: "list", Short: "List hosts", RunE: func(*cobra.Command, []string) error {
 		var hosts []hostView
-		raw, err := call("GET", "/api/v1/hosts", nil, &hosts)
+		raw, err := call("GET", "/api/v1/agents", nil, &hosts)
 		if err != nil {
 			return err
 		}
@@ -258,9 +259,9 @@ func hostCmd() *cobra.Command {
 		}
 		return w.Flush()
 	}})
-	c.AddCommand(&cobra.Command{Use: "show <fqdn>", Short: "Show a host: agent, drift and jobs", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, a []string) error {
+	c.AddCommand(&cobra.Command{Use: "show <agent>", Short: "Show a host: agent, drift and jobs", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, a []string) error {
 		var h hostView
-		raw, err := call("GET", "/api/v1/hosts/"+url.PathEscape(a[0]), nil, &h)
+		raw, err := call("GET", "/api/v1/agents/"+url.PathEscape(a[0]), nil, &h)
 		if err != nil {
 			return err
 		}
@@ -283,11 +284,11 @@ func hostCmd() *cobra.Command {
 		if h.Disappeared > 0 {
 			fmt.Printf("ALERT: %d snapshots disappeared from the repository without Holdfast deleting them.\n"+
 				"  They can be recovered from S3's old versions until the bucket's lifecycle rule expires them.\n"+
-				"  holdfast snapshot list %s --all shows them; holdfast host acknowledge %s clears this.\n", h.Disappeared, h.FQDN, h.FQDN)
+				"  holdfast snapshot list %s --all shows them; holdfast agent acknowledge %s clears this.\n", h.Disappeared, h.FQDN, h.FQDN)
 		}
 		if len(h.ForeignKeys) > 0 {
 			fmt.Printf("ALERT: %d restic passwords were added to the repository outside Holdfast; whoever holds one can read every backup.\n"+
-				"  Key IDs: %s. Remove the ones you did not add (restic key remove), then holdfast host acknowledge %s.\n",
+				"  Key IDs: %s. Remove the ones you did not add (restic key remove), then holdfast agent acknowledge %s.\n",
 				len(h.ForeignKeys), strings.Join(h.ForeignKeys, ", "), h.FQDN)
 		}
 		if h.NotMadeByHoldfast > 0 {
@@ -323,14 +324,14 @@ func hostCmd() *cobra.Command {
 		return w.Flush()
 	}})
 	var msg string
-	addCmd := &cobra.Command{Use: "add <fqdn>", Short: "Add a host (a new revision), and get the line that installs and enrolls its agent; then give it jobs with holdfast job set",
+	addCmd := &cobra.Command{Use: "add <agent>", Short: "Add a host (a new revision), and get the line that installs and enrolls its agent; then give it jobs with holdfast job set",
 		Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, a []string) error {
 			var res struct {
 				Revision   int64      `json:"revision"`
 				Warning    string     `json:"warning"`
 				Enrollment enrollment `json:"enrollment"`
 			}
-			raw, err := call("POST", "/api/v1/hosts", map[string]any{"fqdn": a[0], "message": msg}, &res)
+			raw, err := call("POST", "/api/v1/agents", map[string]any{"fqdn": a[0], "message": msg}, &res)
 			if err != nil {
 				return err
 			}
@@ -347,9 +348,9 @@ func hostCmd() *cobra.Command {
 		}}
 	addCmd.Flags().StringVarP(&msg, "message", "m", "", "revision message")
 	c.AddCommand(addCmd)
-	c.AddCommand(&cobra.Command{Use: "acknowledge <fqdn>", Short: "Clear the red alerts for changes made outside Holdfast, after looking into them", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, a []string) error {
+	c.AddCommand(&cobra.Command{Use: "acknowledge <agent>", Short: "Clear the red alerts for changes made outside Holdfast, after looking into them", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, a []string) error {
 		var res struct{ Snapshots, Keys int }
-		raw, err := call("POST", "/api/v1/hosts/"+url.PathEscape(a[0])+"/acknowledge", nil, &res)
+		raw, err := call("POST", "/api/v1/agents/"+url.PathEscape(a[0])+"/acknowledge", nil, &res)
 		if err != nil {
 			return err
 		}
@@ -361,12 +362,12 @@ func hostCmd() *cobra.Command {
 		return nil
 	}})
 	var removeMsg string
-	removeHost := &cobra.Command{Use: "remove <fqdn>", Short: "Remove a host (a new revision): its agent stops, its repository stays; adding it again brings it back",
+	removeHost := &cobra.Command{Use: "remove <agent>", Short: "Remove a host (a new revision): its agent stops, its repository stays; adding it again brings it back",
 		Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, a []string) error {
 			var res struct {
 				Revision int64 `json:"revision"`
 			}
-			raw, err := call("DELETE", "/api/v1/hosts/"+url.PathEscape(a[0]), map[string]any{"message": removeMsg}, &res)
+			raw, err := call("DELETE", "/api/v1/agents/"+url.PathEscape(a[0]), map[string]any{"message": removeMsg}, &res)
 			if err != nil {
 				return err
 			}
@@ -382,9 +383,9 @@ func hostCmd() *cobra.Command {
 	c.AddCommand(removeHost)
 	c.AddCommand(hostOperatingCmds()...)
 	c.AddCommand(hostImportCmd())
-	c.AddCommand(&cobra.Command{Use: "enroll-code <fqdn>", Short: "Issue a new 15-minute enrollment code (revokes the open one)", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, a []string) error {
+	c.AddCommand(&cobra.Command{Use: "enroll-code <agent>", Short: "Issue a new 15-minute enrollment code (revokes the open one)", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, a []string) error {
 		var e enrollment
-		raw, err := call("POST", "/api/v1/hosts/"+url.PathEscape(a[0])+"/enrollment-code", nil, &e)
+		raw, err := call("POST", "/api/v1/agents/"+url.PathEscape(a[0])+"/enrollment-code", nil, &e)
 		if err != nil {
 			return err
 		}
@@ -395,12 +396,12 @@ func hostCmd() *cobra.Command {
 		fmt.Print(e.howTo())
 		return nil
 	}})
-	c.AddCommand(&cobra.Command{Use: "events <fqdn>", Short: "Recent runs on a host", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, a []string) error {
+	c.AddCommand(&cobra.Command{Use: "events <agent>", Short: "Recent runs on a host", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, a []string) error {
 		var evs []struct {
 			Kind, JobID, Status, SnapshotID, Error string
 			Finished                               time.Time
 		}
-		raw, err := call("GET", "/api/v1/hosts/"+url.PathEscape(a[0])+"/events", nil, &evs)
+		raw, err := call("GET", "/api/v1/agents/"+url.PathEscape(a[0])+"/events", nil, &evs)
 		if err != nil {
 			return err
 		}
@@ -427,7 +428,7 @@ func hostCmd() *cobra.Command {
 func hostDaysCmd() *cobra.Command {
 	var days int
 	var zone string
-	cmd := &cobra.Command{Use: "days <fqdn>", Short: "Each job's backups on each of the last days (the host page's squares)", Args: cobra.ExactArgs(1),
+	cmd := &cobra.Command{Use: "days <agent>", Short: "Each job's backups on each of the last days (the host page's squares)", Args: cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, a []string) error {
 			if zone == "" {
 				zone = localZone()
@@ -444,7 +445,7 @@ func hostDaysCmd() *cobra.Command {
 					}
 				}
 			}
-			raw, err := call("GET", "/api/v1/hosts/"+url.PathEscape(a[0])+"/days?days="+strconv.Itoa(days)+"&tz="+url.QueryEscape(zone), nil, &hd)
+			raw, err := call("GET", "/api/v1/agents/"+url.PathEscape(a[0])+"/days?days="+strconv.Itoa(days)+"&tz="+url.QueryEscape(zone), nil, &hd)
 			if err != nil {
 				return err
 			}
@@ -500,6 +501,62 @@ type jobFlags struct {
 	keepLast                                   int
 	accept                                     []string
 	limitUpload                                int
+	// A PostgreSQL job (decision 055): a connection of the agent, and a database or its globals.
+	connection string
+	databases  []string
+	globals    bool
+}
+
+// pgTargets are the PostgreSQL jobs the flags ask for, by job ID: one per --database, named after it, and "roles" for
+// --globals. Empty: the flags name no PostgreSQL job.
+func (f *jobFlags) pgTargets(c *cobra.Command) (map[string]map[string]any, error) {
+	if !c.Flags().Changed("connection") && !c.Flags().Changed("database") && !c.Flags().Changed("globals") {
+		return nil, nil
+	}
+	if f.connection == "" {
+		return nil, errors.New("a PostgreSQL job names its --connection")
+	}
+	if len(f.paths) > 0 || len(f.excludes) > 0 {
+		return nil, errors.New("a PostgreSQL job backs up a --database or the --globals, not paths")
+	}
+	out := map[string]map[string]any{}
+	add := func(id string, job map[string]any) error {
+		if _, dup := out[id]; dup {
+			return fmt.Errorf("two jobs would be named %s: make them one at a time, each with its own job ID (holdfast job set <agent> <job> --database …)", id)
+		}
+		out[id] = job
+		return nil
+	}
+	for _, db := range f.databases {
+		if err := add(pgJobID(db), map[string]any{"connection": f.connection, "database": db}); err != nil {
+			return nil, err
+		}
+	}
+	if f.globals {
+		if err := add("roles", map[string]any{"connection": f.connection, "globals": true}); err != nil {
+			return nil, err
+		}
+	}
+	if len(out) == 0 {
+		return nil, errors.New("give a --database (repeat for several), or --globals")
+	}
+	return out, nil
+}
+
+// pgJobID is the job ID a database's job gets when the command names none: the database's name in lower case, with
+// each character a job ID cannot hold, such as _, as a hyphen (My_DB: my-db).
+func pgJobID(db string) string {
+	b := []byte(strings.ToLower(db))
+	for i, c := range b {
+		if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-') {
+			b[i] = '-'
+		}
+	}
+	id := strings.Trim(string(b), "-")
+	if len(id) > 63 {
+		id = strings.TrimRight(id[:63], "-")
+	}
+	return id
 }
 
 // finding is one check that fired (spec §4.5).
@@ -540,6 +597,9 @@ func (f *jobFlags) register(c *cobra.Command) {
 	c.Flags().IntVar(&f.keepLast, "keep-last", 3, "always keep the newest N")
 	c.Flags().StringSliceVar(&f.accept, "accept", nil, "accept these warning codes, such as R102,R104 (errors cannot be accepted)")
 	c.Flags().IntVar(&f.limitUpload, "limit-upload", 0, "cap the backup's upload, in KiB/s (restic --limit-upload); 0 for none")
+	c.Flags().StringVar(&f.connection, "connection", "", "PostgreSQL: the agent's connection (holdfast agent connection list)")
+	c.Flags().StringSliceVar(&f.databases, "database", nil, "PostgreSQL: the database to back up; repeat, without a job ID, for a job each")
+	c.Flags().BoolVar(&f.globals, "globals", false, "PostgreSQL: back up the roles and other globals (pg_dumpall --globals-only), as the job roles without a job ID")
 }
 
 func window(s string) (map[string]any, error) {
@@ -635,17 +695,24 @@ func jobCmd() *cobra.Command {
 	var f jobFlags
 	var msg string
 	var base int64
-	set := &cobra.Command{Use: "set <fqdn> <job>", Short: "Create or change a job (a new revision): a new job takes what you do not give from the default job, an existing one keeps its own",
-		Long: "Create or change a job, as a new revision.\n\nA new job needs --path; the rest comes from the default job unless you give it: daily at\n" +
-			"02:00 with a 20-minute spread; one backup per day for 14 days, per week for 8 weeks, per month for 12 months\n" +
-			"and per year for 3 years; always the newest 3. An existing job keeps what you do not give: --daily, --every or\n" +
-			"--weekly replace its schedule, any --keep-* flag replaces its whole retention.",
-		Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, a []string) error {
+	set := &cobra.Command{Use: "set <agent> [<job>]", Short: "Create or change a job (a new revision): a new job takes what you do not give from the default job, an existing one keeps its own",
+		Long: "Create or change a job, as a new revision.\n\nA new job needs --path, or a PostgreSQL --connection and a --database or --globals; the rest comes\n" +
+			"from the default job unless you give it: daily at 02:00 with a 20-minute spread; one backup per day for 14 days,\n" +
+			"per week for 8 weeks, per month for 12 months and per year for 3 years; always the newest 3. An existing job keeps\n" +
+			"what you do not give: --daily, --every or --weekly replace its schedule, any --keep-* flag replaces its whole\n" +
+			"retention.\n\nWithout a job ID, --database (repeated) and --globals make a PostgreSQL job each, named after its database\n" +
+			"(in lower case, with _ and other characters a job ID cannot hold as -), and roles for the globals, all with the same\n" +
+			"schedule and retention, saved as one revision.",
+		Args: cobra.RangeArgs(1, 2), RunE: func(cmd *cobra.Command, a []string) error {
 			job, err := f.job(cmd)
 			if err != nil {
 				return err
 			}
-			in := map[string]any{"message": msg, "job": job, "accept": f.accept}
+			pg, err := f.pgTargets(cmd)
+			if err != nil {
+				return err
+			}
+			in := map[string]any{"message": msg, "accept": f.accept}
 			if cmd.Flags().Changed("base") {
 				in["base_revision"] = base
 			}
@@ -654,7 +721,31 @@ func jobCmd() *cobra.Command {
 				Findings []finding `json:"findings"`
 				Accepted []string  `json:"accepted_codes"`
 			}
-			raw, err := call("PUT", "/api/v1/hosts/"+url.PathEscape(a[0])+"/jobs/"+url.PathEscape(a[1]), in, &res)
+			var raw []byte
+			switch {
+			case len(a) == 1 && len(pg) == 0:
+				return errors.New("give the job's ID; only PostgreSQL jobs (--database, --globals) are named after what they back up")
+			case len(a) == 1:
+				jobs := map[string]any{}
+				for id, p := range pg {
+					j := map[string]any{"engine": "postgresql", "postgresql": p}
+					for k, v := range job {
+						j[k] = v
+					}
+					jobs[id] = j
+				}
+				in["jobs"] = jobs
+				raw, err = call("POST", "/api/v1/agents/"+url.PathEscape(a[0])+"/jobs", in, &res)
+			default:
+				if len(pg) > 1 {
+					return errors.New("one job backs up one database: leave out the job ID to make a job for each")
+				}
+				for _, p := range pg {
+					job["engine"], job["postgresql"] = "postgresql", p
+				}
+				in["job"] = job
+				raw, err = call("PUT", "/api/v1/agents/"+url.PathEscape(a[0])+"/jobs/"+url.PathEscape(a[1]), in, &res)
+			}
 			if err != nil {
 				return err
 			}
@@ -671,10 +762,20 @@ func jobCmd() *cobra.Command {
 	f.register(set)
 	c.AddCommand(set)
 	var cf jobFlags
-	check := &cobra.Command{Use: "check <fqdn> <job>", Short: "Run the checks on a job without saving it; the flags are those of job set", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, a []string) error {
+	check := &cobra.Command{Use: "check <agent> <job>", Short: "Run the checks on a job without saving it; the flags are those of job set", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, a []string) error {
 		job, err := cf.job(cmd)
 		if err != nil {
 			return err
+		}
+		pg, err := cf.pgTargets(cmd)
+		if err != nil {
+			return err
+		}
+		if len(pg) > 1 {
+			return errors.New("check one job at a time: one --database, or --globals")
+		}
+		for _, p := range pg {
+			job["engine"], job["postgresql"] = "postgresql", p
 		}
 		var res struct {
 			Findings []finding `json:"findings"`
@@ -691,7 +792,7 @@ func jobCmd() *cobra.Command {
 				Oldest        string `json:"oldest"`
 			} `json:"gets"`
 		}
-		raw, err := call("POST", "/api/v1/hosts/"+url.PathEscape(a[0])+"/jobs/"+url.PathEscape(a[1])+"/check", map[string]any{"job": job, "accept": cf.accept}, &res)
+		raw, err := call("POST", "/api/v1/agents/"+url.PathEscape(a[0])+"/jobs/"+url.PathEscape(a[1])+"/check", map[string]any{"job": job, "accept": cf.accept}, &res)
 		if err != nil {
 			return err
 		}
@@ -737,11 +838,11 @@ func jobCmd() *cobra.Command {
 	cf.register(check)
 	c.AddCommand(check, keepLongerCmd())
 	var rmMsg string
-	remove := &cobra.Command{Use: "remove <fqdn> <job>", Short: "Remove a job (a new revision); its snapshots stay", Args: cobra.ExactArgs(2), RunE: func(_ *cobra.Command, a []string) error {
+	remove := &cobra.Command{Use: "remove <agent> <job>", Short: "Remove a job (a new revision); its snapshots stay", Args: cobra.ExactArgs(2), RunE: func(_ *cobra.Command, a []string) error {
 		var res struct {
 			Revision int64 `json:"revision"`
 		}
-		raw, err := call("DELETE", "/api/v1/hosts/"+url.PathEscape(a[0])+"/jobs/"+url.PathEscape(a[1]), map[string]any{"message": rmMsg}, &res)
+		raw, err := call("DELETE", "/api/v1/agents/"+url.PathEscape(a[0])+"/jobs/"+url.PathEscape(a[1]), map[string]any{"message": rmMsg}, &res)
 		if err != nil {
 			return err
 		}
@@ -754,11 +855,11 @@ func jobCmd() *cobra.Command {
 	}}
 	remove.Flags().StringVarP(&rmMsg, "message", "m", "", "revision message")
 	c.AddCommand(remove)
-	c.AddCommand(&cobra.Command{Use: "run <fqdn> <job>", Short: "Back up now", Args: cobra.ExactArgs(2), RunE: func(_ *cobra.Command, a []string) error {
+	c.AddCommand(&cobra.Command{Use: "run <agent> <job>", Short: "Back up now", Args: cobra.ExactArgs(2), RunE: func(_ *cobra.Command, a []string) error {
 		var res struct {
 			Command string `json:"command"`
 		}
-		raw, err := call("POST", "/api/v1/hosts/"+url.PathEscape(a[0])+"/jobs/"+url.PathEscape(a[1])+"/run", nil, &res)
+		raw, err := call("POST", "/api/v1/agents/"+url.PathEscape(a[0])+"/jobs/"+url.PathEscape(a[1])+"/run", nil, &res)
 		if err != nil {
 			return err
 		}
@@ -889,7 +990,7 @@ func checkCmd() *cobra.Command {
 		if err := w.Flush(); err != nil {
 			return err
 		}
-		fmt.Println("\neach agent runs the repository check next; its result appears in holdfast host events <fqdn>")
+		fmt.Println("\neach agent runs the repository check next; its result appears in holdfast agent events <agent>")
 		return nil
 	}}
 }

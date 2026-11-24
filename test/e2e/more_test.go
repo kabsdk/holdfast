@@ -226,7 +226,7 @@ func TestConfigHistoryDriftCheckAndNoLeaks(t *testing.T) {
 	_, gwSecret, _ := strings.Cut(string(gw), "AWS_SECRET_ACCESS_KEY=")
 	secrets := map[string]string{"repository password": h.RepoPassword, "gateway key's secret": strings.TrimSpace(gwSecret), "agent's private key": agentKeyLine(t, a)}
 	var blobs []string
-	for _, args := range [][]string{{"host", "list"}, {"host", "show", fqdn}, {"host", "events", fqdn}, {"audit"}, {"revision", "list"},
+	for _, args := range [][]string{{"agent", "list"}, {"agent", "show", fqdn}, {"agent", "events", fqdn}, {"audit"}, {"revision", "list"},
 		{"revision", "show", "1"}, {"revision", "show", "4"}, {"status"}} {
 		blobs = append(blobs, string(e.cli(args...)))
 	}
@@ -269,12 +269,12 @@ func agentKeyLine(t *testing.T, a *agentProc) string {
 func TestEnrollment(t *testing.T) {
 	src := smallSource(t)
 	e := newEnv(t)
-	if out, err := e.cliErr("host", "add", "Not_A_Host"); err == nil || !strings.Contains(string(out), "lower case") {
+	if out, err := e.cliErr("agent", "add", "Not_A_Host"); err == nil || !strings.Contains(string(out), "lower case") {
 		t.Fatalf("an invalid FQDN must be refused: %v %s", err, out)
 	}
 	const fqdn = "ci04.example.com"
 	code := e.addHost(fqdn, "system", "--path", src, "--daily", "02:00")
-	if out, err := e.cliErr("host", "add", fqdn); err == nil || !strings.Contains(string(out), "conflict") {
+	if out, err := e.cliErr("agent", "add", fqdn); err == nil || !strings.Contains(string(out), "conflict") {
 		t.Fatalf("a duplicate host must be refused: %v %s", err, out)
 	}
 	if p := e.host(fqdn).Progress; p != "waiting" {
@@ -301,7 +301,7 @@ func TestEnrollment(t *testing.T) {
 	}
 
 	var fresh struct{ Code string }
-	must(t, json.Unmarshal(e.cli("host", "enroll-code", fqdn), &fresh))
+	must(t, json.Unmarshal(e.cli("agent", "enroll-code", fqdn), &fresh))
 	a, out, err := e.enrollAgentWith(fqdn, fresh.Code, e.url)
 	if err != nil {
 		t.Fatalf("enroll with a new code: %v %s", err, out)
@@ -330,7 +330,7 @@ func TestTLSPinning(t *testing.T) {
 			InstallScript  string `json:"install_script"`
 		} `json:"enrollment"`
 	}
-	must(t, json.Unmarshal(e.cli("host", "add", fqdn), &res))
+	must(t, json.Unmarshal(e.cli("agent", "add", fqdn), &res))
 	e.cli("job", "set", fqdn, "system", "--path", src, "--daily", "02:00", testAccept)
 	if !strings.Contains(res.Enrollment.InstallCommand, "--ca-sha256 "+cert.pin) {
 		t.Fatalf("the install command does not pin the server: %s", res.Enrollment.InstallCommand)
@@ -382,7 +382,7 @@ func TestTLSPinning(t *testing.T) {
 	oldClient := e.agentClient(a)
 	a.kill(syscall.SIGTERM)
 	var fresh struct{ Code string }
-	must(t, json.Unmarshal(e.cli("host", "enroll-code", fqdn), &fresh))
+	must(t, json.Unmarshal(e.cli("agent", "enroll-code", fqdn), &fresh))
 	a = e.enrollAgent(fqdn, fresh.Code)
 	if code := poll(oldClient); code != http.StatusUnauthorized {
 		t.Fatalf("the certificate from before the new enrollment: %d", code)

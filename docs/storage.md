@@ -23,8 +23,9 @@ holdfast-server whenever the trust store changes. Hosts never connect to S3, so 
   settings, so a maintenance key that owns the bucket fails B010. Holdfast makes no bucket. `restic init` would make
   a missing one with the key it runs with, so Holdfast tests the storage before it makes any repository, in primary
   and off-site: a missing bucket is a failed check, not a new bucket.
-- Each host's repository lives under `repos/<fqdn>/` in that bucket. With `escrow.age_recipient` set, each
-  host's repository password is also written, encrypted, to `escrow/<fqdn>.age` (decision 036).
+- Each agent's repository lives under `repos/<agent>/` in that bucket, named by the agent's name (decision 056). With
+  `escrow.age_recipient` set, each agent's repository password is also written, encrypted, to `escrow/<agent>.age`
+  (decision 036).
 - **Versioning must be enabled (B008).** It is what makes a deleted or overwritten object recoverable.
 - **A lifecycle rule must expire noncurrent versions under `repos/` (B011).** Without one, the bucket only
   grows: nothing a prune deletes is ever freed. The expiry is your choice. It is also how long deleted
@@ -36,13 +37,13 @@ holdfast-server whenever the trust store changes. Hosts never connect to S3, so 
   compromised server and Prune now, as long as no Holdfast key can delete versions or change the bucket's
   settings (B006, B009, B010).
 - Object Lock is not required. If the bucket has it, and the maintenance key may read the setting
-  (`s3:GetBucketObjectLockConfiguration`), `holdfast host show` reports it. Holdfast never extends a lock.
+  (`s3:GetBucketObjectLockConfiguration`), `holdfast agent show` reports it. Holdfast never extends a lock.
 
 ## The keys
 
 | Key | Must be able to | Must not be able to |
 | --- | --- | --- |
-| **Gateway key**, the server's: `storage.gateway_credentials_file` | Read, write and list under `repos/` (B001, B002). Delete lock files, under `repos/<fqdn>/locks/`. | Delete anything else (B005). Delete a version for good (B006). Use the bucket outside `repos/`, such as the escrow files and the nightly exports (B007). |
+| **Gateway key**, the server's: `storage.gateway_credentials_file` | Read, write and list under `repos/` (B001, B002). Delete lock files, under `repos/<agent>/locks/`. | Delete anything else (B005). Delete a version for good (B006). Use the bucket outside `repos/`, such as the escrow files and the nightly exports (B007). |
 | **Maintenance key**, the server's: `storage.maintenance_credentials_file` | Read, write, list and delete everything under `repos/`, **including objects the gateway key wrote** (B003, B004). Write, read back and delete under `escrow/` and `meta/`, when an escrow recipient is set (B012, B016). List object versions, for the repository's size, and read them, for a rollback. Read the bucket's versioning setting and lifecycle rule. | Delete an object version for good (B009). Change the bucket's settings, such as versioning, the lifecycle rule or the bucket policy (B010). |
 
 There is no third key: the server is the storage witness too (decision 045). It reads each repository with the
@@ -143,13 +144,13 @@ Do not grant `s3:*`: that would fail B009 and B010.
 
 Both were verified against Ceph Squid 19.2.3 in the lab (`lab/README.md`).
 
-## Adding a host
+## Adding an agent
 
 ```
-holdfast host add web01.example.com
+holdfast agent add web01.example.com
 holdfast job set web01.example.com system --path /etc
 ```
 
-Nothing to make at the S3 server: the host's storage is tested with the gateway key on `repos/web01.example.com/`,
-and the host is added once it passes. The host enrolls with the code it is given, and makes its own key and
-certificate then (spec §5.7).
+Nothing to make at the S3 server: the agent's storage is tested with the gateway key on `repos/web01.example.com/`,
+and the agent is added once it passes. It enrolls with the code it is given, and makes its own key and certificate
+then (spec §5.7).

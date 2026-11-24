@@ -1,6 +1,8 @@
-import { html, useState, usePoll, useAction, link, offsiteLink, go, ago, until, fmtTime, fmtDay, dur, bytes, retentionText, scheduleText, Pill, Snap, can, ErrorBox, Loading, EnrollLines, Menu, Problem, icons, fullDate, clock, localDay, browserZone } from '../lib.js';
+// An agent's page (decision 056): its jobs with what each backs up and its last 14 days, its PostgreSQL connections, its
+// recent runs and where its repository is. Every rule is the server's; this asks and shows.
+import { html, useState, useEffect, usePoll, useAction, link, offsiteLink, go, ago, until, fmtTime, fmtDay, dur, bytes, scheduleText, Pill, Snap, can, ErrorBox, Loading, EnrollLines, Menu, Problem, icons, fullDate, clock, localDay, browserZone, isPG, Kind, dbIcon, repoPath } from '../lib.js';
 import { api } from '../api.js';
-import { jobState } from './overview.js';
+import { jobState, agentSub } from './overview.js';
 
 function Banners({ host, onAck }) {
   const errs = (host.problems || []).filter((p) => !p.job_id);
@@ -9,7 +11,7 @@ function Banners({ host, onAck }) {
       ${(p.code === 'disappeared' || p.code === 'foreign_keys') && can(host, 'maintenance') &&
         html` <button class="small" onClick=${onAck}>I have looked into it: clear the alert</button>`}
       ${p.code === 'disappeared' && can(host, 'repository.rollback') &&
-        html` <a class="button small" href=${link('hosts', host.fqdn, 'rollback')}>Bring them back from S3's versions…</a>`}
+        html` <a class="button small" href=${link('agents', host.fqdn, 'rollback')}>Bring them back from S3's versions…</a>`}
     </div>`)}`;
 }
 
@@ -20,7 +22,7 @@ function EnrollPanel({ host, done }) {
     <p class="muted">Revokes the open one. The code is valid for 15 minutes, once.</p>
     <button disabled=${act.busy} onClick=${() => act.run(() => api.enrollmentCode(host.fqdn))}>Issue a code</button>
     <${ErrorBox} error=${act.error} />
-    ${act.done && html`<p>Code <strong class="mono">${act.done.code}</strong>, valid until ${fmtTime(act.done.expires_at)}. Run on ${host.fqdn}, as root:</p>
+    ${act.done && html`<p>Code <strong class="mono">${act.done.code}</strong>, valid until ${fmtTime(act.done.expires_at)}. Run it where ${host.fqdn} runs, as root:</p>
       <${EnrollLines} e=${act.done} />`}
     <p><button class="small" onClick=${done}>Close</button></p>
   </div>`;
@@ -33,7 +35,7 @@ function RotatePanel({ host, done }) {
   const r = act.done;
   return html`<div class="panel">
     <h3>Rotate the repository password</h3>
-    <p class="muted">For a host you think is compromised. Holdfast adds a new restic password to the repository, removes the old one, unpins the agent's certificate and issues a new enrollment code. The host backs up again only once it is clean and enrolled again.</p>
+    <p class="muted">For an agent you think is compromised. Holdfast adds a new restic password to the repository, removes the old one, unpins the agent's certificate and issues a new enrollment code. The agent backs up again only once it is clean and enrolled again.</p>
     <label class="field"><span>Why (audit log)</span><input value=${msg} onInput=${(e) => setMsg(e.target.value)} /></label>
     <div class="row">
       <button class="danger" disabled=${act.busy || !!r} onClick=${() => act.run(() => api.rotate(host.fqdn, { message: msg }))}>Rotate now</button>
@@ -42,9 +44,9 @@ function RotatePanel({ host, done }) {
     <${ErrorBox} error=${act.error} />
     ${r && html`<div class="banner ok">New password: key <code>${r.new_key}</code>, credentials version ${r.credentials_version}; removed key ${r.removed_keys.join(', ') || '—'}. ${r.escrowed ? 'The escrow file holds the new password.' : ''}</div>
       ${r.warning && html`<div class="banner warning">${r.warning}</div>`}
-      <p>Once the host is clean or rebuilt, enroll it with code <strong class="mono">${r.enrollment.code}</strong>, valid until ${fmtTime(r.enrollment.expires_at)}. As root on the host:</p>
+      <p>Once the agent's machine is clean or rebuilt, enroll it with code <strong class="mono">${r.enrollment.code}</strong>, valid until ${fmtTime(r.enrollment.expires_at)}. As root there:</p>
       <${EnrollLines} e=${r.enrollment} />
-      <p class="muted">Enrolling makes the host a new key of its own; the old certificate no longer works.</p>`}
+      <p class="muted">Enrolling makes the agent a new key of its own; the old certificate no longer works.</p>`}
   </div>`;
 }
 
@@ -54,8 +56,8 @@ function DecommissionPanel({ host, done }) {
   const act = useAction();
   return html`<div class="panel">
     <h3>Decommission ${host.fqdn}</h3>
-    <p>This deletes the host's repository and its escrow file, <strong>7 days</strong> from now. Until then it can be cancelled. Afterwards, S3 keeps the old versions until the bucket's lifecycle rule expires them${host.storage?.noncurrent_days ? ` (${host.storage.noncurrent_days} days)` : ''}; then the data is really gone.</p>
-    <label class="field"><span>Type the FQDN to confirm</span><input value=${typed} onInput=${(e) => setTyped(e.target.value)} autocomplete="off" /></label>
+    <p>This deletes the agent's repository and its escrow file, <strong>7 days</strong> from now. Until then it can be cancelled. Afterwards, S3 keeps the old versions until the bucket's lifecycle rule expires them${host.storage?.noncurrent_days ? ` (${host.storage.noncurrent_days} days)` : ''}; then the data is really gone.</p>
+    <label class="field"><span>Type the agent's name to confirm</span><input value=${typed} onInput=${(e) => setTyped(e.target.value)} autocomplete="off" /></label>
     <label class="field"><span>Why (audit log)</span><input value=${msg} onInput=${(e) => setMsg(e.target.value)} /></label>
     <div class="row">
       <button class="danger" disabled=${act.busy || typed !== host.fqdn} onClick=${() => act.run(() => api.decommission(host.fqdn, { confirm: typed, message: msg })).then(done)}>Decommission after 7 days</button>
@@ -65,14 +67,14 @@ function DecommissionPanel({ host, done }) {
   </div>`;
 }
 
-// The repository in the bucket, on one line: its size, the escrow file, Object Lock and a decommission.
-function Repository({ host }) {
+// The repository on one line: where each site keeps it, its size, the escrow file, Object Lock and a decommission.
+function Repository({ host, settings, siteB }) {
   const s = host.size, d = host.decommission, esc = host.escrow || {};
   return html`<section class="factline" aria-label="Repository">
-    <span><span class="muted">Repository</span> <code>repos/${host.fqdn}</code>${s ? ` · ${bytes(s.current_bytes)}, and ${bytes(s.noncurrent_bytes)} of old versions S3 keeps` : ' · not measured yet'}</span>
+    <span><span class="muted">${host.offsite ? 'Site A' : 'Repository'}</span> <code>${repoPath(settings?.storage, host.fqdn)}</code>${s ? ` · ${bytes(s.current_bytes)}, and ${bytes(s.noncurrent_bytes)} of old versions S3 keeps` : ' · not measured yet'}</span>
+    ${host.offsite && html`<span><span class="muted">Site B</span> <code>${repoPath(siteB?.storage, host.fqdn)}</code> · ${host.offsite.copies} copies${host.offsite.pending ? `, ${host.offsite.pending} waiting` : ''} · last copy ${host.offsite.last_copy ? ago(host.offsite.last_copy) : 'none yet'}</span>`}
     <span class="row" style="gap:.35rem"><span class="muted">Escrow</span>${esc.current ? html`${icons.ok()} current password` : esc.error ? html`<span class="num error">not written: ${esc.error}</span>` : 'not written'}</span>
     ${host.storage?.object_lock && html`<span><span class="muted">Object Lock</span> ${host.storage.object_lock}</span>`}
-    ${host.offsite && html`<span><span class="muted">Off-site</span> ${host.offsite.copies} copies${host.offsite.pending ? `, ${host.offsite.pending} waiting` : ''} · last copy ${host.offsite.last_copy ? ago(host.offsite.last_copy) : 'none yet'}</span>`}
     ${s && html`<span class="muted">measured ${ago(s.measured_at)}</span>`}
     ${d && html`<span><span class="muted">Decommission</span> ${d.done_at
       ? `done ${fmtTime(d.done_at)}: ${d.objects_deleted} objects deleted, as ${d.requested_by} asked; really gone ${d.really_gone_at ? fmtDay(d.really_gone_at) : 'when the lifecycle rule expires the old versions'}`
@@ -93,7 +95,7 @@ export function offState(host, job) {
   return { text: oj.behind_s ? 'copying' : 'up to date', kind: oj.behind_s ? 'muted' : 'ok', sub };
 }
 
-// A restore of the host's own snapshot from its off-site copy. The host reads the copy through the gateway, for this
+// A restore of the agent's own snapshot from its off-site copy. The agent reads the copy through the gateway, for this
 // restore only.
 function OffsiteRestore({ host, done }) {
   const copies = usePoll(() => api.offsiteCopies(host.fqdn), [host.fqdn], 0);
@@ -105,7 +107,7 @@ function OffsiteRestore({ host, done }) {
   const list = copies.data || [];
   return html`<div class="panel">
     <h3>Restore from off-site</h3>
-    <p class="muted">The copy is restored by this host's agent, which reads its off-site repository through this server for this one restore. Into a new directory, or another one; never in place.</p>
+    <p class="muted">The copy is restored by this agent, which reads its off-site repository through this server for this one restore. Into a new directory, or another one; never in place.</p>
     <${ErrorBox} error=${copies.error} />
     <label class="field"><span>Copy</span><select value=${pick} onChange=${(e) => setPick(e.target.value)}>
       <option value="">choose…</option>${list.map((c) => html`<option value=${c.id}>${fmtTime(c.time)} · ${c.job_id} · copy ${c.id.slice(0, 8)} of ${c.original.slice(0, 8)}</option>`)}</select></label>
@@ -154,12 +156,13 @@ function JobRow({ host, job, days, cut, onRun, queued, vault, cols }) {
   const off = !vault && host.offsite ? offState(host, job) : null;
   return html`<div class=${'gt' + (probs.some((p) => p.severity === 'error') ? ' bad' : '')} style=${'--cols:' + cols}>
     <div style="min-width:0">
-      <div class="row" style="gap:.5rem"><a href=${link('hosts', host.fqdn, 'jobs', job.id)}><b>${job.id}</b></a><${StateBadge} host=${host} job=${job} />
+      <div class="row" style="gap:.5rem"><a href=${link('agents', host.fqdn, 'jobs', job.id)}><b>${job.id}</b></a><${StateBadge} host=${host} job=${job} />
         ${job.excluded && html`<${Pill} kind="warning">not copied<//>`}${job.retired && html`<${Pill}>removed in primary<//>`}
-        ${cut && html`<a class="pill warning" href=${link('hosts', host.fqdn, 'jobs', job.id)}>retention cut pending</a>`}
-        <span class="sub">${scheduleText(job.schedule)}</span></div>
+        ${cut && html`<a class="pill warning" href=${link('agents', host.fqdn, 'jobs', job.id)}>retention cut pending</a>`}</div>
+      <div class="sub">${scheduleText(job.schedule)}</div>
       ${probs.map((p) => html`<${Problem} p=${{ ...p, job_id: '' }} />`)}
     </div>
+    <div style="min-width:0"><${Kind} job=${job} /></div>
     <${Strip} job=${job.id} days=${days} />
     <div><div class="num">${s.last_success_at ? ago(s.last_success_at) : '—'}</div>${s.last_success_at && html`<div class="sub">${fmtTime(s.last_success_at)}</div>`}</div>
     <span class="num muted">${job.next_runs?.[0] ? until(job.next_runs[0]) : '—'}</span>
@@ -167,12 +170,12 @@ function JobRow({ host, job, days, cut, onRun, queued, vault, cols }) {
     <div class="row" style="justify-content:flex-end;gap:.4rem">
       ${queued && html`<span class="ok" style="font-size:12.5px">Queued</span>`}
       ${!vault && can(host, 'backup.run') && html`<button class="small" disabled=${queued} onClick=${onRun}>Back up now</button>`}
-      ${!vault && can(host, 'restore.new_dir') && s.last_snapshot_id && html`<a class="button small" href=${link('hosts', host.fqdn, 'snapshots', s.last_snapshot_id, 'restore')}>Restore…</a>`}
+      ${!vault && can(host, 'restore.new_dir') && s.last_snapshot_id && html`<a class="button small" href=${link('agents', host.fqdn, 'snapshots', s.last_snapshot_id, 'restore')}>Restore…</a>`}
     </div>
   </div>`;
 }
-const JOB_COLS = 'minmax(0,2.4fr) 225px minmax(0,1fr) minmax(0,.9fr) 210px';
-const JOB_COLS_OFFSITE = 'minmax(0,2.2fr) 225px minmax(0,1fr) minmax(0,.8fr) minmax(0,1fr) 210px';
+const JOB_COLS = 'minmax(0,1.5fr) minmax(0,1.5fr) 225px minmax(0,1fr) minmax(0,.8fr) 210px';
+const JOB_COLS_OFFSITE = 'minmax(0,1.4fr) minmax(0,1.4fr) 225px minmax(0,1fr) minmax(0,.7fr) minmax(0,.9fr) 210px';
 
 // Recent runs, folded: a job's backups on one day that ended the same way are one line, and so are a run and its
 // retries. Restores, checks and the rest are a line each.
@@ -202,7 +205,7 @@ function Runs({ host, events }) {
       ${groups.map((g) => {
         const e = g.e;
         const what = e.kind === 'backup' ? (g.n > 1 ? `${g.n} backups` : 'backup') : e.kind.replace(/_/g, ' ');
-        const detail = e.error || (e.detail && e.detail.directory ? 'into ' + e.detail.directory : '') || (g.n > 1 && e.status === 'success' ? 'all OK' : '');
+        const detail = e.error || (e.detail && e.detail.directory ? 'into ' + e.detail.directory : '') || (e.detail && e.detail.database ? 'into database ' + e.detail.database : '') || (g.n > 1 && e.status === 'success' ? 'all OK' : '');
         return html`<div class="gt" style=${'--cols:' + cols + ';align-items:baseline'}>
           <span class="num muted">${g.n > 1 ? `${fmtDay(e.finished)} ${clock(g.from)}–${clock(e.finished)}` : fmtTime(e.finished)}</span>
           <span>${e.job_id}</span>
@@ -214,11 +217,178 @@ function Runs({ host, events }) {
   </section>`;
 }
 
-export function Host({ fqdn, reloadHosts, vault }) {
+// Limits is what the agent's own agent.yaml allows, which only root where it runs can change.
+function Limits({ host }) {
+  const b = host.agent?.restore_bounds, pg = host.agent?.postgresql;
+  if (!b && !pg) return null;
+  const yes = (x) => (x ? 'allowed' : 'never');
+  const parts = [];
+  if (b) {
+    parts.push(html`restores into <code>${b.root || '/var/restore'}</code>`);
+    parts.push(`in place for files ${yes(b.allow_in_place)}`);
+    parts.push(`into other folders ${yes(b.allow_other_directories)}`);
+    parts.push(`restores of other agents' snapshots ${yes(b.allow_other_hosts)}`);
+  }
+  if (pg && pg.client) parts.push(`in place for PostgreSQL ${yes(pg.allow_in_place_restore)}`);
+  return html`<p class="muted">Set in its agent.yaml, which only root where it runs can change: ${parts.map((p, i) => html`${i ? '; ' : ''}${p}`)}.</p>`;
+}
+
+/* ---------------- PostgreSQL connections (decision 055) ---------------- */
+
+// useTest follows a connection test the server queued: until the agent reports it, the card says it is testing.
+function useTest(fqdn, reload) {
+  const [waiting, setWaiting] = useState({});
+  useEffect(() => {
+    if (!Object.keys(waiting).length) return undefined;
+    const t = setInterval(reload, 2000);
+    const stop = setTimeout(() => setWaiting({}), 120000);
+    return () => { clearInterval(t); clearTimeout(stop); };
+  }, [waiting, fqdn]);
+  return [waiting, setWaiting];
+}
+
+function TestLine({ c, client }) {
+  const t = c.last_test;
+  if (!t) return html`<span class="sub">Not tested yet.</span>`;
+  if (!t.ok) return html`<span class="prob error">${icons.error()}<span>Last test ${ago(t.at)}: ${t.error || t.result?.error || 'it failed'}</span></span>`;
+  const r = t.result || {};
+  const ru = r.restore_user;
+  return html`<span class="sub">Last test ${ago(t.at)}: connected · PostgreSQL ${r.server_version || '?'} · ${r.tls ? r.tls : 'no TLS'} · ${(r.databases || []).length} databases${r.client || client ? ` · pg_dump ${r.client || client} on the agent` : ''}${ru ? (ru.error ? ` · restore user: ${ru.error}` : ` · restore user ${ru.createdb ? 'may create databases' : 'may not create databases'}${(ru.acts_as || []).length ? ' and act as ' + ru.acts_as.join(', ') : ''}`) : ''}</span>`;
+}
+
+// One connection: what it reaches, its last test, and its databases with the job that backs each up.
+function ConnCard({ host, c, testing, onTest, onEdit }) {
+  const jobs = host.jobs.filter((j) => isPG(j) && j.postgresql.connection === c.name);
+  const jobFor = (db) => jobs.find((j) => (db === null ? j.postgresql.globals : j.postgresql.database === db));
+  const dbs = c.last_test?.ok ? c.last_test.result?.databases || [] : null;
+  const rows = dbs ? [...dbs.map((d) => ({ name: d.name, bytes: d.bytes, owner: d.owner })), { name: null }] : [];
+  const nojob = rows.filter((r) => !jobFor(r.name));
+  const add = (names) => link('agents', host.fqdn, 'configure') + '?' + new URLSearchParams({ connection: c.name, databases: names.join(',') }).toString();
+  const mayAdd = can(host, 'config.jobs');
+  const cols = 'minmax(170px,1fr) 90px minmax(110px,.8fr) minmax(150px,1fr) 110px';
+  return html`<div class="conn">
+    <div class="conn-head">
+      <div style="min-width:0;flex:1 1 420px;display:flex;flex-direction:column;gap:.25rem">
+        <b>${c.name} <span class="muted" style="font-weight:400;font-size:13px">· used by ${c.used_by.length} ${c.used_by.length === 1 ? 'job' : 'jobs'}</span></b>
+        <code class="wrap">${c.url}</code>
+        <span class="sub">Signs in as <code>${c.user}</code> · ${c.password_set ? 'password set, sealed' : 'no password: peer authentication on the socket'}${c.restore_user ? html` · restores as <code>${c.restore_user}</code>${c.restore_password_set ? ', password set, sealed' : ', no password'}` : ' · no restore user: dumps restore as files only'}</span>
+        ${testing ? html`<span class="sub">Testing on the agent: it connects on its next poll…</span>` : html`<${TestLine} c=${c} client=${host.agent?.postgresql?.client} />`}
+      </div>
+      <div class="row">
+        ${can(host, 'config.jobs') && html`<button class="small" disabled=${testing} onClick=${onTest}>${testing ? 'Testing…' : 'Test connection'}</button>`}
+        ${can(host, 'config.storage') && html`<button class="small" onClick=${onEdit}>Edit…</button>`}
+      </div>
+    </div>
+    ${dbs && html`<div class="scrollx"><div style="min-width:640px">
+      <div class="gt head" style=${'--cols:' + cols}><span>Database, at the last test</span><span>Size</span><span>Owner</span><span>Job</span><span></span></div>
+      ${rows.map((r) => {
+        const j = jobFor(r.name);
+        return html`<div class="gt" style=${'--cols:' + cols}>
+          <span>${r.name === null ? html`<span class="muted">roles and other globals</span>` : html`<b>${r.name}</b>`}</span>
+          <span class="num muted">${r.name === null ? '' : bytes(r.bytes)}</span><span class="muted">${r.owner || ''}</span>
+          <span>${j ? html`<a href=${link('agents', host.fqdn, 'jobs', j.id)}>${j.id}</a> <${StateBadge} host=${host} job=${j} />` : html`<span class="warntext" data-tip="No job backs this up.">in no job</span>`}</span>
+          <span>${!j && mayAdd && html`<a class="button small" href=${add([r.name === null ? ':roles' : r.name])}>Add job…</a>`}</span>
+        </div>`;
+      })}
+      ${nojob.length > 1 && mayAdd && html`<div class="selbar"><span>${nojob.length} in no job.</span><a class="button small" href=${add(nojob.map((r) => (r.name === null ? ':roles' : r.name)))}>Add a job for each…</a>
+        <span class="muted">one job per database, the same schedule and retention, saved as one revision</span></div>`}
+    </div></div>`}
+  </div>`;
+}
+
+// Add or change a connection. The passwords are write-only: left empty, the stored one stays.
+function ConnDialog({ host, c, onClose, onSaved }) {
+  const editing = !!c.name;
+  const [f, setF] = useState({ name: c.name || '', url: c.url || '', user: c.user || '', pw: '', peer: editing && !c.password_set, ruser: c.restore_user || '', rpw: '', msg: '' });
+  const act = useAction();
+  const rm = useAction();
+  const set = (k) => (e) => setF({ ...f, [k]: e.target.type === 'checkbox' ? e.target.checked : e.target.value });
+  useEffect(() => {
+    const esc = (e) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', esc);
+    return () => document.removeEventListener('keydown', esc);
+  }, []);
+  const name = f.name.trim();
+  const body = () => {
+    const b = { url: f.url.trim(), user: f.user.trim(), restore_user: f.ruser.trim() || undefined, message: f.msg || undefined };
+    if (f.peer) b.password = '';
+    else if (f.pw) b.password = f.pw;
+    if (f.rpw && f.ruser.trim()) b.restore_password = f.rpw;
+    return b;
+  };
+  const save = () => act.run(() => api.setConnection(host.fqdn, name, body())).then((r) => r && onSaved(name, r.test_command));
+  const remove = () => rm.run(() => api.removeConnection(host.fqdn, c.name, f.msg || undefined)).then((r) => r && onSaved(null, null));
+  const q = (s) => (/^[A-Za-z0-9_./:=@,-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`);
+  const cli = `holdfast agent connection set ${host.fqdn} ${name || '<name>'} --url ${q(f.url.trim() || '<url>')} --user ${f.user.trim() || '<user>'}`
+    + (f.peer ? ' --no-password' : f.pw || !editing ? ' --password-file backup.pass' : '')
+    + (f.ruser.trim() ? ` --restore-user ${f.ruser.trim()}${f.rpw || !editing || !c.restore_password_set ? ' --restore-password-file restore.pass' : ''}` : '');
+  return html`<div class="scrim" onClick=${(e) => { if (e.target === e.currentTarget) onClose(); }}>
+    <div class="dialog wide" role="dialog" aria-modal="true" aria-labelledby="cn-h">
+      <h2 id="cn-h">${editing ? `Edit connection ${c.name}` : `Add a PostgreSQL connection to ${host.fqdn}`}</h2>
+      <div class="formgrid">
+        <label for="cn-n">Name</label><input id="cn-n" class="mono" value=${f.name} disabled=${editing} onInput=${set('name')} placeholder="postgres-main" />
+        <label for="cn-u">Connection URL</label><input id="cn-u" class="mono" value=${f.url} onInput=${set('url')} placeholder="postgresql://db.example.internal:5432/?sslmode=verify-full&sslrootcert=/etc/holdfast/pg/ca.crt" />
+        <span></span><span class="sub">libpq’s form, without a user, password or database: they have fields of their own. A socket is <code>postgresql:///?host=/var/run/postgresql</code>. Paths, such as sslrootcert, are where the agent runs.</span>
+        <label for="cn-us">User</label><input id="cn-us" class="mono" value=${f.user} onInput=${set('user')} placeholder="holdfast_backup" />
+        <label for="cn-p">Password</label>
+        <span class="row"><input id="cn-p" type="password" value=${f.pw} disabled=${f.peer} onInput=${set('pw')} autocomplete="new-password"
+            placeholder=${editing && c.password_set ? 'set · leave empty to keep it' : ''} style="flex:1 1 12rem" />
+          <label class="row" style="gap:.3rem"><input type="checkbox" checked=${f.peer} onChange=${set('peer')} /> no password: peer authentication</label></span>
+        <label for="cn-ru">Restore user</label><input id="cn-ru" class="mono" value=${f.ruser} onInput=${set('ruser')} placeholder="optional: without it, dumps restore as files only" />
+        <label for="cn-rp">Restore password</label><input id="cn-rp" type="password" value=${f.rpw} disabled=${!f.ruser.trim()} onInput=${set('rpw')} autocomplete="new-password"
+          placeholder=${editing && c.restore_password_set ? 'set · leave empty to keep it' : ''} />
+        <label for="cn-m">Message</label><input id="cn-m" value=${f.msg} onInput=${set('msg')} placeholder=${`${host.fqdn}: ${editing ? 'change' : 'add'} connection ${name || '…'}`} />
+      </div>
+      <p class="sub">The passwords are sealed on the server, sent only to this agent, and never shown again. Saving makes a new revision, and the agent tests the connection at once: it connects as it will for a backup, and reports what it finds.</p>
+      <pre>${cli}</pre>
+      <${ErrorBox} error=${act.error || rm.error} />
+      <div class="row" style="justify-content:flex-end">
+        ${editing && html`<button class="danger-line" style="margin-right:auto" disabled=${rm.busy || c.used_by.length > 0} title=${c.used_by.length ? 'Jobs use it: remove them first' : ''} onClick=${remove}>Remove connection</button>`}
+        <button onClick=${onClose}>Cancel</button>
+        <button class="primary" disabled=${act.busy || !name} onClick=${save}>Save and test</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+function Connections({ host, reload }) {
+  const conns = usePoll(() => api.connections(host.fqdn), [host.fqdn], 30000);
+  const [dlg, setDlg] = useState(null);
+  const refresh = () => { conns.reload(); reload(); };
+  const [waiting, setWaiting] = useTest(host.fqdn, refresh);
+  const act = useAction();
+  const list = conns.data || host.postgresql || [];
+  // A test is done once the connection's last test is the one queued.
+  const testing = (c) => !!waiting[c.name] && c.last_test?.command !== waiting[c.name];
+  useEffect(() => {
+    const left = Object.fromEntries(Object.entries(waiting).filter(([n, id]) => !list.some((c) => c.name === n && c.last_test?.command === id)));
+    if (Object.keys(left).length !== Object.keys(waiting).length) setWaiting(left);
+  }, [conns.data]);
+  return html`<section class="list" aria-labelledby="pg-h">
+    <div class="list-head">
+      <div style="display:flex;flex-direction:column;gap:.15rem;min-width:0;flex:1 1 30rem">
+        <h2 id="pg-h" class="row" style="gap:.4rem">${dbIcon(16)} PostgreSQL connections</h2>
+        <span class="sub">A connection holds the address and the credentials, once; every job of its databases uses them.${host.agent?.postgresql?.client ? ` pg_dump ${host.agent.postgresql.client} where the agent runs.` : ' The agent has no PostgreSQL client: root there sets postgresql.bin_dir in its agent.yaml.'}</span>
+      </div>
+      ${can(host, 'config.storage') && html`<button onClick=${() => setDlg({})}>Add connection…</button>`}
+    </div>
+    <${ErrorBox} error=${conns.error || act.error} />
+    ${list.length === 0 && html`<p class="muted" style="padding:0 1rem 1rem">No connection yet.</p>`}
+    ${list.map((c) => html`<${ConnCard} key=${c.name} host=${host} c=${c} testing=${testing(c)}
+      onTest=${() => act.run(() => api.testConnection(host.fqdn, c.name)).then((r) => r && setWaiting({ ...waiting, [c.name]: r.command }))}
+      onEdit=${() => setDlg(c)} />`)}
+    ${dlg && html`<${ConnDialog} host=${host} c=${dlg} onClose=${() => setDlg(null)}
+      onSaved=${(name, test) => { setDlg(null); if (name && test) setWaiting({ ...waiting, [name]: test }); refresh(); }} />`}
+  </section>`;
+}
+
+export function Host({ fqdn, reloadHosts, vault, settings }) {
   const host = usePoll(() => api.host(fqdn), [fqdn]);
   const events = usePoll(() => api.hostEvents(fqdn, 200), [fqdn]);
   const days = usePoll(() => api.hostDays(fqdn, 14, browserZone()), [fqdn], 60000);
   const cuts = usePoll(() => api.retentionCuts(), [fqdn], 60000);
+  const withOff = !vault && !!host.data?.offsite;
+  const siteB = usePoll(() => (withOff ? api.offsiteSettings() : Promise.resolve(null)), [withOff], 0);
   const [panel, setPanel] = useState('');
   const [queued, setQueued] = useState({});
   const act = useAction();
@@ -230,32 +400,34 @@ export function Host({ fqdn, reloadHosts, vault }) {
   const errors = probs.filter((p) => p.severity === 'error').length;
   const needy = new Set(probs.filter((p) => p.job_id).map((p) => p.job_id)).size;
   const run = (j) => act.run(() => api.runNow(h.fqdn, j.id)).then((r) => { if (r) setQueued({ ...queued, [j.id]: true }); });
-  const withOff = !vault && !!h.offsite;
   const cols = withOff ? JOB_COLS_OFFSITE : JOB_COLS;
+  const a = h.agent;
+  const withPG = !vault && (!!a?.postgresql?.client || (h.postgresql || []).length > 0);
   return html`
     <div class="spread">
-      <div>
-        <h1 class="row" style="gap:.6rem">${h.fqdn}
+      <div style="min-width:0">
+        <h1 class="row" style="gap:.6rem"><span class="wrap">${h.fqdn}</span>
           ${probs.length === 0 ? html`<${Pill} kind="ok">all ${h.jobs.length} jobs OK<//>`
             : html`<${Pill} kind=${errors ? 'error' : 'warning'}>${needy ? `${needy} ${needy === 1 ? 'job needs' : 'jobs need'} attention` : 'needs attention'}<//>`}</h1>
         <p class="muted">${vault ? `copied from primary · last copy ${h.copied_at ? fmtTime(h.copied_at) : 'none yet'}`
-          : h.agent ? html`${h.agent.os_id} ${h.agent.os_version} · agent seen ${ago(h.agent.last_seen_at)} · restic ${h.agent.restic_version}${h.in_sync ? '' : html` · <${Pill} kind="warning">runs revision ${h.agent.applied_revision}, not ${h.desired_revision}<//>`}`
-          : `${h.state.replace(/_/g, ' ')} · progress: ${h.progress}`}</p>
+          : a ? html`${a.remote_addr ? `Connects from ${a.remote_addr} · ` : ''}${a.os_id} ${a.os_version} · agent ${a.agent_version} seen ${ago(a.last_seen_at)} · restic ${a.restic_version}${a.postgresql?.client ? ` · PostgreSQL client ${a.postgresql.client}` : ''}${h.in_sync ? '' : html` · <${Pill} kind="warning">runs revision ${a.applied_revision}, not ${h.desired_revision}<//>`}`
+          : `${agentSub(h)} · progress: ${h.progress}`}</p>
+        ${!vault && html`<${Limits} host=${h} />`}
       </div>
       <div class="row">
-        ${!vault && can(h, 'config.jobs') && h.state !== 'retired' && html`<a class="button" href=${link('hosts', h.fqdn, 'configure')}>Add job</a>`}
-        <${Menu} label="More host actions" items=${[
-          { label: 'Waiting to be deleted', href: link('hosts', h.fqdn, 'pending') },
+        ${!vault && can(h, 'config.jobs') && h.state !== 'retired' && html`<a class="button" href=${link('agents', h.fqdn, 'configure')}>Add job</a>`}
+        <${Menu} label="More agent actions" items=${[
+          { label: 'Waiting to be deleted', href: link('agents', h.fqdn, 'pending') },
           can(h, 'retention.cut') && { label: 'Run retention now', run: () => act.run(() => api.retentionRun(h.fqdn)) },
-          can(h, 'retention.cut') && { label: 'Prune now…', href: link('hosts', h.fqdn, 'prune-now') },
+          can(h, 'retention.cut') && { label: 'Prune now…', href: link('agents', h.fqdn, 'prune-now') },
           withOff && can(h, 'restore.new_dir') && h.offsite.copies > 0 && { label: 'Restore from off-site…', run: () => setPanel('offsite') },
-          withOff && { label: 'Off-site pages', href: offsiteLink('hosts', h.fqdn) },
+          withOff && { label: 'Off-site pages', href: offsiteLink('agents', h.fqdn) },
           '-',
           !vault && can(h, 'config.storage') && { label: 'New enrollment code', run: () => setPanel('enroll') },
           !vault && can(h, 'config.storage') && h.state !== 'retired' && { label: 'Rotate password…', run: () => setPanel('rotate') },
-          can(h, 'repository.rollback') && !(h.decommission && h.decommission.done_at) && { label: 'Roll back…', href: link('hosts', h.fqdn, 'rollback') },
+          can(h, 'repository.rollback') && !(h.decommission && h.decommission.done_at) && { label: 'Roll back…', href: link('agents', h.fqdn, 'rollback') },
           '-',
-          can(h, 'host.remove') && h.state !== 'retired' && !h.removed_at && (!vault || h.jobs.every((j) => j.retired)) && { label: 'Remove host…', danger: true, run: () => {
+          can(h, 'host.remove') && h.state !== 'retired' && !h.removed_at && (!vault || h.jobs.every((j) => j.retired)) && { label: 'Remove agent…', danger: true, run: () => {
             if (confirm(`Remove ${h.fqdn}? Its agent stops backing up; its repository and snapshots stay, and adding it again brings it back.`))
               act.run(() => api.removeHost(h.fqdn, {})).then(refresh);
           } },
@@ -275,17 +447,18 @@ export function Host({ fqdn, reloadHosts, vault }) {
     <section class="list" aria-labelledby="jobs-h">
       <div class="list-head"><h2 id="jobs-h">${vault ? 'Copied jobs' : 'Jobs'}</h2>
         ${days.error && html`<span class="muted">The last 14 days could not be read: ${days.error.message}</span>`}</div>
-      ${h.jobs.length === 0 ? html`<p class="muted" style="padding:0 1rem 1rem">No job yet.${!vault && can(h, 'config.jobs') ? html` <a href=${link('hosts', h.fqdn, 'configure')}>Add one</a>.` : ''}</p>` : html`
-      <div class="scrollx"><div style=${'min-width:' + (withOff ? 1020 : 900) + 'px'}>
-        <div class="gt head" style=${'--cols:' + cols}><span>Job</span><span>Last 14 days</span><span>Last backup</span><span>Next</span>${withOff && html`<span>Off-site</span>`}<span></span></div>
+      ${h.jobs.length === 0 ? html`<p class="muted" style="padding:0 1rem 1rem">No job yet.${!vault && can(h, 'config.jobs') ? html` <a href=${link('agents', h.fqdn, 'configure')}>Add one</a>.` : ''}</p>` : html`
+      <div class="scrollx"><div style=${'min-width:' + (withOff ? 1160 : 1040) + 'px'}>
+        <div class="gt head" style=${'--cols:' + cols}><span>Job</span><span>Backs up</span><span>Last 14 days</span><span>Last backup</span><span>Next</span>${withOff && html`<span>Off-site</span>`}<span></span></div>
         ${h.jobs.map((j) => html`<${JobRow} key=${j.id} host=${h} job=${j} vault=${vault} cols=${cols} queued=${!!queued[j.id]} onRun=${() => run(j)}
           days=${days.data && days.data.jobs.find((x) => x.job_id === j.id)} cut=${(cuts.data || []).some((c) => c.fqdn === h.fqdn && c.job_id === j.id)} />`)}
       </div></div>
       <div class="legend"><span><i class="d-success"></i>backed up</span><span><i class="d-warning"></i>incomplete</span><span><i class="d-failed"></i>failed</span>
         <span><i class="d-none"></i>no run</span><span><i class="d-later"></i>not yet today</span><span><i class="d-before"></i>before the first backup</span><span>One square a day; the worst run of the day sets its colour.</span></div>`}
     </section>
+    ${withPG && html`<${Connections} host=${h} reload=${refresh} />`}
     ${events.data ? html`<${Runs} host=${h} events=${events.data} />` : html`<${Loading} what="runs" />`}
-    <${Repository} host=${h} />`;
+    <${Repository} host=${h} settings=${settings} siteB=${siteB.data} />`;
 }
 
 export function Pending({ fqdn }) {
@@ -309,7 +482,7 @@ export function Pending({ fqdn }) {
           ${s.reason === 'retention_cut' && can(host.data, 'config.jobs') && html`<button class="small" onClick=${() => act.run(() => api.keepLonger(fqdn, s.job_id, { revision: s.kept_by_revision })).then(p.reload)}>Keep longer</button>`}</td>
       </tr>`)}</tbody></table>`}
     ${d.jobs.filter((j) => j.not_made_by_holdfast.length).map((j) => html`<p class="muted">Job ${j.job_id}: ${j.not_made_by_holdfast.length} snapshots that Holdfast did not make are left alone.</p>`)}
-    <p><a href=${link('hosts', fqdn)}>Back to ${fqdn}</a></p>`;
+    <p><a href=${link('agents', fqdn)}>Back to ${fqdn}</a></p>`;
 }
 
 export { go };

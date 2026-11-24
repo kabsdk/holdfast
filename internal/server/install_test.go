@@ -14,7 +14,7 @@ func TestInstallScript(t *testing.T) {
 	Version = "1.2.0"
 	got := s.installScript("web01.example.com", "ABCD-EFGH")
 	want := "curl -sfL " + Releases + "/download/v1.2.0/install.sh | HOLDFAST_SERVER=https://holdfast.example.com:8443 " +
-		"HOLDFAST_FQDN=web01.example.com HOLDFAST_CODE=ABCD-EFGH HOLDFAST_CA_SHA256=" + pin + " HOLDFAST_VERSION=1.2.0 sh -"
+		"HOLDFAST_AGENT_NAME=web01.example.com HOLDFAST_CODE=ABCD-EFGH HOLDFAST_CA_SHA256=" + pin + " HOLDFAST_VERSION=1.2.0 sh -"
 	if got != want {
 		t.Fatalf("release:\n got %s\nwant %s", got, want)
 	}

@@ -13,6 +13,10 @@ signed yet: check them against `dist/SHA256SUMS` before you install them.
 M1's `holdfast-freshness`, the storage witness, left in M10: the server is the witness now (decision 045), and its
 package replaces the old one.
 
+The agent also comes as a container image, `ghcr.io/kabsdk/holdfast-agent`, with restic and PostgreSQL 18's client,
+to back up a PostgreSQL server in Kubernetes from a pod (decision 055). The documentation's *PostgreSQL* section has
+the manifests.
+
 The binaries are static, so the same packages run on Ubuntu, Debian, RHEL, Oracle Linux and their
 relatives. The lab installs them on Ubuntu, RHEL and Oracle Linux (`lab/README.md`).
 
@@ -61,17 +65,23 @@ and prints the pin agents use. Then:
   `HOLDFAST_UI_URL=off` for no UI. For others to log in as themselves, with roles from their groups, give the OIDC
   provider: `HOLDFAST_OIDC_ISSUER`, `HOLDFAST_OIDC_CLIENT_ID` and `HOLDFAST_OIDC_CLIENT_SECRET`, all three. An LDAP or
   Active Directory goes behind the provider (Authelia, Dex, Keycloak).
-- **Hosts.** `holdfast host add web01.example.com` prints the line to run on the host. `holdfast job set
+- **Agents.** `holdfast agent add web01.example.com` prints the line to run on the machine. `holdfast job set
   web01.example.com system --path /etc --path /home` gives it a job, with the default schedule and retention (daily at
   02:00; 14 days, 8 weeks, 12 months, 3 years) unless you give others (decision 048).
 
 `sh install.sh help` lists every setting, with off-site copies and the rest.
 
-**An agent.** `holdfast host add` prints the line to run on the host, as root:
+**An agent.** You name each agent (decision 056): any name of lower-case letters, digits and hyphens, in
+dot-separated parts, such as its machine's FQDN, `web01.example.com`, or `matrix`. Holdfast never reads it from the
+machine. `holdfast agent add <name>` prints the line to run on the machine, as root:
 
 ```
-curl -sfL …/install.sh | HOLDFAST_SERVER=https://holdfast.example.internal:8443 HOLDFAST_FQDN=web01.example.com HOLDFAST_CODE=… HOLDFAST_CA_SHA256=… HOLDFAST_VERSION=… sh -
+curl -sfL …/install.sh | HOLDFAST_SERVER=https://holdfast.example.internal:8443 HOLDFAST_AGENT_NAME=web01.example.com HOLDFAST_CODE=… HOLDFAST_CA_SHA256=… HOLDFAST_VERSION=… sh -
 ```
+
+To back up PostgreSQL databases with it, root on the machine names the PostgreSQL client in
+`/etc/holdfast/agent.yaml` (`postgresql.bin_dir`), and an admin gives the agent a connection in Holdfast: see
+*PostgreSQL* in the documentation.
 
 **A workstation's CLI**: `… | sh -s - cli`, then `holdfast login --server <the UI's URL>`, which needs the OIDC
 provider.
@@ -83,9 +93,9 @@ To read the script before running it: `curl -sfLO …/install.sh`, read it, then
 The collection `kabsdk.holdfast` (decision 050), released beside the packages, does what `install.sh` does, as the
 roles `server`, `agent` and `cli`. It takes the same settings, in lower case: `HOLDFAST_S3_BUCKET` is
 `holdfast_s3_bucket`. The roles keep the machines that way: a run with nothing to do changes nothing, and a changed
-setting reaches `server.yaml`. The agent role also adds each host on the server, enrolls it, and gives it the jobs it
-lacks. Unlike the installer, the roles read no host name from the machine: give the server and every host its
-FQDN as `holdfast_fqdn`. They need no gathered facts.
+setting reaches `server.yaml`. The agent role also adds each agent on the server, enrolls it, and gives it the jobs it
+lacks. The roles read no name from the machine: give the server its DNS name as `holdfast_fqdn`, where the installer
+reads `hostname -f`, and every agent its name as `holdfast_agent_name`. They need no gathered facts.
 
 ```
 ansible-galaxy collection install https://github.com/kabsdk/holdfast/releases/download/v0.1-dev/kabsdk-holdfast-0.1-dev.tar.gz
@@ -111,8 +121,9 @@ Installing enables nothing, because each service needs its config first:
   holdfast-server`. `holdfast-server recovery-file -config /etc/holdfast/server.yaml holdfast-recovery.txt` writes
   its recovery file; add your age key's line to it (decision 047). The Prometheus rules and scripts, optional, are in
   `/usr/share/holdfast/` ([alerting.md](alerting.md)).
-- **An agent:** run the command `holdfast host add` printed, as root on the host:
-  `holdfast-agent enroll --server … --fqdn … --code … --ca-sha256 …`. It makes the agent's own key and
+- **An agent:** run the command `holdfast agent add` printed, as root on the machine:
+  `holdfast-agent enroll --server … --name … --code … --ca-sha256 …`. It writes `/etc/holdfast/agent.yaml`, with the
+  name as `agent_name`, and makes the agent's own key and
   certificate, which the server pins; nothing else is needed on the host, no S3 key. Then `systemctl enable
   --now holdfast-agent`.
 - **Off-site copies**, optional (spec §3.7): make the off-site bucket and its key ([storage.md](storage.md)), add
@@ -150,7 +161,14 @@ version with every poll, and the server answers with the range it accepts:
 
 Upgrading a package restarts its service if it runs. The server migrates its database when it starts. An
 agent restarted in the middle of a backup reports that run as interrupted; the job's next run backs up as
-usual. So upgrade agents outside their backup windows, or check `holdfast host events` after.
+usual. So upgrade agents outside their backup windows, or check `holdfast agent events` after.
+
+An agent before protocol 5 cannot run PostgreSQL jobs: a job given to it is the error P004 until it is upgraded. An
+`agent.yaml` that names the agent as `fqdn:` keeps working; the agent logs that the key is now `agent_name`, and the
+Ansible collection rewrites it (decision 056).
+
+The container image is upgraded by its tag: pin `ghcr.io/kabsdk/holdfast-agent:<release>` and change it, after the
+server.
 
 ```
 apt install ./holdfast-restic_*.deb ./holdfast-server_*.deb ./holdfast-cli_*.deb
@@ -163,5 +181,5 @@ restic gets the `restic` warning (decision 032).
 ## Removing
 
 Removing a package stops and disables its service. It never deletes `/etc/holdfast`, the agent's state or
-any backup. To stop backing up a host, remove it in Holdfast (`holdfast host remove`), and to delete its
+any backup. To stop backing up an agent, remove it in Holdfast (`holdfast agent remove`), and to delete its
 repository, decommission it (spec §3.5).

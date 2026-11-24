@@ -16,7 +16,7 @@ import (
 
 func offsiteCmd() *cobra.Command {
 	c := &cobra.Command{Use: "offsite", Short: "Off-site copies: a host's copies, and the off-site jobs' Exclude, Include and Match primary"}
-	c.AddCommand(&cobra.Command{Use: "copies <fqdn>", Short: "The off-site copies of a host, as last reported (for restore --from-offsite)",
+	c.AddCommand(&cobra.Command{Use: "copies <agent>", Short: "The off-site copies of a host, as last reported (for restore --from-offsite)",
 		Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, a []string) error {
 			var copies []struct {
 				ID       string    `json:"id"`
@@ -24,7 +24,7 @@ func offsiteCmd() *cobra.Command {
 				Time     time.Time `json:"time"`
 				JobID    string    `json:"job_id"`
 			}
-			raw, err := call("GET", "/api/v1/hosts/"+url.PathEscape(a[0])+"/offsite", nil, &copies)
+			raw, err := call("GET", "/api/v1/agents/"+url.PathEscape(a[0])+"/offsite", nil, &copies)
 			if err != nil {
 				return err
 			}
@@ -42,7 +42,7 @@ func offsiteCmd() *cobra.Command {
 	c.AddCommand(excludeCmd(true), excludeCmd(false))
 	var msg string
 	var accept []string
-	match := &cobra.Command{Use: "match-primary <fqdn> <job>", Short: "Make a job's off-site retention its primary retention again, following every change there",
+	match := &cobra.Command{Use: "match-primary <agent> <job>", Short: "Make a job's off-site retention its primary retention again, following every change there",
 		Args: cobra.ExactArgs(2), RunE: func(_ *cobra.Command, a []string) error {
 			useOffsite = true
 			var res struct {
@@ -50,7 +50,7 @@ func offsiteCmd() *cobra.Command {
 				Findings []finding `json:"findings"`
 				Accepted []string  `json:"accepted_codes"`
 			}
-			raw, err := call("POST", "/api/v1/hosts/"+url.PathEscape(a[0])+"/jobs/"+url.PathEscape(a[1])+"/match-primary",
+			raw, err := call("POST", "/api/v1/agents/"+url.PathEscape(a[0])+"/jobs/"+url.PathEscape(a[1])+"/match-primary",
 				map[string]any{"message": msg, "accept": accept}, &res)
 			if err != nil {
 				return err
@@ -71,16 +71,16 @@ func offsiteCmd() *cobra.Command {
 
 // excludeCmd is Exclude, or Include, of an off-site job.
 func excludeCmd(exclude bool) *cobra.Command {
-	use, short := "include <fqdn> <job>", "Copy an excluded job off-site again"
+	use, short := "include <agent> <job>", "Copy an excluded job off-site again"
 	if exclude {
-		use, short = "exclude <fqdn> <job>", "Stop copying a job off-site; its copies stay under its off-site retention"
+		use, short = "exclude <agent> <job>", "Stop copying a job off-site; its copies stay under its off-site retention"
 	}
 	var msg string
 	c := &cobra.Command{Use: use, Short: short, Args: cobra.ExactArgs(2), RunE: func(_ *cobra.Command, a []string) error {
 		useOffsite = true
-		path := "/api/v1/hosts/" + url.PathEscape(a[0]) + "/jobs/" + url.PathEscape(a[1]) + "/include"
+		path := "/api/v1/agents/" + url.PathEscape(a[0]) + "/jobs/" + url.PathEscape(a[1]) + "/include"
 		if exclude {
-			path = "/api/v1/hosts/" + url.PathEscape(a[0]) + "/jobs/" + url.PathEscape(a[1]) + "/exclude"
+			path = "/api/v1/agents/" + url.PathEscape(a[0]) + "/jobs/" + url.PathEscape(a[1]) + "/exclude"
 		}
 		var res struct {
 			Revision int64 `json:"revision"`

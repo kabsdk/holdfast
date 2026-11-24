@@ -4,12 +4,14 @@
 # a real S3 server (MinIO), with the packages `make packages` built in dist/ served over HTTP as a mirror.
 #   - ansible-lint passes with the production profile;
 #   1. the least settings, server on AlmaLinux, agents on Ubuntu and Oracle Linux, with gathering = explicit: the
-#      server, its recovery file and UI; each agent added, enrolled (one by its detected name) and given its jobs from
-#      mappings; backups through the gateway; run again, nothing changes; a setting changed reaches server.yaml; the server lost and replaced from the
-#      recovery file alone, the agents back by themselves; run again, nothing changes;
+#      server, its recovery file and UI; each agent added, enrolled (one by a name that is not its machine's) and given
+#      its jobs from mappings; backups through the gateway; run again, nothing changes; a setting changed reaches
+#      server.yaml; the server lost and replaced from the recovery file alone, the agents back by themselves; run again,
+#      nothing changes;
 #   2. your own age key, UI certificate, OIDC, mail and off-site copies, server on Ubuntu, an agent on AlmaLinux enrolled
-#      with a code given as the installer takes it: run again, nothing changes; 0.5.0's dumps in agent.yaml are
-#      ignored, and taken out; enrolled again on purpose.
+#      with a code given as the installer takes it, with its PostgreSQL client in agent.yaml: run again, nothing
+#      changes; 0.5.0's dumps in agent.yaml are ignored, and taken out; a name written as fqdn: is written as
+#      agent_name:; enrolled again on purpose.
 # Usage: test/ansible/run.sh     (make ansible-test). KEEP=1 leaves the containers running for a look.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
@@ -58,15 +60,15 @@ machine() { # machine NAME IMAGE: a container with systemd as PID 1, on the test
 	fail "$1: systemd did not come up"
 }
 mcx() { docker run --rm --network $net --entrypoint /usr/bin/mc -e MC_HOST_hf="http://hfroot:hfroot-ansible-secret@hf-ansible-minio:9000" -v "$work:/work:ro" "$MC_IMAGE" "$@"; }
-backups() { { docker exec "$1" holdfast host events "$2" --json | grep -o '"status": *"success"' || true; } | wc -l; }
-wait_backup() { # wait_backup SERVER FQDN BEFORE: until the host has more successful backups than BEFORE
+backups() { { docker exec "$1" holdfast agent events "$2" --json | grep -o '"status": *"success"' || true; } | wc -l; }
+wait_backup() { # wait_backup SERVER AGENT BEFORE: until the agent has more successful backups than BEFORE
 	local now=0
 	for _ in $(seq 90); do
 		now=$(backups "$1" "$2")
 		[ "$now" -gt "$3" ] && return 0
 		sleep 2
 	done
-	fail "$2: no backup: $(docker exec "$1" holdfast host events "$2")"
+	fail "$2: no backup: $(docker exec "$1" holdfast agent events "$2")"
 }
 bucket() { # bucket NAME USER-PREFIX: a versioned bucket with a lifecycle rule, and its gateway and maintenance keys
 	local b=$1 k=$2
@@ -138,6 +140,7 @@ mirror=http://hf-ansible-mirror:8080
 
 # ------------------------------------------------------------------------------------------------ 1: the least settings
 srv=hfsrv1.ansible.test a1=agent1-1.ansible.test a2=agent1-2.ansible.test
+n2=oracle-agent # a2's agent is named apart from its machine: Holdfast reads no name from it (decision 056)
 bucket holdfast-1 1
 machine $srv "$(image_for almalinux:9)"
 machine $a1 "$(image_for ubuntu:24.04)"
@@ -165,12 +168,12 @@ all:
     holdfast_agents:
       hosts:
         $a1:
-          holdfast_fqdn: $a1
+          holdfast_agent_name: $a1
           holdfast_jobs:
             etc: {path: [/etc]}
             docs: {path: [/usr/share/doc, /etc/hostname], exclude: ["*.gz"], every: 12h, keep_daily: 7d, accept: [R101], no_spread: true}
         $a2:
-          holdfast_hostname_autodetect: true
+          holdfast_agent_name: $n2
           holdfast_jobs:
             etc: {path: [/etc, /usr/share/doc], daily: "03:00"}
     holdfast_cli:
@@ -195,13 +198,13 @@ code=$(docker exec $srv curl -sk -o /dev/null -w '%{http_code}' https://localhos
 [[ $code =~ ^(200|30[23])$ ]] || fail "the UI answered $code"
 ok "almalinux:9: the server, with PostgreSQL, its CA ($pin), the recovery file, keys root-only, the UI on :443"
 
-for h in $a1 $a2; do
-	show=$(docker exec $srv holdfast host show $h --json)
+for h in $a1 $n2; do
+	show=$(docker exec $srv holdfast agent show $h --json)
 	grep -q '"state": *"enrolled"' <<<"$show" || fail "$h is not enrolled: $show"
 	docker exec $srv holdfast job run $h etc >/dev/null || fail "$h: job run"
 	wait_backup $srv $h 0
 done
-show=$(docker exec $srv holdfast host show $a1 --json)
+show=$(docker exec $srv holdfast agent show $a1 --json)
 python3 - "$show" <<'PY' || fail "$a1's docs job is not as its mapping says: $show"
 import json, sys
 job = {j["id"]: j for j in json.loads(sys.argv[1])["jobs"]}["docs"]
@@ -213,9 +216,10 @@ PY
 before=$(backups $srv $a1)
 docker exec $srv holdfast job run $a1 docs >/dev/null || fail "$a1: the docs job's run"
 wait_backup $srv $a1 "$before"
-docker exec $srv holdfast host show $a2 --json | grep -q '"state": *"enrolled"' || fail "$a2, with its name detected, is not enrolled"
+docker exec $a2 grep -qx "agent_name: $n2" /etc/holdfast/agent.yaml || fail "$a2's agent.yaml does not name it $n2"
+if docker exec $srv holdfast agent show $a2 --json >/dev/null 2>&1; then fail "Holdfast knows $a2 by its machine's name"; fi
 docker exec $a1 holdfast --help >/dev/null || fail "the CLI does not run on $a1"
-ok "ubuntu:24.04, oraclelinux:9: each agent added, enrolled (one by its detected name) and given its jobs from mappings; backups go through the gateway; the CLI"
+ok "ubuntu:24.04, oraclelinux:9: each agent added, enrolled ($a2 as $n2, the name the inventory gives) and given its jobs from mappings; backups go through the gateway; the CLI"
 
 play again-1 "$work/inv-1.yml"
 unchanged again-1
@@ -236,15 +240,15 @@ ok "a changed setting reaches server.yaml, and the server restarts on it"
 docker exec $srv cat /root/holdfast-recovery.txt >"$work/recovery-1.txt"
 docker exec $srv rm /root/holdfast-recovery.txt
 docker exec $srv holdfast export now >/dev/null || fail "export now"
-before=$(backups $srv $a2)
+before=$(backups $srv $n2)
 docker rm -f $srv >/dev/null
 machine $srv "$(image_for almalinux:9)"
 play rebuild-1 "$work/inv-1.yml" -e "holdfast_recovery_file=$work/recovery-1.txt"
 grep -q 'TASK \[kabsdk.holdfast.server : Restore it (restore-export -latest)\]' "$work/rebuild-1.log" || fail "the rebuild did not restore the export"
 [ "$(sed -n 's/^ca_sha256: *//p' <(docker exec $srv cat /etc/holdfast/server.yaml) | tr -d "\"'")" = "$pin" ] || fail "the rebuilt server has another pin"
-for _ in $(seq 60); do docker exec $srv holdfast host show $a2 --json 2>/dev/null | grep -q '"online": *true' && break; sleep 2; done
-docker exec $srv holdfast job run $a2 etc >/dev/null || fail "rebuilt: job run"
-wait_backup $srv $a2 "$before"
+for _ in $(seq 60); do docker exec $srv holdfast agent show $n2 --json 2>/dev/null | grep -q '"online": *true' && break; sleep 2; done
+docker exec $srv holdfast job run $n2 etc >/dev/null || fail "rebuilt: job run"
+wait_backup $srv $n2 "$before"
 ok "the server rebuilt from the recovery file and the same inventory, with the same pin; the agents back by themselves"
 
 docker exec $srv rm /root/holdfast-recovery.txt
@@ -318,7 +322,7 @@ if docker exec $srv grep -lE 'ansible-secret' /etc/holdfast/server.yaml; then fa
 docker exec $srv openssl x509 -noout -subject -in /etc/holdfast/tls/ui.crt | grep -q "CN *= *$srv" || fail "the UI's certificate is not yours"
 ok "ubuntu:24.04: the server with your own age key, UI certificate, OIDC, mail, off-site copies and server.yaml additions"
 
-add=$(docker exec $srv holdfast host add $a1 --json) || fail "host add: $add"
+add=$(docker exec $srv holdfast agent add $a1 --json) || fail "agent add: $add"
 line=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["enrollment"]["install_script"])' <<<"$add")
 code=$(sed -nE 's/.*HOLDFAST_CODE=([^ ]+).*/\1/p' <<<"$line" | tr -d "'")
 server=$(sed -nE 's/.*HOLDFAST_SERVER=([^ ]+).*/\1/p' <<<"$line" | tr -d "'")
@@ -327,18 +331,22 @@ cat >>"$work/inv-2.yml" <<EOF
     holdfast_agents:
       hosts:
         $a1:
-          holdfast_fqdn: $a1
+          holdfast_agent_name: $a1
           holdfast_server: $server
           holdfast_code: $code
           holdfast_ca_sha256: $capin
           holdfast_restore: {allow_in_place: true}
+          holdfast_postgresql_bin_dir: /usr/bin
 EOF
 play agent-2 "$work/inv-2.yml"
 docker exec $a1 grep -q 'allow_in_place: true' /etc/holdfast/agent.yaml || fail "the restore bounds are not in agent.yaml"
+docker exec $a1 grep -q 'bin_dir: /usr/bin' /etc/holdfast/agent.yaml || fail "the PostgreSQL client is not in agent.yaml"
+if docker exec $a1 grep -q 'allow_in_place_restore: true' /etc/holdfast/agent.yaml; then fail "restores over a database are allowed without holdfast_postgresql_allow_in_place_restore"; fi
+docker exec $a1 systemctl is-active -q holdfast-agent || fail "the agent is not running with a bin_dir that holds no pg_dump"
 docker exec $srv holdfast job set $a1 etc --path /etc >/dev/null || fail "job set"
 docker exec $srv holdfast job run $a1 etc >/dev/null || fail "job run"
 wait_backup $srv $a1 0
-ok "almalinux:9: the agent enrolled with a code given as the installer takes it, its restore bounds set, and backing up"
+ok "almalinux:9: the agent enrolled with a code given as the installer takes it, its restore bounds and PostgreSQL client set, and backing up"
 
 play again-2 "$work/inv-2.yml"
 unchanged again-2
@@ -353,8 +361,17 @@ if docker exec $a1 grep -q '^dumps:' /etc/holdfast/agent.yaml; then fail "the ro
 docker exec $a1 systemctl is-active -q holdfast-agent || fail "the agent is not running after the role took the dumps out"
 ok "almalinux:9: dumps left in agent.yaml by 0.5.0 are ignored with a warning, and the role takes them out"
 
+# An agent.yaml from before decision 056 names the agent as fqdn: the agent still reads it; the role writes agent_name:.
+docker exec $a1 sh -c 'sed -i "s/^agent_name:/fqdn:/" /etc/holdfast/agent.yaml && systemctl restart holdfast-agent'
+docker exec $a1 grep -qx "fqdn: $a1" /etc/holdfast/agent.yaml || fail "the test did not write the name as fqdn:"
+play fqdn-2 "$work/inv-2.yml"
+docker exec $a1 grep -qx "agent_name: $a1" /etc/holdfast/agent.yaml || fail "the role did not write the name as agent_name:"
+if docker exec $a1 grep -q '^fqdn:' /etc/holdfast/agent.yaml; then fail "the role left fqdn: in agent.yaml"; fi
+docker exec $a1 systemctl is-active -q holdfast-agent || fail "the agent is not running after the role wrote agent_name:"
+ok "almalinux:9: a name written as fqdn: in agent.yaml is written as agent_name:, and the agent keeps running"
+
 play reenroll-2 "$work/inv-2.yml" -e holdfast_reenroll=true -e holdfast_code=
-grep -q 'TASK \[kabsdk.holdfast.agent : Get a new code for the host Holdfast knows' "$work/reenroll-2.log" || fail "the enrollment again did not get a code"
+grep -q 'TASK \[kabsdk.holdfast.agent : Get a new code for the agent Holdfast knows' "$work/reenroll-2.log" || fail "the enrollment again did not get a code"
 before=$(backups $srv $a1)
 docker exec $srv holdfast job run $a1 etc >/dev/null || fail "job run after enrolling again"
 wait_backup $srv $a1 "$before"

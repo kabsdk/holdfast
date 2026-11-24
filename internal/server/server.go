@@ -219,8 +219,19 @@ func (s *Server) renderHost(doc config.Document, fqdn string) proto.HostConfig {
 		if sch.Zone == "" {
 			sch.Zone = s.set.DefaultZone
 		}
-		hc.Jobs = append(hc.Jobs, proto.JobConfig{ID: id, Engine: j.Engine, Paths: j.Paths, Excludes: j.Excludes, Schedule: sch, LimitUploadKiB: j.LimitUploadKiB,
-			Dump: j.Dump})
+		jc := proto.JobConfig{ID: id, Engine: j.Engine, Paths: j.Paths, Excludes: j.Excludes, Schedule: sch, LimitUploadKiB: j.LimitUploadKiB,
+			Dump: j.Dump}
+		if p := j.PostgreSQL; p != nil {
+			jc.PostgreSQL = &proto.PGJob{Connection: p.Connection, Database: p.Database, Globals: p.Globals}
+		}
+		hc.Jobs = append(hc.Jobs, jc)
+	}
+	// Its PostgreSQL connections, without their passwords, which travel with the credentials (decision 055).
+	for name, c := range h.PostgreSQL {
+		if hc.PostgreSQL == nil {
+			hc.PostgreSQL = map[string]proto.PGConnection{}
+		}
+		hc.PostgreSQL[name] = proto.PGConnection{URL: c.URL, User: c.User, RestoreUser: c.RestoreUser}
 	}
 	if s.set.Maintenance.Check == CheckDaily {
 		hc.Check = &proto.CheckConfig{CycleDays: s.set.Maintenance.CheckCycleDays}
@@ -369,7 +380,7 @@ func (s *Server) enrollment(fqdn, code string, expires time.Time) Enrollment {
 // installScript is the one line to run on the host (decision 044): it installs the packages of this server's
 // release, from download_url or GitHub, and enrolls with the code.
 func (s *Server) installScript(fqdn, code string) string {
-	vars := []string{"HOLDFAST_SERVER=" + shellWord(s.set.PublicURL), "HOLDFAST_FQDN=" + shellWord(fqdn), "HOLDFAST_CODE=" + shellWord(code)}
+	vars := []string{"HOLDFAST_SERVER=" + shellWord(s.set.PublicURL), "HOLDFAST_AGENT_NAME=" + shellWord(fqdn), "HOLDFAST_CODE=" + shellWord(code)}
 	if s.set.CASHA256 != "" {
 		vars = append(vars, "HOLDFAST_CA_SHA256="+shellWord(s.set.CASHA256))
 	}
@@ -413,7 +424,7 @@ type AddHostResult struct {
 }
 
 func (s *Server) installCommand(fqdn, code string) string {
-	cmd := fmt.Sprintf("holdfast-agent enroll --server %s --fqdn %s --code %s", s.set.PublicURL, fqdn, code)
+	cmd := fmt.Sprintf("holdfast-agent enroll --server %s --name %s --code %s", s.set.PublicURL, fqdn, code)
 	if s.set.CASHA256 != "" {
 		cmd += " --ca-sha256 " + s.set.CASHA256
 	}
@@ -429,7 +440,7 @@ func (s *Server) AddHost(ctx context.Context, a Actor, in AddHostInput) (AddHost
 		return AddHostResult{}, errVaultHosts
 	}
 	in.FQDN = strings.TrimSpace(in.FQDN)
-	if err := config.ValidFQDN(in.FQDN); err != nil {
+	if err := config.ValidAgentName(in.FQDN); err != nil {
 		return AddHostResult{}, &ValidationError{config.Problems{{Path: "fqdn", Message: err.Error()}}}
 	}
 	if strings.TrimSpace(in.Message) == "" {
@@ -447,7 +458,7 @@ func (s *Server) AddHost(ctx context.Context, a Actor, in AddHostInput) (AddHost
 		case h.State != "retired":
 			return AddHostResult{}, fmt.Errorf("host %s exists already: %w", in.FQDN, ErrConflict)
 		case h.Decommission != nil && h.Decommission.DoneAt == nil:
-			return AddHostResult{}, fmt.Errorf("host %s is waiting to be decommissioned; cancel that first (holdfast host decommission %s --cancel): %w", in.FQDN, in.FQDN, ErrConflict)
+			return AddHostResult{}, fmt.Errorf("host %s is waiting to be decommissioned; cancel that first (holdfast agent decommission %s --cancel): %w", in.FQDN, in.FQDN, ErrConflict)
 		}
 		revive, fresh = true, decommissioned(h)
 	}
@@ -748,6 +759,130 @@ func (s *Server) SetJob(ctx context.Context, a Actor, fqdn, jobID string, in Set
 	return res, nil
 }
 
+// SetJobsInput is several jobs of one agent, saved as one revision.
+type SetJobsInput struct {
+	Base    *int64
+	Message string
+	Jobs    map[string]config.Job
+	Accept  []string
+}
+
+// SetJobs saves several jobs as one revision, after the checks on each: a finding's path names its job. One job is
+// SetJob.
+func (s *Server) SetJobs(ctx context.Context, a Actor, fqdn string, in SetJobsInput) (SetJobResult, error) {
+	if len(in.Jobs) == 0 {
+		return SetJobResult{}, &ValidationError{config.Problems{{Path: "jobs", Message: "give at least one job"}}}
+	}
+	ids := make([]string, 0, len(in.Jobs))
+	for id := range in.Jobs {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	if len(ids) == 1 {
+		return s.SetJob(ctx, a, fqdn, ids[0], SetJobInput{Base: in.Base, Message: in.Message, Job: in.Jobs[ids[0]], Accept: in.Accept})
+	}
+	if s.set.IsVault() {
+		return SetJobResult{}, errVaultHosts
+	}
+	if strings.TrimSpace(in.Message) == "" {
+		in.Message = fmt.Sprintf("Set jobs %s on %s", strings.Join(ids, ", "), fqdn)
+	}
+	before, err := s.head(ctx, s.st.Q())
+	if err != nil {
+		return SetJobResult{}, err
+	}
+	if in.Base != nil && *in.Base != before.Number {
+		return SetJobResult{}, ErrConflict
+	}
+	h, ok := before.Config.Hosts[fqdn]
+	if !ok {
+		return SetJobResult{}, fmt.Errorf("host %s: %w", fqdn, ErrNotFound)
+	}
+	olds := map[string]*config.Job{}
+	doc := before.Config
+	for _, id := range ids {
+		j := in.Jobs[id]
+		if j.Engine == "" {
+			j.Engine = config.EngineRestic
+		}
+		if j.IsDump() {
+			return SetJobResult{}, errDumpJob
+		}
+		in.Jobs[id] = j
+		if old, ok := h.Jobs[id]; ok {
+			old := old
+			olds[id] = &old
+		}
+		doc = withJob(doc, fqdn, id, j)
+	}
+	if p := doc.Validate(); len(p) > 0 {
+		return SetJobResult{}, &ValidationError{p}
+	}
+	var fs []checks.Finding
+	for _, id := range ids {
+		for _, f := range s.jobFindings(ctx, fqdn, id, olds[id], in.Jobs[id]) {
+			f.Path = fmt.Sprintf("jobs[%q].%s", id, f.Path)
+			f.Message = id + ": " + f.Message
+			fs = append(fs, f)
+		}
+	}
+	fs = orEmpty(fs)
+	if blocking := checks.Blocking(fs, in.Accept); len(blocking) > 0 {
+		return SetJobResult{}, &ChecksError{Findings: fs, Blocking: blocking}
+	}
+	res := SetJobResult{Findings: fs, Accepted: checks.Accepted(fs, in.Accept)}
+	if slices.Contains(res.Accepted, "R104") {
+		if err := s.allowed(ctx, a, access.RetentionCut, fqdn); err != nil {
+			return SetJobResult{}, err
+		}
+	}
+	err = s.st.InTx(ctx, func(q *store.Q) error {
+		head, err := s.head(ctx, q)
+		if err != nil {
+			return err
+		}
+		if in.Base != nil && *in.Base != head.Number {
+			return ErrConflict
+		}
+		hh, ok := head.Config.Hosts[fqdn]
+		if !ok {
+			return fmt.Errorf("host %s: %w", fqdn, ErrNotFound)
+		}
+		doc := head.Config
+		for _, id := range ids {
+			cur, existed := hh.Jobs[id]
+			if existed != (olds[id] != nil) || (existed && !reflect.DeepEqual(cur, *olds[id])) {
+				return fmt.Errorf("job %s on %s changed while it was being checked: %w", id, fqdn, ErrConflict)
+			}
+			doc = withJob(doc, fqdn, id, in.Jobs[id])
+		}
+		if p := doc.Validate(); len(p) > 0 {
+			return &ValidationError{p}
+		}
+		rev, err := q.SaveRevision(ctx, store.SaveRevision{Base: head.Number, Actor: a.Name, Source: a.Source, Message: in.Message,
+			Accepted: res.Accepted, Config: doc, HostSHAs: s.hostSHAs(doc)})
+		if err != nil {
+			return err
+		}
+		res.Revision = rev.Number
+		for _, id := range ids {
+			action := "job.add"
+			if olds[id] != nil {
+				action = "job.change"
+			}
+			if err := q.Audit(ctx, store.AuditEntry{Actor: a.Name, Source: a.Source, Action: action, FQDN: fqdn, JobID: id, Revision: rev.Number,
+				Detail: map[string]any{"message": in.Message, "accepted_codes": res.Accepted}}); err != nil {
+				return err
+			}
+		}
+		return q.NotifyHost(ctx, fqdn)
+	})
+	if err != nil {
+		return SetJobResult{}, err
+	}
+	return res, nil
+}
+
 // withJob returns a copy of doc with the host's job created or replaced.
 func withJob(doc config.Document, fqdn, jobID string, j config.Job) config.Document {
 	doc = doc.Clone()
@@ -789,7 +924,10 @@ func (s *Server) RunNow(ctx context.Context, a Actor, fqdn, jobID string) (strin
 
 // JobView is one job as the API shows it.
 type JobView struct {
-	ID             string           `json:"id"`
+	ID string `json:"id"`
+	// Engine is restic (paths) or postgresql (a database, decision 055), with what it backs up.
+	Engine         string           `json:"engine"`
+	PostgreSQL     *config.PGJob    `json:"postgresql,omitempty"`
 	Paths          []string         `json:"paths"`
 	Excludes       []string         `json:"excludes,omitempty"`
 	Schedule       any              `json:"schedule"`
@@ -848,6 +986,8 @@ type HostView struct {
 	// AheadOfServer is the head this server was restored at, when the agent runs a newer revision that no revision
 	// since has replaced: its config is held back, and the host shows it.
 	AheadOfServer *int64 `json:"ahead_of_server,omitempty"`
+	// PostgreSQL are the agent's PostgreSQL connections, with their last tests, never a password (decision 055).
+	PostgreSQL []ConnectionView `json:"postgresql"`
 }
 
 // OnlineWithin is how recently an agent must have polled to count as online.
@@ -945,6 +1085,9 @@ func (s *Server) Hosts(ctx context.Context) ([]HostView, error) {
 			v.AheadOfServer = &at
 		}
 		hc := head.Config.Hosts[h.FQDN]
+		if v.PostgreSQL, err = s.connectionViews(ctx, q, h.FQDN, hc); err != nil {
+			return nil, err
+		}
 		ids := make([]string, 0, len(hc.Jobs))
 		for id := range hc.Jobs {
 			ids = append(ids, id)
@@ -953,7 +1096,7 @@ func (s *Server) Hosts(ctx context.Context) ([]HostView, error) {
 		for _, id := range ids {
 			j := hc.Jobs[id]
 			loc, _ := j.Schedule.Location(s.zone)
-			jv := JobView{ID: id, Paths: j.Paths, Excludes: j.Excludes, Schedule: j.Schedule, Retention: j.Retention, LimitUploadKiB: j.LimitUploadKiB, Dump: j.Dump,
+			jv := JobView{ID: id, Engine: j.Engine, PostgreSQL: j.PostgreSQL, Paths: j.Paths, Excludes: j.Excludes, Schedule: j.Schedule, Retention: j.Retention, LimitUploadKiB: j.LimitUploadKiB, Dump: j.Dump,
 				NextRuns: j.Schedule.NextN(now, 5, loc), LongestGap: j.Schedule.LongestGap().String(),
 				WorstCaseLoss: j.Schedule.WorstCaseLoss().String(), StaleAfter: j.Schedule.StaleAfter().String()}
 			for i := range statuses {

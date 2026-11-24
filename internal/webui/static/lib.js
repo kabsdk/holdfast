@@ -131,7 +131,7 @@ export function localDay(s) {
   return new Date(y, m - 1, d);
 }
 
-// browserZone is the browser's time zone by name, for answers given in days, such as the host page's squares.
+// browserZone is the browser's time zone by name, for answers given in days, such as the agent page's squares.
 export function browserZone() {
   try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch { return ''; }
 }
@@ -300,10 +300,38 @@ export function Pill({ kind, children }) {
 }
 
 export function Snap({ fqdn, id, short }) {
-  return html`<a class="mono" href=${link('hosts', fqdn, 'snapshots', id)}>${short || (id || '').slice(0, 8)}</a>`;
+  return html`<a class="mono" href=${link('agents', fqdn, 'snapshots', id)}>${short || (id || '').slice(0, 8)}</a>`;
 }
 
-// can says whether the host's answer lists the action: the server worked it out.
+// shortName is what Delete now and Prune now ask you to type: an agent's name up to its first dot.
+export const shortName = (name) => (name || '').split('.')[0];
+
+// isPG says whether a job backs up a PostgreSQL database or its roles (decision 055).
+export const isPG = (job) => !!job && job.engine === 'postgresql' && !!job.postgresql;
+
+// backsUp says in words what a job backs up: its paths, or its database on a connection.
+export function backsUp(job) {
+  if (isPG(job)) return job.postgresql.globals ? `PostgreSQL ${job.postgresql.connection}: roles and other globals` : `PostgreSQL ${job.postgresql.connection}: database ${job.postgresql.database}`;
+  return (job.paths || []).join('  ') || '—';
+}
+
+// The dump file a PostgreSQL job's snapshot holds.
+export const dumpFile = (job) => (job.postgresql.globals ? 'globals.sql' : job.postgresql.database + '.dump');
+
+// Icons for what a job backs up: a database, or files.
+export const dbIcon = (size = 14) => html`<svg class="kind" width=${size} height=${size} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="PostgreSQL"><ellipse cx="12" cy="5" rx="8" ry="3"></ellipse><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5"></path><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"></path></svg>`;
+export const folderIcon = (size = 14) => html`<svg class="kind" width=${size} height=${size} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="Files"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"></path></svg>`;
+
+// Kind is a job's "Backs up" cell: a database with its connection, or the paths.
+export function Kind({ job }) {
+  if (isPG(job)) return html`<span class="kindline">${dbIcon()}<span>${job.postgresql.globals ? 'roles and other globals' : html`<b>${job.postgresql.database}</b>`} <span class="muted">on ${job.postgresql.connection}</span></span></span>`;
+  return html`<span class="kindline">${folderIcon()}<span class="mono wrap">${(job.paths || []).join('  ') || '—'}</span></span>`;
+}
+
+// repoPath is where a site keeps an agent's repository: its bucket and prefix, as the settings give the bucket.
+export const repoPath = (storage, agent) => `${storage && storage.bucket ? storage.bucket + '/' : ''}repos/${agent}`;
+
+// can says whether the agent's answer lists the action: the server worked it out.
 export const can = (host, perm) => !!host && (host.actions || []).includes(perm);
 
 export function Findings({ findings, accepted, onAccept, blocking }) {
@@ -326,7 +354,7 @@ export function CopyButton({ text }) {
   }}>${copied ? 'Copied' : 'Copy'}</button>`;
 }
 
-// What to run on a host to enroll it: the one-line install (decision 044), or the enrollment alone where the agent's
+// What to run where an agent runs to enroll it: the one-line install (decision 044), or the enrollment alone where the agent's
 // packages are installed already, such as by configuration management.
 export function EnrollLines({ e }) {
   return html`<pre>${e.install_script}</pre><${CopyButton} text=${e.install_script} />

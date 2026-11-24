@@ -101,9 +101,9 @@ func exportCmd() *cobra.Command {
 
 func hostImportCmd() *cobra.Command {
 	var file, msg string
-	c := &cobra.Command{Use: "import <fqdn> --escrow-file <file>",
+	c := &cobra.Command{Use: "import <agent> --escrow-file <file>",
 		Short: "Add a host back from its decrypted escrow file, with its repository and password, when no export has it (admin)",
-		Long: "Add a host back from its escrow file, decrypted with the offline key (age -d -i key.txt escrow/<fqdn>.age), when the\n" +
+		Long: "Add a host back from its escrow file, decrypted with the offline key (age -d -i key.txt escrow/<agent>.age), when the\n" +
 			"server was rebuilt without an export that has it. The repository stays; the password must open it. The host gets\n" +
 			"no job: set them again. --escrow-file - reads the file from stdin. Its contents are never printed.",
 		Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, a []string) error {
@@ -127,7 +127,7 @@ func hostImportCmd() *cobra.Command {
 				Warning            string     `json:"warning"`
 				Enrollment         enrollment `json:"enrollment"`
 			}
-			raw, err := call("POST", "/api/v1/hosts/import", map[string]any{"fqdn": a[0], "escrow_file": string(data), "message": msg}, &res)
+			raw, err := call("POST", "/api/v1/agents/import", map[string]any{"fqdn": a[0], "escrow_file": string(data), "message": msg}, &res)
 			if err != nil {
 				return err
 			}

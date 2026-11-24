@@ -16,7 +16,7 @@ import (
 
 func hostOperatingCmds() []*cobra.Command {
 	var rotateMsg string
-	rotate := &cobra.Command{Use: "rotate <fqdn>", Short: "After a compromise: a new repository password, the agent's certificate unpinned, and a new enrollment code (docs/runbooks/compromised-host.md)",
+	rotate := &cobra.Command{Use: "rotate <agent>", Short: "After a compromise: a new repository password, the agent's certificate unpinned, and a new enrollment code (docs/runbooks/compromised-host.md)",
 		Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, a []string) error {
 			var res struct {
 				CredentialsVersion int        `json:"credentials_version"`
@@ -26,7 +26,7 @@ func hostOperatingCmds() []*cobra.Command {
 				Warning            string     `json:"warning"`
 				Enrollment         enrollment `json:"enrollment"`
 			}
-			raw, err := call("POST", "/api/v1/hosts/"+url.PathEscape(a[0])+"/rotate", map[string]any{"message": rotateMsg}, &res)
+			raw, err := call("POST", "/api/v1/agents/"+url.PathEscape(a[0])+"/rotate", map[string]any{"message": rotateMsg}, &res)
 			if err != nil {
 				return err
 			}
@@ -51,9 +51,9 @@ func hostOperatingCmds() []*cobra.Command {
 
 	var confirm, msg string
 	var cancel bool
-	decommission := &cobra.Command{Use: "decommission <fqdn>", Short: "Admin: delete a removed host's repository after 7 days (--cancel stops it); needs --confirm <fqdn>",
+	decommission := &cobra.Command{Use: "decommission <agent>", Short: "Admin: delete a removed host's repository after 7 days (--cancel stops it); needs --confirm <agent>",
 		Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, a []string) error {
-			path := "/api/v1/hosts/" + url.PathEscape(a[0]) + "/decommission"
+			path := "/api/v1/agents/" + url.PathEscape(a[0]) + "/decommission"
 			if cancel {
 				raw, err := call("DELETE", path, map[string]any{"message": msg}, nil)
 				if err != nil {
@@ -78,8 +78,8 @@ func hostOperatingCmds() []*cobra.Command {
 				return nil
 			}
 			fmt.Printf("the repository of %s and its escrow file are deleted on %s.\n"+
-				"Until then, holdfast host decommission %s --cancel stops it. Afterwards, S3 keeps the old versions until\n"+
-				"the bucket's lifecycle rule expires them; holdfast host show %s then says when the data is really gone.\n",
+				"Until then, holdfast agent decommission %s --cancel stops it. Afterwards, S3 keeps the old versions until\n"+
+				"the bucket's lifecycle rule expires them; holdfast agent show %s then says when the data is really gone.\n",
 				a[0], d.DueAt.Local().Format("2006-01-02 15:04"), a[0], a[0])
 			return nil
 		}}
@@ -94,7 +94,7 @@ func hostOperatingCmds() []*cobra.Command {
 func rollbackCmd() *cobra.Command {
 	var to, confirm, msg string
 	var agentDown, wait bool
-	c := &cobra.Command{Use: "rollback <fqdn> --to <time>", Short: "Admin: roll the host's repository back to a time, from S3's old versions; without --confirm it only shows what would change",
+	c := &cobra.Command{Use: "rollback <agent> --to <time>", Short: "Admin: roll the host's repository back to a time, from S3's old versions; without --confirm it only shows what would change",
 		Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, a []string) error {
 			t, err := parseTime(to)
 			if err != nil {
@@ -113,7 +113,7 @@ func rollbackCmd() *cobra.Command {
 					ForgottenBefore   []string       `json:"forgotten_before"`
 					Deletions         []time.Time    `json:"snapshot_deletions"`
 				}
-				raw, err := call("GET", "/api/v1/hosts/"+url.PathEscape(a[0])+"/rollback?to="+url.QueryEscape(t.Format(time.RFC3339)), nil, &p)
+				raw, err := call("GET", "/api/v1/agents/"+url.PathEscape(a[0])+"/rollback?to="+url.QueryEscape(t.Format(time.RFC3339)), nil, &p)
 				if err != nil {
 					return err
 				}
@@ -148,11 +148,11 @@ func rollbackCmd() *cobra.Command {
 					fmt.Printf("  a snapshot file was deleted at %s\n", d.Local().Format("2006-01-02 15:04:05"))
 				}
 				fmt.Printf("\nNothing is deleted: what is set aside stays in S3 as old versions, and this can be rolled back too.\n"+
-					"to go ahead: holdfast host rollback %s --to %s --confirm %s\n", a[0], t.UTC().Format(time.RFC3339), a[0])
+					"to go ahead: holdfast agent rollback %s --to %s --confirm %s\n", a[0], t.UTC().Format(time.RFC3339), a[0])
 				return nil
 			}
 			var r rollbackRow
-			raw, err := call("POST", "/api/v1/hosts/"+url.PathEscape(a[0])+"/rollback", map[string]any{"to": t, "confirm": confirm, "agent_down": agentDown, "message": msg}, &r)
+			raw, err := call("POST", "/api/v1/agents/"+url.PathEscape(a[0])+"/rollback", map[string]any{"to": t, "confirm": confirm, "agent_down": agentDown, "message": msg}, &r)
 			if err != nil {
 				return err
 			}
@@ -160,7 +160,7 @@ func rollbackCmd() *cobra.Command {
 				for r.Status == "running" {
 					time.Sleep(2 * time.Second)
 					var list []rollbackRow
-					if raw, err = call("GET", "/api/v1/hosts/"+url.PathEscape(a[0])+"/rollbacks", nil, &list); err != nil {
+					if raw, err = call("GET", "/api/v1/agents/"+url.PathEscape(a[0])+"/rollbacks", nil, &list); err != nil {
 						return err
 					}
 					for _, x := range list {
@@ -220,9 +220,9 @@ func printRollback(r rollbackRow) {
 }
 
 func rollbacksCmd() *cobra.Command {
-	return &cobra.Command{Use: "rollbacks <fqdn>", Short: "A host's repository rollbacks", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, a []string) error {
+	return &cobra.Command{Use: "rollbacks <agent>", Short: "A host's repository rollbacks", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, a []string) error {
 		var list []rollbackRow
-		raw, err := call("GET", "/api/v1/hosts/"+url.PathEscape(a[0])+"/rollbacks", nil, &list)
+		raw, err := call("GET", "/api/v1/agents/"+url.PathEscape(a[0])+"/rollbacks", nil, &list)
 		if err != nil {
 			return err
 		}
@@ -291,7 +291,7 @@ func printOperating(h hostView) {
 				d.DoneAt.Local().Format("2006-01-02 15:04"), d.Objects, d.RequestedBy, gone)
 			return
 		default:
-			fmt.Printf("DECOMMISSION: the repository is deleted on %s, as %s asked; holdfast host decommission %s --cancel stops it\n",
+			fmt.Printf("DECOMMISSION: the repository is deleted on %s, as %s asked; holdfast agent decommission %s --cancel stops it\n",
 				d.DueAt.Local().Format("2006-01-02 15:04"), d.RequestedBy, h.FQDN)
 			if d.Error != "" {
 				fmt.Println("  the last attempt failed:", d.Error)
@@ -299,7 +299,7 @@ func printOperating(h hostView) {
 		}
 	}
 	if h.RepoKeyRetiring != "" {
-		fmt.Printf("ALERT: the old repository password still opens the repository (key %s): run holdfast host rotate %s again\n", h.RepoKeyRetiring, h.FQDN)
+		fmt.Printf("ALERT: the old repository password still opens the repository (key %s): run holdfast agent rotate %s again\n", h.RepoKeyRetiring, h.FQDN)
 	}
 	if s := h.Size; s != nil {
 		fmt.Printf("repository: %s in %d objects, and %s in old versions kept by S3 (measured %s)\n",

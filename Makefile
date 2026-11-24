@@ -37,7 +37,7 @@ BROWSER_IMAGE  ?= chromedp/headless-shell@sha256:381353d3530ab9d579d2fe8b9c0f451
 BROWSER_NAME   ?= holdfast-test-browser
 BROWSER_PORT   ?= 59222
 
-.PHONY: build test unit vet fmt pg-up pg-down minio-up minio-down tools e2e e2e-image rules-test authelia-up authelia-down browser-up browser-down packages install-test collection ansible-test screenshots
+.PHONY: build test unit vet fmt pg-up pg-down minio-up minio-down tools e2e e2e-image rules-test authelia-up authelia-down browser-up browser-down packages image install-test collection ansible-test screenshots
 
 # promtool: the alert rules parse, and their unit tests pass.
 rules-test:
@@ -51,6 +51,16 @@ build:
 packages: build
 	@HOLDFAST_VERSION='$(HOLDFAST_VERSION)' RESTIC_VERSION=$(RESTIC_VERSION) NFPM_IMAGE=$(NFPM_IMAGE) \
 		RESTIC_BINARY=$$(scripts/fetch-restic.sh $(RESTIC_VERSION)) bash packaging/build.sh
+
+# The agent's container image (decision 055), with the pinned restic and PostgreSQL's newest client. The release
+# publishes it from .github/workflows/image.yml as ghcr.io/kabsdk/holdfast-agent.
+IMAGE ?= holdfast-agent:local
+image: build
+	@t=$$(mktemp -d); trap 'rm -rf "$$t"' EXIT; \
+		cp bin/holdfast-agent LICENSE packaging/container/Dockerfile "$$t/"; \
+		cp "$$(scripts/fetch-restic.sh $(RESTIC_VERSION))" "$$t/restic"; \
+		scripts/third-party-notices.sh '$(HOLDFAST_VERSION)' >"$$t/THIRD-PARTY-NOTICES"; \
+		docker build -t '$(IMAGE)' --build-arg HOLDFAST_VERSION='$(HOLDFAST_VERSION)' "$$t"
 
 fmt:
 	gofmt -w ./cmd ./internal

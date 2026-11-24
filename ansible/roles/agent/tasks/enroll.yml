@@ -1,19 +1,13 @@
 ---
 # Enrollment: a one-time code from the server, used by holdfast-agent enroll, which writes agent.yaml and the agent's
-# certificate. With holdfast_server_host the role asks the server for the code: holdfast host add for a host Holdfast
-# does not know (or removed), holdfast host enroll-code for one it knows.
-- name: Refuse a host name that is not fully qualified
-  ansible.builtin.assert:
-    that: holdfast_fqdn is match('^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+\.?$')
-    fail_msg: "This host's name '{{ holdfast_fqdn }}' is not a fully qualified name: set holdfast_fqdn"
-    quiet: true
-
+# certificate. With holdfast_server_host the role asks the server for the code: holdfast agent add for an agent Holdfast
+# does not know (or removed), holdfast agent enroll-code for one it knows.
 - name: Refuse to enroll without a way to the server
   ansible.builtin.assert:
     that: holdfast_code | length > 0 or holdfast_server_host | length > 0
     fail_msg: >-
-      To enroll {{ holdfast_fqdn }}, put the server in the inventory's group holdfast_server (or set holdfast_server_host),
-      or give holdfast_server and holdfast_code, as holdfast host add prints them.
+      To enroll {{ holdfast_agent_name }}, put the server in the inventory's group holdfast_server (or set
+      holdfast_server_host), or give holdfast_server and holdfast_code, as holdfast agent add prints them.
     quiet: true
 
 - name: Refuse a code without the server's URL
@@ -29,26 +23,26 @@
   when: holdfast_code | length == 0
   delegate_to: "{{ holdfast_server_host }}"
   block:
-    - name: Look the host up there (holdfast host show)
+    - name: Look the agent up there (holdfast agent show)
       ansible.builtin.command:
-        argv: [holdfast, host, show, "{{ holdfast_fqdn }}", --json]
+        argv: [holdfast, agent, show, "{{ holdfast_agent_name }}", --json]
       register: agent_known
       changed_when: false
       failed_when: agent_known.rc != 0 and agent_known.stderr is not search('not found')
       check_mode: false
 
-    - name: Add it to Holdfast, a new revision, with a code (holdfast host add)
+    - name: Add it to Holdfast, a new revision, with a code (holdfast agent add)
       ansible.builtin.command:
-        argv: [holdfast, host, add, "{{ holdfast_fqdn }}", --json, -m, added by Ansible (kabsdk.holdfast.agent)]
+        argv: [holdfast, agent, add, "{{ holdfast_agent_name }}", --json, -m, added by Ansible (kabsdk.holdfast.agent)]
       register: agent_added
       changed_when: true
       throttle: 1
       no_log: true
       when: agent_known.rc != 0 or (agent_known.stdout | from_json).state == 'retired'
 
-    - name: Get a new code for the host Holdfast knows (holdfast host enroll-code)
+    - name: Get a new code for the agent Holdfast knows (holdfast agent enroll-code)
       ansible.builtin.command:
-        argv: [holdfast, host, enroll-code, "{{ holdfast_fqdn }}", --json]
+        argv: [holdfast, agent, enroll-code, "{{ holdfast_agent_name }}", --json]
       register: agent_code
       changed_when: true
       no_log: true
@@ -60,7 +54,7 @@
       {{ ((agent_added.stdout | from_json).enrollment.install_command if agent_added is not skipped
           else (agent_code.stdout | from_json).install_command)
          if holdfast_code | length == 0 else
-         'holdfast-agent enroll --server ' ~ (holdfast_server | quote) ~ ' --fqdn ' ~ (holdfast_fqdn | quote)
+         'holdfast-agent enroll --server ' ~ (holdfast_server | quote) ~ ' --name ' ~ (holdfast_agent_name | quote)
            ~ ' --code ' ~ (holdfast_code | quote) ~ ((' --ca-sha256 ' ~ (holdfast_ca_sha256 | quote)) if holdfast_ca_sha256 | length > 0 else '') }}
   changed_when: true
   no_log: true

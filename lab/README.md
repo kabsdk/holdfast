@@ -61,7 +61,7 @@ It needs libvirt, qemu-img, xorriso, python3-libvirt, python3-lxml, ansible-core
   when it nears expiry.
 - **Holdfast's server:** `https://hfsrv.m1.holdfast.test:8443` for the agents, the UI and `/api/v1` with login at
   `https://hfsrv.m1.holdfast.test` (`ui.listen: ":443"`, the same certificate: the lab has no CA browsers trust), and
-  the CLI `holdfast` as root on hfsrv (`lab/lab ssh m1 hfsrv holdfast host list`). `/etc/holdfast/` holds `server.yaml`
+  the CLI `holdfast` as root on hfsrv (`lab/lab ssh m1 hfsrv holdfast agent list`). `/etc/holdfast/` holds `server.yaml`
   (0600, from `lab/ansible/templates/server.yaml.j2`), `tls/` (the certificate with the CA's after it, its key, the
   CA's, which `auth.oidc.ca_file` names), `maintenance.env` (holdfast-maint's key), `gateway.env` (holdfast-gateway's,
   the key the gateway uses for every host's reads and writes), `offsite.env` (holdfast-offsite's, for the off-site
@@ -173,7 +173,7 @@ HOLDFAST_PROBE_EXPECT=B003 go test ./internal/server/storage/ -run TestS3ProberL
   so. After it, `TestS3ProberLive` with `HOLDFAST_PROBE_EXPECT=` passes every check,
   B001–B011, on Ceph 19.2.3 with plain users. The bucket-policy grant lets the maintenance user read the
   host's objects, although a third identity owns the bucket. Since M8 the host-key checks (B001, B002,
-  B005–B007) test the gateway key, as the server's own storage test does at `holdfast host add` and `holdfast check`.
+  B005–B007) test the gateway key, as the server's own storage test does at `holdfast agent add` and `holdfast check`.
 - The isolation experiments (`lab/lab isolation`) still assume their own layout: `holdfast-maint` owns the
   bucket. Running one replaces this layout, so run `rgw-documented-layout.sh` again afterwards, without
   `--keep-data` (`lab/lab test` refuses a bucket that another identity owns and that holds data; an empty one, as
@@ -210,17 +210,18 @@ lab's lock, and takes about two minutes. It:
 4. on each agent VM, or each one named (`lab/lab test m1 el9`):
    - makes the fixture anew: `hf-fidelity build /srv/hf-fixture` (`lab/fidelity`, the e2e suite's
      `internal/fidelity`);
-   - on hfsrv, `holdfast host add <fqdn> --job fidelity --path /srv/hf-fixture --daily 03:00 --keep-daily 14d --keep-monthly 12mo`;
-     on the VM, `holdfast-agent enroll --server https://hfsrv.m1.holdfast.test:8443 --fqdn <fqdn>
-     --code <code> --ca-sha256 <pin> --restic /usr/libexec/holdfast/restic`, with the code on stdin, which makes the
-     agent's key and certificate (`agent.pem`), then `restore.root: /var/restore` in `agent.yaml` and
-     `holdfast-agent.service` enabled and started; the agent backs up at once, through the server's gateway;
-   - on a later run, when the host exists and its agent is enrolled with a certificate: `holdfast job run <fqdn> fidelity`
+   - on hfsrv, `holdfast agent add <agent>`, then `holdfast job set <agent> fidelity --path /srv/hf-fixture --daily
+     03:00 --keep-daily 14d --keep-monthly 12mo`, the agent named after its VM's FQDN; on the VM, `holdfast-agent
+     enroll --server https://hfsrv.m1.holdfast.test:8443 --name <agent> --code <code> --ca-sha256 <pin> --restic
+     /usr/libexec/holdfast/restic`, with the code on stdin, which makes the agent's key and certificate
+     (`agent.pem`), then `restore.root: /var/restore` in `agent.yaml` and `holdfast-agent.service` enabled and
+     started; the agent backs up at once, through the server's gateway;
+   - on a later run, when the agent exists and is enrolled with a certificate: `holdfast job run <agent> fidelity`
      instead. An agent that lost its enrollment, one enrolled before M8 (a token, not a certificate), or a repository
-     that is gone, gets a new code (`holdfast host enroll-code`);
-   - waits for the backup's event (`holdfast host events --json`), takes the job's newest snapshot
+     that is gone, gets a new code (`holdfast agent enroll-code`);
+   - waits for the backup's event (`holdfast agent events --json`), takes the job's newest snapshot
      (`holdfast snapshot list --refresh --json`, which must be that backup's and made by Holdfast), restores it
-     through the agent into a new directory (`holdfast restore <fqdn> <id> --wait --json`, `detail.directory`), and
+     through the agent into a new directory (`holdfast restore <agent> <id> --wait --json`, `detail.directory`), and
      runs `hf-fidelity compare /srv/hf-fixture <directory>/srv/hf-fixture` on the VM;
    - on the EL VMs, reads the SELinux denials logged since its run began (`ausearch -m AVC,USER_AVC,SELINUX_ERR`);
      on a failure, the agent's and the server's journal too;
@@ -326,7 +327,7 @@ The lab has one RGW, so **the off-site bucket is a second bucket on it**, `holdf
 `holdfast-offsite`, not another realm or cluster as docs/storage.md recommends. The test:
 - checks that the server copies off-site (`holdfast settings`);
 - waits for each agent's newest fidelity snapshot to be copied, made by Holdfast (`holdfast --offsite snapshot list`),
-  and for the host's page to show the copies (`holdfast host show`);
+  and for the agent's page to show the copies (`holdfast agent show`);
 - checks, on one VM (`HF_OFFSITE_VM`, default the first agent), that the agent's certificate cannot read its off-site
   copy through the gateway outside a restore (403);
 - restores the copy through that agent (`holdfast restore --from-offsite --wait`), which reads it through the gateway

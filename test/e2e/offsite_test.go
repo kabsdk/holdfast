@@ -78,7 +78,7 @@ func (e *env) offsiteOf(fqdn string) *offsiteView {
 	var h struct {
 		Offsite *offsiteView `json:"offsite"`
 	}
-	out, err := e.cliErr("host", "show", fqdn)
+	out, err := e.cliErr("agent", "show", fqdn)
 	if err == nil {
 		_ = json.Unmarshal(out, &h)
 	}
@@ -120,12 +120,12 @@ func TestOffsite(t *testing.T) {
 		return ok1 && ok2 && c1.MadeByHoldfast && c2.MadeByHoldfast
 	})
 	var offEvents []event
-	must(t, json.Unmarshal(e.offsite("host", "events", fqdn), &offEvents))
+	must(t, json.Unmarshal(e.offsite("agent", "events", fqdn), &offEvents))
 	if countStatus(offEvents, "data", "success") < 2 {
 		t.Fatalf("each copy must be a run in the off-site history: %+v", offEvents)
 	}
 	var oh map[string]any
-	must(t, json.Unmarshal(e.offsite("host", "show", fqdn), &oh))
+	must(t, json.Unmarshal(e.offsite("agent", "show", fqdn), &oh))
 	j := oh["jobs"].([]any)[0].(map[string]any)
 	if j["retention"].(map[string]any)["keep_last"] != float64(1) || j["primary_retention"].(map[string]any)["keep_last"] != float64(1) {
 		t.Fatalf("the off-site retention starts as primary's: %+v", j)
@@ -260,7 +260,7 @@ func TestOffsite(t *testing.T) {
 				Own bool `json:"own_retention"`
 			}
 		}
-		must(t, json.Unmarshal(e.offsite("host", "show", fqdn), &oh))
+		must(t, json.Unmarshal(e.offsite("agent", "show", fqdn), &oh))
 		return oh.Jobs[0].Retention.KeepLast, oh.Jobs[0].Own
 	}
 	e.cli("job", "set", fqdn, "data", "--keep-last", "2", testAccept)
@@ -284,21 +284,20 @@ func TestOffsite(t *testing.T) {
 	ctx := newBrowser(t)
 	errs := jsErrors(ctx)
 	run(t, ctx, "root's link into the UI", chromedp.Navigate(e.rootLink()), chromedp.WaitVisible(`nav.side`, chromedp.ByQuery))
-	open(t, ctx, "#/hosts/"+fqdn)
+	open(t, ctx, "#/agents/"+fqdn)
 	waitText(t, ctx, "Last 14 days")
 	waitText(t, ctx, "Off-site")
-	open(t, ctx, "#/hosts/"+fqdn+"/jobs/data")
-	waitText(t, ctx, "What restic keeps")
-	clickText(t, ctx, "button", "Off-site")
-	waitText(t, ctx, "Off-site keeps")
-	waitText(t, ctx, "the same as primary")
+	// The job page's one calendar has both sites, and the site B line its settings.
+	open(t, ctx, "#/agents/"+fqdn+"/jobs/data")
+	waitText(t, ctx, "Restore points")
+	waitText(t, ctx, "the same retention as site A")
 	waitText(t, ctx, "Stop copying")
 	// A snapshot with an off-site copy names it, and its Restore tab asks where from.
-	open(t, ctx, "#/hosts/"+fqdn+"/snapshots/"+s6+"/restore")
-	waitText(t, ctx, "Off-site copy "+c6.ID[:8])
+	open(t, ctx, "#/agents/"+fqdn+"/snapshots/"+s6+"/restore")
+	waitText(t, ctx, "copy "+c6.ID[:8])
 	waitText(t, ctx, "Restore from")
-	clickText(t, ctx, "button", "Off-site copy")
-	waitText(t, ctx, "from the off-site copy into")
+	clickText(t, ctx, "button", "Site B copy")
+	waitText(t, ctx, "from site B")
 	if errs := errs(); len(errs) > 0 {
 		t.Fatalf("the UI logged errors:\n%s", strings.Join(errs, "\n"))
 	}
@@ -313,7 +312,7 @@ func TestNoOffsite(t *testing.T) {
 	if _, ok := e.hostRaw(fqdn)["offsite"]; ok {
 		t.Fatal("the host's page shows off-site copies")
 	}
-	for _, args := range [][]string{{"offsite", "copies", fqdn}, {"--offsite", "host", "list"}} {
+	for _, args := range [][]string{{"offsite", "copies", fqdn}, {"--offsite", "agent", "list"}} {
 		if out, err := e.cliErr(args...); err == nil || !strings.Contains(string(out), "not set up") {
 			t.Fatalf("holdfast %s without off-site: %v %s", strings.Join(args, " "), err, out)
 		}

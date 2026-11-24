@@ -2,6 +2,8 @@
   --bg: #f6f7f9; --panel: #fff; --text: #1d2330; --muted: #667085; --line: #e1e4ea;
   --accent: #2557d6; --ok: #137a3a; --ok-bg: #e5f5ea; --warn: #8a5a00; --warn-bg: #fff4d6;
   --err: #b3261e; --err-bg: #fde7e5; --info-bg: #eaf0fe;
+  /* The calendar's halves: kept or copied, a deletion that waits, a copy pending, deleted, never copied, no point. */
+  --sq-ok: #3f9c63; --sq-ok-light: #b5dcc2; --sq-pending: #bfe3cb; --sq-del: #8d96a6; --sq-never: #e4e7ec; --sq-none: #eef0f4;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; font-size: 14px; color: var(--text);
 }
 * { box-sizing: border-box; }
@@ -147,39 +149,71 @@ button.icon { display: inline-flex; align-items: center; justify-content: center
 .menu-item.danger { color: var(--err); }
 .menu-sep { height: 1px; background: var(--line); margin: 4px 0; }
 
-/* Squares: the host page's days, the job page's rules, the calendar's days. Hover any for its tooltip. */
+/* Squares: the agent page's days, and the job page's calendar of restore points. Hover any for its tooltip. */
 .strip { display: grid; grid-template-columns: repeat(14, 12px); gap: 3px; }
 .strip span { display: block; width: 12px; height: 22px; border-radius: 3px; }
-.d-success, .c-ok, .slot { background: #3f9c63; }
+.d-success { background: var(--sq-ok); }
 .d-warning { background: #d99a1e; }
 .d-failed { background: var(--err); }
-.d-none, .c-gap, .slot.empty { background: var(--panel); border: 1px dashed #9aa3b2; }
-.d-later, .c-thin { background: #e4e7ec; }
+.d-none { background: var(--panel); border: 1px dashed #9aa3b2; }
+.d-later { background: #e4e7ec; }
 .d-wait { background: #f0f2f5; }
-.d-before, .slot.before { background: #f6f7f9; border: 1px solid #eceef2; }
-.d-asked, .c-asked, .slot.asked { background: repeating-linear-gradient(135deg, #3f9c63 0 3px, #a8d5b8 3px 6px); }
+.d-before { background: #f6f7f9; border: 1px solid #eceef2; }
 .legend { display: flex; flex-wrap: wrap; gap: .3rem 1rem; padding: .6rem 1rem; border-top: 1px solid var(--line); font-size: 12px; color: var(--muted); }
 .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: .35rem; vertical-align: -1px; box-sizing: border-box; }
+.legend i.swatch, i.swatch { width: 12px; height: 12px; vertical-align: -2px; box-shadow: inset 0 0 0 1px rgba(29,35,48,.10); }
+.legend .legendbtn { font-size: 12px; color: var(--text); display: inline-flex; align-items: center; }
+.legend .legendbtn:disabled { color: #9aa3b2; opacity: 1; }
 .factline { display: flex; flex-wrap: wrap; gap: .4rem 1.6rem; align-items: center; padding: .7rem 1rem; margin: 1rem 0; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; font-size: 13px; }
-.list + .list, .list + h2 { margin-top: 1rem; }
-.ladder { display: flex; flex-direction: column; gap: .6rem; padding: .4rem 1rem .9rem; min-width: 680px; }
-.tier { display: grid; grid-template-columns: 170px minmax(0, 1fr) 170px; gap: .75rem; align-items: center; }
-.tier .lab { display: flex; flex-direction: column; }
-.tier .range { font-size: 12px; color: var(--muted); text-align: right; }
-.slots { display: flex; flex-wrap: wrap; gap: 4px; }
-.slot { display: block; width: 22px; height: 22px; border-radius: 4px; }
-a.slot:hover, a.slot:focus-visible, a.cell:hover, a.cell:focus-visible { outline: 2px solid var(--text); outline-offset: 1px; }
-.more { display: inline-flex; align-items: center; height: 22px; padding: 0 .5rem; border-radius: 4px; background: #eef0f4; color: var(--text); font-size: 12px; font-weight: 600; white-space: nowrap; }
-.more:hover { background: var(--line); text-decoration: none; }
+.list + .list, .list + h2, .list + .panel { margin-top: 1rem; }
 .tip { position: fixed; z-index: 70; max-width: 320px; background: #151b2b; color: #fff; border-radius: 8px; padding: .45rem .65rem; font-size: 12.5px; line-height: 1.45;
   box-shadow: 0 10px 28px rgba(20,27,43,.2); pointer-events: none; }
 .tip b { display: block; font-size: 13px; }
 .tip span { display: block; color: #cfd6e4; }
+/* The job page: its sites, restic's rules as chips, the calendar, and the chosen day's restore points. */
+.siteline { display: flex; flex-wrap: wrap; gap: .3rem .6rem; align-items: center; font-size: 13px; }
+.siteline .tag { font-size: 10.5px; font-weight: 700; letter-spacing: .06em; padding: .05rem .4rem; border-radius: 4px; background: #e6ecfb; color: var(--accent); }
+.siteline.b .tag { background: var(--err-bg); color: var(--err); }
+.siteline .banner { margin: .2rem 0 0; }
+.rules { display: flex; flex-wrap: wrap; gap: .35rem .5rem; align-items: center; padding: 0 1rem .6rem; font-size: 12.5px; }
+.rulechip { border: 1px solid var(--line); background: var(--panel); border-radius: 999px; padding: .15rem .6rem; font-size: 12.5px; }
+.rulechip.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.calwrap { padding: .2rem 1rem .8rem; }
 .cal { display: grid; gap: 3px; width: max-content; }
-.cal .ml { font-size: 11px; line-height: 14px; color: var(--muted); white-space: nowrap; }
-.cal .wl { font-size: 11px; line-height: 13px; color: var(--muted); }
-.cell { display: block; width: 13px; height: 13px; border-radius: 3px; box-sizing: border-box; }
-.c-out { background: transparent; }
+.cal .ml { font-size: 11px; line-height: 16px; color: var(--muted); white-space: nowrap; border: 0; background: none; padding: 0; text-align: left; }
+.cal button.ml:not(:disabled):hover { color: var(--accent); text-decoration: underline; background: none; }
+.cal button.ml:disabled { opacity: 1; }
+.cal .wl { font-size: 11px; line-height: 15px; color: var(--muted); }
+.cell { display: block; width: 15px; height: 15px; border-radius: 3px; box-sizing: border-box; padding: 0; border: 0; box-shadow: inset 0 0 0 1px rgba(29,35,48,.10); }
+button.cell { cursor: pointer; }
+button.cell:hover, button.cell:focus-visible { outline: 2px solid var(--text); outline-offset: 1px; }
+.cell.c-none { background: var(--sq-none); }
+.cell.c-before { background: transparent; box-shadow: none; cursor: default; }
+.cell.c-before:disabled { opacity: 1; }
+.cell.c-fail { box-shadow: inset 0 0 0 2px var(--err); }
+.cell.c-dim { opacity: .22; }
+.cell.c-sel { outline: 2px solid var(--accent); outline-offset: 1px; }
+.cell.c-focus { outline: 2px solid var(--text); outline-offset: 1px; }
+.selbar { display: flex; flex-wrap: wrap; gap: .5rem .8rem; align-items: center; padding: .55rem 1rem; border-top: 1px solid var(--line); background: #f3f6fd; font-size: 13px; }
+.dayhead { display: flex; flex-wrap: wrap; gap: .3rem .8rem; align-items: baseline; padding: .7rem 1rem .4rem; border-top: 1px solid var(--line); }
+.kindline { display: inline-flex; gap: .35rem; align-items: flex-start; min-width: 0; }
+svg.kind { flex: none; margin-top: 2px; color: var(--muted); }
+.jobpill svg.kind { margin-top: 0; }
+.warntext { color: var(--warn); }
+.small-text { font-size: 12.5px; }
+button.link.small-link { font-size: 12.5px; }
+.errtext { color: var(--err); }
+.autoname { display: inline-block; margin-top: .3rem; padding: .15rem .5rem; border-radius: 6px; background: #f0f2f5; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; color: var(--text); width: max-content; max-width: 100%; overflow-wrap: anywhere; }
+details.exact summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+/* An agent's PostgreSQL connections, each with its databases. */
+.conn { border-top: 1px solid var(--line); }
+.conn-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: .6rem 1rem; padding: .7rem 1rem; }
+.dialog.wide { max-width: 680px; }
+.formgrid { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: .45rem .8rem; align-items: center; }
+.formgrid > label { color: var(--muted); font-size: 13px; }
+.formgrid input { width: 100%; }
+.formgrid .row input { width: auto; }
+textarea.reason { min-height: 3.6rem; font-family: inherit; font-size: 13.5px; }
 
 /* The Restore tab: one column, from, what, where, then the Run bar; and the delete dialog. */
 .restore { max-width: 880px; display: flex; flex-direction: column; gap: 1rem; }
@@ -197,7 +231,10 @@ a.slot:hover, a.slot:focus-visible, a.cell:hover, a.cell:focus-visible { outline
 .chip-x button { border: 0; background: none; padding: 0 .35rem; color: var(--muted); }
 .opts { display: flex; flex-direction: column; gap: .5rem; padding: 0 1rem .9rem; }
 .opt { display: flex; gap: .6rem; align-items: flex-start; padding: .6rem .75rem; border: 1px solid var(--line); border-radius: 8px; cursor: pointer; }
-.opt > span { display: flex; flex-direction: column; gap: .15rem; }
+.opt > span { display: flex; flex-direction: column; gap: .15rem; min-width: 0; }
+.opt.compact { padding: .4rem .75rem; }
+.opt.compact > span.t { flex: 1; flex-direction: row; justify-content: space-between; flex-wrap: wrap; gap: .2rem .8rem; align-items: baseline; }
+.opt input[type=checkbox] { margin-top: .2rem; accent-color: var(--accent); }
 .opt.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 .opt.dis { background: #fafbfc; color: #9aa3b2; cursor: default; }
 .opt input[type=radio] { margin-top: .2rem; accent-color: var(--accent); }
@@ -214,13 +251,10 @@ button.danger-line { color: var(--err); border-color: var(--err); }
 .offstate.ok { color: var(--ok); }
 .offstate.error { color: var(--err); }
 .offstate.muted { color: var(--muted); }
-.slot.only { background: radial-gradient(circle, var(--panel) 0 4px, #3f9c63 4.5px); }
 .seg { display: inline-flex; border: 1px solid #c8ced9; border-radius: 8px; overflow: hidden; }
 .seg button { border: 0; border-radius: 0; padding: .3rem .8rem; font-weight: 600; color: var(--muted); }
 .seg button + button { border-left: 1px solid #c8ced9; }
 .seg button.on { background: var(--accent); color: #fff; }
-.siteinfo { display: flex; flex-wrap: wrap; gap: .5rem .8rem; align-items: center; margin: 0 1rem .6rem; padding: .55rem .75rem; border-radius: 8px; background: #fafbfc; border: 1px solid var(--line); font-size: 13px; }
-.siteinfo > span { flex: 1 1 280px; }
 
 .diff-add { color: var(--ok); }
 .diff-del { color: var(--err); }

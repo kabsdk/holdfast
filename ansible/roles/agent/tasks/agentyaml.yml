@@ -1,13 +1,15 @@
 ---
-# The host's own settings in agent.yaml: the bounds of what a restore may do here, which only root on the host sets;
-# the server cannot. The rest of agent.yaml is enroll's. The dumps of 0.5.0 are taken out: 0.6.0 runs no command on a
-# host (decision 052), and the agent warns while they are there.
+# The agent's own settings in agent.yaml, which only root on the machine sets; the server cannot: the bounds of what a
+# restore may do here, and the PostgreSQL client with its limit on restores into a database (decision 055). The rest of
+# agent.yaml is enroll's. Its name is written as agent_name (decision 056): an agent.yaml from before has it as fqdn.
+# The dumps of 0.5.0 are taken out: 0.6.0 runs no command on a host (decision 052), and the agent warns while they are
+# there.
 - name: Read agent.yaml
   ansible.builtin.slurp:
     src: /etc/holdfast/agent.yaml
   register: agent_yaml_file
 
-- name: Write the restore bounds into it, and take out the dumps, when that changes it
+- name: Write its own settings into it, when that changes it
   ansible.builtin.copy:
     dest: /etc/holdfast/agent.yaml
     content: "{{ agent_yaml_wanted | to_nice_yaml(indent=2, width=1000) }}"
@@ -18,7 +20,14 @@
   notify: Restart holdfast-agent
   vars:
     agent_yaml_now: "{{ agent_yaml_file.content | b64decode | from_yaml }}"
-    agent_yaml_wanted: >-
+    agent_yaml_named: >-
       {{ agent_yaml_now
-         | dict2items | rejectattr('key', 'equalto', 'dumps') | items2dict
-         | combine({'restore': (agent_yaml_now.restore | default({}, true)) | combine(holdfast_restore)} if holdfast_restore is not none else {}) }}
+         | dict2items | rejectattr('key', 'in', ['dumps', 'fqdn']) | items2dict
+         | combine({'agent_name': agent_yaml_now.agent_name | default(agent_yaml_now.fqdn | default(holdfast_agent_name, true), true)}) }}
+    agent_yaml_restore: >-
+      {{ {'restore': (agent_yaml_now.restore | default({}, true)) | combine(holdfast_restore)} if holdfast_restore is not none else {} }}
+    agent_yaml_postgresql: >-
+      {{ {'postgresql': {'bin_dir': holdfast_postgresql_bin_dir,
+                         'allow_in_place_restore': holdfast_postgresql_allow_in_place_restore | bool}}
+         if holdfast_postgresql_bin_dir | length > 0 else {} }}
+    agent_yaml_wanted: "{{ agent_yaml_named | combine(agent_yaml_restore) | combine(agent_yaml_postgresql) }}"

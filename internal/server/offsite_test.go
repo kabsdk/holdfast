@@ -187,7 +187,7 @@ func TestNoOffsite(t *testing.T) {
 	if _, err := s.Restore(ctx, root, fqdn, "aaaa0000", RestoreInput{FromOffsite: true}); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("a restore from off-site without off-site: %v", err)
 	}
-	if code, body := apiAs(t, s.APIHandler(false), root, "GET", "/api/v1/offsite/hosts", nil); code != http.StatusNotFound || !strings.Contains(string(body), "offsite:") {
+	if code, body := apiAs(t, s.APIHandler(false), root, "GET", "/api/v1/offsite/agents", nil); code != http.StatusNotFound || !strings.Contains(string(body), "offsite:") {
 		t.Fatalf("the off-site API without off-site: %d %s", code, body)
 	}
 }
@@ -210,11 +210,11 @@ func TestOffsiteAPI(t *testing.T) {
 	}
 	h := s.APIHandler(false)
 	var hosts []HostView
-	code, body := apiAs(t, h, Actor{Name: "ada", Source: "ui", Groups: []string{"holdfast-admins"}}, "GET", "/api/v1/offsite/hosts", nil)
+	code, body := apiAs(t, h, Actor{Name: "ada", Source: "ui", Groups: []string{"holdfast-admins"}}, "GET", "/api/v1/offsite/agents", nil)
 	if err := json.Unmarshal(body, &hosts); code != 200 || err != nil || len(hosts) != 1 || hosts[0].FQDN != fqdn || hosts[0].Jobs[0].Primary == nil {
 		t.Fatalf("the off-site hosts: %d %s", code, body)
 	}
-	if code, _ := apiAs(t, h, Actor{Name: "nob", Source: "ui"}, "GET", "/api/v1/offsite/hosts/"+fqdn, nil); code != http.StatusNotFound {
+	if code, _ := apiAs(t, h, Actor{Name: "nob", Source: "ui"}, "GET", "/api/v1/offsite/agents/"+fqdn, nil); code != http.StatusNotFound {
 		t.Fatalf("someone with no binding sees an off-site host: %d", code)
 	}
 	var set SettingsView

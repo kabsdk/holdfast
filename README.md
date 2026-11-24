@@ -6,7 +6,7 @@
 [![Documentation](https://img.shields.io/badge/docs-kabsdk.github.io%2Fholdfast-0e7c74)](https://kabsdk.github.io/holdfast/)
 
 **Restic backups for a fleet of Linux servers, run from one place.** You install one Holdfast server, put a small
-agent on every host, and say what to back up and how long to keep it. The agents make encrypted backups with
+agent on every host, and say what to back up, files or PostgreSQL databases, and how long to keep it. The agents make encrypted backups with
 [restic](https://restic.net) and send them through the server to your own S3 storage. The server keeps the settings
 and the history, checks that every backup really is in the bucket, cleans up every day under a 7-day safety rule, and
 tells you by mail or chat when something is wrong.
@@ -30,8 +30,11 @@ it under the same name.
   the host, into a new folder, in place, onto another host or from the off-site copy. File contents never leave a
   host through Holdfast.
 - **Backups checked in the bucket**: after every backup the server reads the repository back from S3.
-- **No commands run on your hosts**: the agent runs restic, and nothing before or after it. A database is backed up
-  from the export a systemd timer on the host writes.
+- **PostgreSQL databases**: a job per database, dumped with `pg_dump` straight into restic, and restored into a new
+  database beside the original or, by an admin, in place. The connection is set in Holdfast, its password sealed. A
+  container image backs up a database in Kubernetes from a pod.
+- **No commands of yours run on your hosts**: the agent runs restic, and for PostgreSQL its own programs, and nothing
+  before or after them. Any other database is backed up from the export a systemd timer on the host writes.
 - **Optional off-site copies**, **checks with stable codes** that stop mistakes before they are saved, and a **config
   history and audit log** of every change and action.
 - **Alerts without extra software** (mail, webhook, heartbeat), Prometheus metrics if you want them, and a
@@ -59,10 +62,11 @@ set -a; . /root/holdfast.env; set +a
 curl -sfL https://github.com/kabsdk/holdfast/releases/latest/download/install.sh | sh -s - server
 ```
 
-Then add a host. `host add` prints the one line to run on that host, which installs and enrolls its agent:
+Then add an agent, under a name you choose. `agent add` prints the one line to run on that machine, which installs
+and enrolls the agent:
 
 ```sh
-holdfast host add web01.example.com
+holdfast agent add web01.example.com
 holdfast job set web01.example.com system --path /etc --path /home
 ```
 

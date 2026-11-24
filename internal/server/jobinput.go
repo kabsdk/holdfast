@@ -15,7 +15,7 @@ import (
 // 3 years; the newest 3), and an existing job keeps its own. So `holdfast job set web01 system --path /etc` is a whole
 // job, and `holdfast job set web01 system --keep-daily 30d` changes the retention alone.
 
-// jobBody is PUT /api/v1/hosts/{fqdn}/jobs/{job}'s body, with the job as given.
+// jobBody is PUT /api/v1/agents/{fqdn}/jobs/{job}'s body, with the job as given.
 type jobBody struct {
 	Base    *int64          `json:"base_revision,omitempty"`
 	Message string          `json:"message"`
@@ -81,7 +81,10 @@ func mergeJob(base config.Job, given json.RawMessage, fresh bool) (config.Job, e
 	if err := dec.Decode(&j); err != nil {
 		return config.Job{}, &ValidationError{config.Problems{{Path: "job", Message: err.Error()}}}
 	}
-	if j.Engine == "" {
+	switch {
+	case j.Engine == "" && j.PostgreSQL != nil:
+		j.Engine = config.EnginePostgreSQL
+	case j.Engine == "":
 		j.Engine = config.EngineRestic
 	}
 	return j, nil
@@ -135,6 +138,38 @@ func (s *Server) apiSetJob(w http.ResponseWriter, r *http.Request) {
 	}
 	res, err := s.SetJob(r.Context(), actorOf(r), r.PathValue("fqdn"), r.PathValue("job"),
 		SetJobInput{Base: in.Base, Message: in.Message, Job: job, Accept: in.Accept})
+	if err != nil {
+		apiError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+// jobsBody is POST /api/v1/agents/{fqdn}/jobs's body: several jobs, saved as one revision, such as a job for each
+// database of a PostgreSQL connection. Each is merged as PUT merges one.
+type jobsBody struct {
+	Base    *int64                     `json:"base_revision,omitempty"`
+	Message string                     `json:"message"`
+	Jobs    map[string]json.RawMessage `json:"jobs"`
+	Accept  []string                   `json:"accept,omitempty"`
+}
+
+func (s *Server) apiSetJobs(w http.ResponseWriter, r *http.Request) {
+	var in jobsBody
+	if !decode(w, r, &in) {
+		return
+	}
+	fqdn := r.PathValue("fqdn")
+	jobs := map[string]config.Job{}
+	for id, raw := range in.Jobs {
+		j, err := s.jobFrom(r.Context(), fqdn, id, raw)
+		if err != nil {
+			apiError(w, err)
+			return
+		}
+		jobs[id] = j
+	}
+	res, err := s.SetJobs(r.Context(), actorOf(r), fqdn, SetJobsInput{Base: in.Base, Message: in.Message, Jobs: jobs, Accept: in.Accept})
 	if err != nil {
 		apiError(w, err)
 		return

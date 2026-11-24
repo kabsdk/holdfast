@@ -113,6 +113,14 @@ func (s *Server) CheckJob(ctx context.Context, fqdn, jobID string, in JobCheckIn
 // script what they did (decision 014).
 func jobSetCommand(fqdn, jobID string, j config.Job, accept []string) string {
 	args := []string{"holdfast", "job", "set", fqdn, jobID}
+	if p := j.PostgreSQL; p != nil {
+		args = append(args, "--connection", shellWord(p.Connection))
+		if p.Globals {
+			args = append(args, "--globals")
+		} else {
+			args = append(args, "--database", shellWord(p.Database))
+		}
+	}
 	for _, p := range j.Paths {
 		args = append(args, "--path", shellWord(p))
 	}
@@ -188,6 +196,7 @@ func (s *Server) jobFindings(ctx context.Context, fqdn, jobID string, old *confi
 		s.log.Warn("reading a job's run times for S002", "host", fqdn, "job", jobID, "err", err)
 	}
 	fs := checks.Job(job, checks.History{RunTimes: runs})
+	fs = append(fs, s.pgFindings(ctx, fqdn, job)...)
 	checks.Sort(fs)
 	if old != nil && !slices.Equal(old.Retention.ForgetArgs(), job.Retention.ForgetArgs()) {
 		if f := s.retentionCut(ctx, fqdn, jobID, old.Retention, job.Retention); f != nil {

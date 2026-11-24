@@ -84,11 +84,11 @@ func TestHostLifecycle(t *testing.T) {
 	if err != nil || res.Revision != 1 || res.Warning != "" {
 		t.Fatalf("add host: %+v %v", res, err)
 	}
-	if !strings.Contains(res.Enrollment.InstallCommand, "--fqdn web01.example.com --code "+res.Enrollment.Code) {
+	if !strings.Contains(res.Enrollment.InstallCommand, "--name web01.example.com --code "+res.Enrollment.Code) {
 		t.Fatalf("install command: %s", res.Enrollment.InstallCommand)
 	}
 	if sc := res.Enrollment.InstallScript; !strings.HasPrefix(sc, "curl -sfL ") || !strings.HasSuffix(sc, " sh -") ||
-		!strings.Contains(sc, "HOLDFAST_FQDN=web01.example.com HOLDFAST_CODE="+res.Enrollment.Code) {
+		!strings.Contains(sc, "HOLDFAST_AGENT_NAME=web01.example.com HOLDFAST_CODE="+res.Enrollment.Code) {
 		t.Fatalf("install script: %s", sc)
 	}
 	if _, err := s.AddHost(ctx, root, AddHostInput{FQDN: "web01.example.com"}); !errors.Is(err, ErrConflict) {
@@ -328,7 +328,7 @@ func TestAgentAuthAndAPIOverSocket(t *testing.T) {
 		t.Fatalf("status over socket: %+v", st)
 	}
 	// Validation errors are 422 with the problems listed.
-	resp, _ = client.Post("http://holdfast/api/v1/hosts", "application/json", strings.NewReader(`{"fqdn":"not_valid"}`))
+	resp, _ = client.Post("http://holdfast/api/v1/agents", "application/json", strings.NewReader(`{"fqdn":"not_valid"}`))
 	if resp.StatusCode != http.StatusUnprocessableEntity {
 		t.Fatalf("invalid host over the API: %d", resp.StatusCode)
 	}

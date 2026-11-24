@@ -71,8 +71,8 @@ func TestLoginAndRoles(t *testing.T) {
 		ok    bool
 		error string
 	}{
-		{"wes cannot see db01", wesCLI, []string{"host", "show", db}, false, "not found"},
-		{"wes sees web01", wesCLI, []string{"host", "show", web}, true, ""},
+		{"wes cannot see db01", wesCLI, []string{"agent", "show", db}, false, "not found"},
+		{"wes sees web01", wesCLI, []string{"agent", "show", web}, true, ""},
 		{"a viewer sees no file names", vi, []string{"snapshot", "files", web, snaps[0]}, false, "browse"},
 		{"an editor does", ed, []string{"snapshot", "files", web, snaps[0]}, true, ""},
 		{"a viewer cannot back up", vi, []string{"job", "run", web, "system"}, false, "backup.run"},

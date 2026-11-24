@@ -47,16 +47,16 @@ func problems(v HostView, now time.Time, retentionFailed, escrowOn bool) []Probl
 		case d != nil && d.DoneAt == nil && d.Error != "":
 			add("decommission", "error", "", "the decommission asked for by %s could not delete the repository: %s; it is tried again", d.RequestedBy, d.Error)
 		case d != nil && d.DoneAt == nil:
-			add("decommission", "warning", "", "its repository is deleted on %s, as %s asked (holdfast host decommission %s --cancel stops it)",
+			add("decommission", "warning", "", "its repository is deleted on %s, as %s asked (holdfast agent decommission %s --cancel stops it)",
 				d.DueAt.UTC().Format("2006-01-02 15:04 UTC"), d.RequestedBy, v.FQDN)
 		}
 		return out
 	}
 	if v.RollingBack {
-		add("rollback", "warning", "", "its repository is being rolled back; its agent is paused meanwhile (holdfast host rollbacks %s)", v.FQDN)
+		add("rollback", "warning", "", "its repository is being rolled back; its agent is paused meanwhile (holdfast agent rollbacks %s)", v.FQDN)
 	}
 	if v.RepoKeyRetiring != "" {
-		add("rotation", "error", "", "the old repository password still opens the repository (key %s): run holdfast host rotate %s again", v.RepoKeyRetiring, v.FQDN)
+		add("rotation", "error", "", "the old repository password still opens the repository (key %s): run holdfast agent rotate %s again", v.RepoKeyRetiring, v.FQDN)
 	}
 	if v.State == "awaiting_enrollment" && v.Agent != nil {
 		add("enroll", "warning", "", "waiting for the host to enroll again with its new code; until then it gets no config and reports nothing")
@@ -105,6 +105,7 @@ func problems(v HostView, now time.Time, retentionFailed, escrowOn bool) []Probl
 	if retentionFailed {
 		add("retention", "warning", "", "the last forget and prune failed (holdfast prunes %s says why)", v.FQDN)
 	}
+	out = append(out, pgProblems(v)...)
 	// Off-site (decision 039): on the off-site pages, and on the host's own when the copies fail or lag.
 	if v.CopyError != "" {
 		add("copy", "error", "", "the last copy to off-site failed: %s", v.CopyError)

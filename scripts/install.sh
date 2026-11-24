@@ -1,8 +1,8 @@
 #!/bin/sh
 # Holdfast's installer (decision 044): one line, as root, on each machine.
 #
-#   An agent, with the line `holdfast host add` prints:
-#     curl -sfL https://github.com/kabsdk/holdfast/releases/latest/download/install.sh | HOLDFAST_SERVER=… HOLDFAST_CODE=… sh -
+#   An agent, with the line `holdfast agent add` prints:
+#     curl -sfL https://github.com/kabsdk/holdfast/releases/latest/download/install.sh | HOLDFAST_SERVER=… HOLDFAST_AGENT_NAME=… HOLDFAST_CODE=… sh -
 #   The server:     curl -sfL …/install.sh | sh -s - server      (its settings in the environment: see `help`)
 #   The CLI:        curl -sfL …/install.sh | sh -s - cli
 #
@@ -34,12 +34,12 @@ Every role:
   HOLDFAST_DOWNLOAD_URL   a mirror holding install.sh, VERSION, SHA256SUMS and the packages of one release:
                           https://, http://, or file:/// for a directory here (default: the release on GitHub)
 
-agent: a host to back up. `holdfast host add` prints the whole line.
+agent: a machine to back up. `holdfast agent add` prints the whole line.
   HOLDFAST_SERVER         required: the server's URL for agents, such as https://holdfast.example.com:8443
-  HOLDFAST_CODE           required: the host's enrollment code (one use, 15 minutes)
-  HOLDFAST_CA_SHA256      the pin of the server's certificate (printed by the server's install and by host add)
-  HOLDFAST_FQDN           this host's name as added in Holdfast (default: hostname -f)
-  On an enrolled host, a code enrolls it again; without one the packages are only upgraded.
+  HOLDFAST_AGENT_NAME     required: the agent's name, as added in Holdfast, such as web01.example.com or matrix
+  HOLDFAST_CODE           required: the agent's enrollment code (one use, 15 minutes)
+  HOLDFAST_CA_SHA256      the pin of the server's certificate (printed by the server's install and by agent add)
+  On an enrolled machine, a code enrolls it again; without one the packages are only upgraded.
 
 server: the Holdfast server, with PostgreSQL and the web UI. Make the bucket and its two keys first (docs: Storage).
   It writes /root/holdfast-recovery.txt: copy it offline, then delete it here.
@@ -275,26 +275,32 @@ role_agent() {
 	enrolled=false
 	[ ! -s $ETC/agent.yaml ] || enrolled=true
 	if ! $enrolled || [ -n "${HOLDFAST_CODE:-}" ]; then
-		need HOLDFAST_SERVER "the server's URL for agents, such as https://holdfast.example.com:8443 (holdfast host add prints the whole line)"
-		need HOLDFAST_CODE "the host's enrollment code, from holdfast host add or holdfast host enroll-code <fqdn>"
+		need HOLDFAST_SERVER "the server's URL for agents, such as https://holdfast.example.com:8443 (holdfast agent add prints the whole line)"
+		need HOLDFAST_CODE "the agent's enrollment code, from holdfast agent add or holdfast agent enroll-code <agent>"
 	fi
 	case "${HOLDFAST_SERVER:-https://}" in https://*) ;; *) wrong HOLDFAST_SERVER "must start with https://" ;; esac
 	if [ -n "${HOLDFAST_CA_SHA256:-}" ] && ! printf '%s' "$HOLDFAST_CA_SHA256" | grep -qE '^[0-9a-fA-F]{64}$'; then
 		wrong HOLDFAST_CA_SHA256 "is not a sha256 (64 hex digits)"
 	fi
-	fqdn=${HOLDFAST_FQDN:-$(fqdn_here)}
-	case "$fqdn" in *.*) ;; *) wrong HOLDFAST_FQDN "this host's name '$fqdn' is not a fully qualified name: set HOLDFAST_FQDN" ;; esac
+	# The agent's name is given, never read from the machine (decision 056).
+	name=${HOLDFAST_AGENT_NAME:-}
+	if [ -n "${HOLDFAST_CODE:-}" ]; then
+		need HOLDFAST_AGENT_NAME "the agent's name, as added in Holdfast, such as web01.example.com or matrix (holdfast agent add prints the whole line)"
+		if [ -n "$name" ] && { [ ${#name} -gt 253 ] || ! printf '%s' "$name" | grep -qE '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$'; }; then
+			wrong HOLDFAST_AGENT_NAME "'$name' is not an agent's name: lower-case letters, digits and hyphens, in dot-separated parts"
+		fi
+	fi
 	stop_if_wrong
 	packages restic agent
 	if [ -n "${HOLDFAST_CODE:-}" ]; then
-		set -- enroll --server "$HOLDFAST_SERVER" --fqdn "$fqdn" --code "$HOLDFAST_CODE"
+		set -- enroll --server "$HOLDFAST_SERVER" --name "$name" --code "$HOLDFAST_CODE"
 		[ -z "${HOLDFAST_CA_SHA256:-}" ] || set -- "$@" --ca-sha256 "$HOLDFAST_CA_SHA256"
-		holdfast-agent "$@" || die "the enrollment failed (above). A code works once, for 15 minutes: holdfast host enroll-code $fqdn gives a new one"
+		holdfast-agent "$@" || die "the enrollment failed (above). A code works once, for 15 minutes: holdfast agent enroll-code $name gives a new one"
 		systemctl enable -q holdfast-agent
 		systemctl restart holdfast-agent
-		say "enrolled $fqdn with $HOLDFAST_SERVER. The agent runs, and backs up on its jobs' schedules."
+		say "enrolled $name with $HOLDFAST_SERVER. The agent runs, and backs up on its jobs' schedules."
 	else
-		other_settings 'SERVER|FQDN|CA_SHA256' && say "this host is enrolled already: HOLDFAST_SERVER and the like are ignored"
+		other_settings 'SERVER|AGENT_NAME|CA_SHA256' && say "this agent is enrolled already: HOLDFAST_SERVER and the like are ignored"
 		say "upgraded the agent to $pkgver; it was restarted if it ran"
 	fi
 }
@@ -693,8 +699,8 @@ EOF
 	cat <<EOF
   Keep the settings you installed with, the two S3 keys in them, as safely: a rebuild needs them too.
 
-  Next, add a host, then its first job. host add prints the one line to run on that host:
-    holdfast host add web01.example.com
+  Next, add an agent, then its first job. agent add prints the one line to run on that machine:
+    holdfast agent add web01.example.com
     holdfast job set web01.example.com system --path /etc --path /home
 EOF
 }
@@ -723,7 +729,7 @@ rebuild_from_recovery() {
 	server_summary
 	cat <<EOF
 
-  Delete $recovery from this server once you have checked that hosts come back (holdfast host list):
+  Delete $recovery from this server once you have checked that the agents come back (holdfast agent list):
   until then the server shows the problem recovery_file.
 EOF
 }

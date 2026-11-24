@@ -556,6 +556,10 @@ type Agent struct {
 	Dumps []string `json:"-"`
 	// Paused is set while the agent reports a pause, and idle.
 	Paused *proto.Paused `json:"paused,omitempty"`
+	// RemoteAddr is the address the agent last connected from (decision 056).
+	RemoteAddr string `json:"remote_addr"`
+	// PostgreSQL is the agent's PostgreSQL client and its own limit on restores into a database; nil without one.
+	PostgreSQL *proto.PGFacts `json:"postgresql,omitempty"`
 }
 
 // EnrollAgent pins (or replaces, on re-enrollment) the agent's certificate, by its sha256, and marks the host
@@ -594,6 +598,8 @@ type Heartbeat struct {
 	Protocol                                                             int
 	Dumps                                                                []string
 	Paused                                                               *proto.Paused
+	RemoteAddr                                                           string
+	PostgreSQL                                                           *proto.PGFacts
 }
 
 // RecordHeartbeat updates the agent row. applied_at moves only when the applied sha256 changes.
@@ -610,35 +616,47 @@ func (q *Q) RecordHeartbeat(ctx context.Context, fqdn string, h Heartbeat, now t
 	if h.Paused != nil {
 		pausedCommand, pausedUntil = h.Paused.Command, &h.Paused.Until
 	}
+	var pg any
+	if h.PostgreSQL != nil {
+		b, err := json.Marshal(h.PostgreSQL)
+		if err != nil {
+			return err
+		}
+		pg = b
+	}
 	_, err := q.db.Exec(ctx, `UPDATE agents SET last_seen_at = $2, agent_version = $3, restic_version = $4, os_id = $5, os_version = $6,
 		hostname_fqdn = $7, timezone = $8, clock_offset_ms = $9,
 		applied_at = CASE WHEN applied_sha256 IS DISTINCT FROM $11 THEN $2 ELSE applied_at END,
 		applied_revision = $10, applied_sha256 = $11, credentials_version = $12, restore_bounds = COALESCE($13, restore_bounds),
-		protocol = $14, dumps = $15, paused_command = $16, paused_until = $17
+		protocol = $14, dumps = $15, paused_command = $16, paused_until = $17, remote_addr = $18, postgresql = $19
 		WHERE fqdn = $1`,
 		fqdn, now, h.AgentVersion, h.ResticVersion, h.OSID, h.OSVersion, h.HostnameFQDN, h.Timezone, h.ClockOffsetMS,
-		h.AppliedRevision, h.AppliedSHA256, h.CredentialsVersion, bounds, h.Protocol, nonNil(h.Dumps), pausedCommand, pausedUntil)
+		h.AppliedRevision, h.AppliedSHA256, h.CredentialsVersion, bounds, h.Protocol, nonNil(h.Dumps), pausedCommand, pausedUntil, h.RemoteAddr, pg)
 	return err
 }
 
 const agentCols = `fqdn, enrolled_at, last_seen_at, agent_version, restic_version, os_id, os_version, hostname_fqdn, timezone,
 	clock_offset_ms, applied_revision, applied_sha256, applied_at, credentials_version, restore_bounds, protocol, dumps,
-	paused_command, paused_until`
+	paused_command, paused_until, remote_addr, postgresql`
 
 func scanAgent(row pgx.Row) (Agent, error) {
 	var a Agent
-	var bounds []byte
+	var bounds, pg []byte
 	var pausedCommand string
 	var pausedUntil *time.Time
 	err := row.Scan(&a.FQDN, &a.EnrolledAt, &a.LastSeenAt, &a.AgentVersion, &a.ResticVersion, &a.OSID, &a.OSVersion, &a.HostnameFQDN,
 		&a.Timezone, &a.ClockOffsetMS, &a.AppliedRevision, &a.AppliedSHA256, &a.AppliedAt, &a.CredentialsVersion, &bounds, &a.Protocol, &a.Dumps,
-		&pausedCommand, &pausedUntil)
+		&pausedCommand, &pausedUntil, &a.RemoteAddr, &pg)
 	if err == nil && pausedCommand != "" && pausedUntil != nil {
 		a.Paused = &proto.Paused{Command: pausedCommand, Until: *pausedUntil}
 	}
 	if err == nil && len(bounds) > 0 {
 		a.RestoreBounds = &proto.RestoreBounds{}
 		err = json.Unmarshal(bounds, a.RestoreBounds)
+	}
+	if err == nil && len(pg) > 0 {
+		a.PostgreSQL = &proto.PGFacts{}
+		err = json.Unmarshal(pg, a.PostgreSQL)
 	}
 	return a, notFound(err)
 }

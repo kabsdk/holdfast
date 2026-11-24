@@ -177,7 +177,7 @@ func TestSnapshotCatalogueAndReads(t *testing.T) {
 	}
 
 	var ack struct{ Snapshots, Keys int }
-	must(t, json.Unmarshal(e.cli("host", "acknowledge", fqdn), &ack))
+	must(t, json.Unmarshal(e.cli("agent", "acknowledge", fqdn), &ack))
 	if ack.Snapshots != 1 || ack.Keys != 1 {
 		t.Fatalf("acknowledge: %+v", ack)
 	}

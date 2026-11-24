@@ -1,4 +1,4 @@
-// Roll a host's repository back to a time, from S3's old versions (decision 038). The server works out the
+// Roll an agent's repository back to a time, from S3's old versions (decision 038). The server works out the
 // preview and refuses what it must; this page only shows it and asks for the FQDN.
 import { html, useState, usePoll, useAction, link, fmtTime, can, ErrorBox, Loading, Pill } from '../lib.js';
 import { api } from '../api.js';
@@ -26,7 +26,7 @@ export function Rollback({ fqdn }) {
   const to = () => new Date(when).toISOString().replace(/\.\d+Z$/, 'Z');
   return html`<h1>Roll ${fqdn}'s repository back</h1>
     <p class="muted">Every object under <code>repos/${fqdn}/</code> goes back to the version it had at that time: a copy of that version
-      is made current, and what was not there then gets a delete marker. No version is deleted, so this can be rolled back too. The host's
+      is made current, and what was not there then gets a delete marker. No version is deleted, so this can be rolled back too. The
       agent is paused meanwhile; then <code>restic check</code> runs, and the snapshot list is read again.</p>
     <div class="panel">
       <label class="field"><span>Roll back to</span><input type="datetime-local" value=${when} onInput=${(e) => setWhen(e.target.value)} /></label>
@@ -44,9 +44,9 @@ export function Rollback({ fqdn }) {
           </dl>
           ${p.forgotten_before.length > 0 && html`<div class="banner warning">${p.forgotten_before.length} of the snapshots that come back had been forgotten by Holdfast: the daily run forgets them again unless a retention keeps them.</div>`}
           ${can(h, 'repository.rollback') && html`
-            <label class="field"><span>Type the FQDN to confirm</span><input value=${typed} onInput=${(e) => setTyped(e.target.value)} autocomplete="off" /></label>
+            <label class="field"><span>Type the agent's name to confirm</span><input value=${typed} onInput=${(e) => setTyped(e.target.value)} autocomplete="off" /></label>
             <label class="field"><span>Why (audit log)</span><input value=${msg} onInput=${(e) => setMsg(e.target.value)} /></label>
-            <label><input type="checkbox" checked=${down} onChange=${(e) => setDown(e.target.checked)} /> The host is down, so its agent cannot be paused</label>
+            <label><input type="checkbox" checked=${down} onChange=${(e) => setDown(e.target.checked)} /> The agent is down, so it cannot be paused</label>
             <div class="row" style="margin-top:.5rem">
               <button class="danger" disabled=${run.busy || typed !== fqdn} onClick=${() => run.run(() => api.rollback(fqdn, { to: p.to, confirm: typed, agent_down: down, message: msg })).then(past.reload)}>Roll back</button>
             </div>`}`}
@@ -63,6 +63,6 @@ export function Rollback({ fqdn }) {
         <td>${r.brought_back} objects, ${r.snapshots_back.length} snapshots</td><td>${r.set_aside} objects, ${r.snapshots_set_aside.length} snapshots</td>
         <td>${r.check_passed === undefined || r.check_passed === null ? '—' : r.check_passed ? 'passed' : 'failed'}</td>
         <td class="muted">${r.error || ''}</td></tr>`)}</tbody></table>`}
-    <p class="muted">Same from the CLI: <code>holdfast host rollback ${fqdn} --to &lt;time&gt;</code>, then <code>--confirm ${fqdn}</code>.</p>
-    <p><a href=${link('hosts', fqdn)}>Back to ${fqdn}</a></p>`;
+    <p class="muted">Same from the CLI: <code>holdfast agent rollback ${fqdn} --to &lt;time&gt;</code>, then <code>--confirm ${fqdn}</code>.</p>
+    <p><a href=${link('agents', fqdn)}>Back to ${fqdn}</a></p>`;
 }

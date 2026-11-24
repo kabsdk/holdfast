@@ -29,7 +29,7 @@ func TestStorageContract(t *testing.T) {
 	e.setGatewayPolicy(broad(e.bucket))
 	const fqdn = "app05.example.com"
 	add := func() ([]byte, error) {
-		out, err := e.cliErr("host", "add", fqdn)
+		out, err := e.cliErr("agent", "add", fqdn)
 		if err == nil {
 			_, err = e.cliErr("job", "set", fqdn, "data", "--path", src, "--every", "1m", testAccept)
 		}
@@ -44,7 +44,7 @@ func TestStorageContract(t *testing.T) {
 			t.Fatalf("refused, but without %s:\n%s", c, out)
 		}
 	}
-	if _, err := e.cliErr("host", "show", fqdn); err == nil {
+	if _, err := e.cliErr("agent", "show", fqdn); err == nil {
 		t.Fatal("the host was added while the storage failed")
 	}
 
@@ -126,7 +126,7 @@ func TestStorageContract(t *testing.T) {
 	// The maintenance key cannot read what the gateway key wrote: B003, with the ownership hint.
 	e2 := newEnvWith(t, envOpts{MaintPolicy: `{"Version":"2012-10-17","Statement":[
  {"Effect":"Allow","Action":["s3:ListBucket","s3:GetBucketLocation","s3:GetBucketVersioning","s3:PutObject","s3:DeleteObject"],"Resource":["arn:aws:s3:::*"]}]}`})
-	out, err = e2.cliErr("host", "add", fqdn)
+	out, err = e2.cliErr("agent", "add", fqdn)
 	if err == nil || !strings.Contains(string(out), "B003") || !strings.Contains(string(out), "docs/storage.md") {
 		t.Fatalf("a set-up where the maintenance key cannot read the gateway's objects: %v\n%s", err, out)
 	}

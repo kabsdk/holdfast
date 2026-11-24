@@ -1,6 +1,10 @@
 # 052: Holdfast runs no commands on hosts
 
 Status: accepted, 2026-11-23. Supersedes [decision 037](037-dump-commands-defined-on-the-host.md). Built in 0.6.0.
+**Amended by [decision 055](055-postgresql-databases.md) (2026-11-24):** besides restic, the agent runs PostgreSQL's
+own programs (pg_dump, pg_dumpall, pg_restore, psql) for PostgreSQL jobs and their restores, with arguments Holdfast
+builds. It still runs no command a person defines, and no hook. Other databases are still backed up from an export the
+host writes.
 
 ## Decision
 

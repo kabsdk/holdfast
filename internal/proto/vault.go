@@ -73,14 +73,19 @@ type VaultHost struct {
 	Jobs         []VaultJob `json:"jobs"`
 	// DeletedInPrimary are the snapshots Holdfast deleted in primary on request, and when (decision 031).
 	DeletedInPrimary map[string]time.Time `json:"deleted_in_primary"`
+	// PostgreSQL are the agent's PostgreSQL connections, without passwords, so the off-site pages name what a
+	// PostgreSQL job backs up (decision 055).
+	PostgreSQL map[string]config.PGConnection `json:"postgresql,omitempty"`
 }
 
 // VaultJob is one job of a host, as it runs.
 type VaultJob struct {
-	ID        string            `json:"id"`
-	Paths     []string          `json:"paths,omitempty"`
-	Excludes  []string          `json:"excludes,omitempty"`
-	Dump      string            `json:"dump,omitempty"`
-	Schedule  schedule.Schedule `json:"schedule"`
-	Retention config.Retention  `json:"retention"` // the primary retention
+	ID         string            `json:"id"`
+	Engine     string            `json:"engine,omitempty"`
+	PostgreSQL *config.PGJob     `json:"postgresql,omitempty"`
+	Paths      []string          `json:"paths,omitempty"`
+	Excludes   []string          `json:"excludes,omitempty"`
+	Dump       string            `json:"dump,omitempty"`
+	Schedule   schedule.Schedule `json:"schedule"`
+	Retention  config.Retention  `json:"retention"` // the primary retention
 }

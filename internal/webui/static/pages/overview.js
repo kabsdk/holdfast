@@ -1,6 +1,6 @@
-// Overview, the start page: every host you may see, worst first, with tiles that count what is wrong and filter the
-// list by it. Each problem shows once, under its host (spec §5.5a); the server works them out (problems.go).
-import { html, useState, link, ago, until, useAction, ErrorBox, Problem } from '../lib.js';
+// Overview, the start page: every agent you may see, worst first, with tiles that count what is wrong and filter the
+// list by it. Each problem shows once, under its agent (spec §5.5a); the server works them out (problems.go).
+import { html, useState, link, ago, until, useAction, ErrorBox, Problem, isPG, backsUp, dbIcon } from '../lib.js';
 import { api } from '../api.js';
 
 // jobState is how a job's pill reads: the server's problem for it, or OK.
@@ -19,10 +19,14 @@ const other = (h) => (h.problems || []).some((p) => !JOB_CODES.includes(p.code) 
 const offsite = (h) => (h.problems || []).some((p) => OFFSITE_CODES.includes(p.code));
 const COLS = 'minmax(0,2fr) minmax(0,3fr) minmax(0,1fr) minmax(0,1fr) minmax(0,1.1fr)';
 
-function HostRow({ h }) {
-  const dot = h.fqdn.indexOf('.');
-  const short = dot > 0 ? h.fqdn.slice(0, dot) : h.fqdn;
-  const domain = dot > 0 ? h.fqdn.slice(dot) : '';
+// agentSub is the line under an agent's name: the address it last connected from, which is all the server knows of
+// where it runs (decision 056), and its system.
+export function agentSub(h) {
+  if (!h.agent) return h.state.replace(/_/g, ' ');
+  return [h.agent.remote_addr && `from ${h.agent.remote_addr}`, `${h.agent.os_id} ${h.agent.os_version}`.trim()].filter(Boolean).join(' · ');
+}
+
+function AgentRow({ h }) {
   const successes = h.jobs.map((j) => j.status?.last_success_at).filter(Boolean);
   const oldest = successes.length ? successes.reduce((a, b) => (b < a ? b : a)) : null;
   const nexts = h.jobs.map((j) => j.next_runs?.[0]).filter(Boolean);
@@ -32,12 +36,12 @@ function HostRow({ h }) {
   const offline = probs.some((p) => p.code === 'offline');
   return html`<div class=${'hostrow' + (worst(h) === 2 ? ' bad' : '')}>
     <div class="gt" style=${'--cols:' + COLS}>
-      <div style="min-width:0"><a href=${link('hosts', h.fqdn)}><b>${short}</b></a><span class="muted">${domain}</span>
-        <div class="sub">${h.agent ? `${h.agent.os_id} ${h.agent.os_version}` : h.state.replace(/_/g, ' ')}</div></div>
+      <div style="min-width:0"><a class="wrap" href=${link('agents', h.fqdn)}><b>${h.fqdn}</b></a>
+        <div class="sub">${agentSub(h)}</div></div>
       <div>${h.jobs.length === 0 ? html`<span class="muted">no job yet</span>` : h.jobs.map((j) => {
         const s = jobState(h, j);
         const k = s.kind === 'error' || s.kind === 'warning' ? s.kind : '';
-        return html`<a class=${'jobpill ' + k} href=${link('hosts', h.fqdn, 'jobs', j.id, 'snapshots')}><span class=${'dot ' + (k || s.kind)}></span>${j.id}${k ? ' · ' + s.text : ''}</a>`;
+        return html`<a class=${'jobpill ' + k} href=${link('agents', h.fqdn, 'jobs', j.id)} data-tip=${`${j.id}\nBacks up ${backsUp(j)}`}><span class=${'dot ' + (k || s.kind)}></span>${isPG(j) && dbIcon(12)}${j.id}${k ? ' · ' + s.text : ''}</a>`;
       })}</div>
       <span class=${'num' + (stale ? ' error' : '')}>${oldest ? ago(oldest) : '—'}</span>
       <span class="num muted">${next ? until(next) : '—'}</span>
@@ -54,12 +58,12 @@ export function Overview({ me, hosts, vault, settings }) {
   const states = hosts.flatMap((h) => h.jobs.map((j) => jobState(h, j)));
   const count = (code) => hosts.flatMap((h) => h.problems || []).filter((p) => p.code === code).length;
   const tiles = [
-    ['all', vault ? 'Copied hosts' : 'Hosts', hosts.length, `${states.filter((s) => s.kind === 'ok').length} of ${states.length} jobs OK`, ''],
+    ['all', vault ? 'Copied agents' : 'Agents', hosts.length, `${states.filter((s) => s.kind === 'ok').length} of ${states.length} jobs OK`, ''],
     ['stale', 'Stale', count('stale'), 'no backup in time', 'error'],
     ['failed', 'Failed', count('failed'), 'last run failed', 'error'],
     ['incomplete', 'Incomplete', count('incomplete'), 'files not read', 'warning'],
     !vault && settings.offsite && ['offsite', 'Off-site', hosts.filter(offsite).length, 'copies failing or behind', 'error'],
-    ['other', 'Other problems', hosts.filter(other).length, 'offline, drift, storage…', 'warning'],
+    ['other', 'Other problems', hosts.filter(other).length, 'offline, drift, PostgreSQL…', 'warning'],
   ].filter(Boolean);
   const keep = (h) => filter === 'all' || (filter === 'other' ? other(h) : filter === 'offsite' ? offsite(h) : (h.problems || []).some((p) => p.code === filter));
   const text = q.trim().toLowerCase();
@@ -71,29 +75,29 @@ export function Overview({ me, hosts, vault, settings }) {
       <h1>Overview</h1>
       <div class="row">
         ${canCheck && html`<button disabled=${check.busy} onClick=${() => check.run(() => api.checkAll())}>Check all repositories</button>`}
-        ${me.add_hosts && !vault && html`<a class="button primary" href="#/add-host">Add host</a>`}
+        ${me.add_hosts && !vault && html`<a class="button primary" href="#/add-agent">Add agent</a>`}
       </div>
     </div>
     <${ErrorBox} error=${check.error} />
-    ${check.done && html`<div class="banner ok">Checks asked for on ${check.done.length} hosts. Each agent runs restic check on its next poll; its result is in the host's runs.</div>`}
-    <section class="tiles" aria-label="Status: choose one to filter the hosts">
+    ${check.done && html`<div class="banner ok">Checks asked for on ${check.done.length} agents. Each agent runs restic check on its next poll; its result is in the agent's runs.</div>`}
+    <section class="tiles" aria-label="Status: choose one to filter the agents">
       ${tiles.map(([id, label, n, sub, kind]) => html`<button type="button" class=${'tile' + (filter === id ? ' on' : '')} aria-pressed=${filter === id ? 'true' : 'false'}
           onClick=${() => setFilter(filter === id ? 'all' : id)}>
         <span class="l">${label}</span><span class=${'n ' + (id === 'all' ? '' : n === 0 ? 'zero' : kind)}>${n}</span><span class="s">${sub}</span></button>`)}
     </section>
-    <section class="list" aria-label="Hosts">
+    <section class="list" aria-label="Agents">
       <div class="list-head">
         <div class="row" style="align-items:baseline">
-          <h2>${filter === 'all' ? (vault ? 'All copied hosts' : 'All hosts') : title}</h2>
-          <span class="muted">${shown.length} ${shown.length === 1 ? 'host' : 'hosts'}${filter === 'all' ? ' · problems first' : ''}</span>
-          ${filter !== 'all' && html`<button type="button" class="link" onClick=${() => setFilter('all')}>Show all hosts</button>`}
+          <h2>${filter === 'all' ? (vault ? 'All copied agents' : 'All agents') : title}</h2>
+          <span class="muted">${shown.length} ${shown.length === 1 ? 'agent' : 'agents'}${filter === 'all' ? ' · problems first' : ''}</span>
+          ${filter !== 'all' && html`<button type="button" class="link" onClick=${() => setFilter('all')}>Show all agents</button>`}
         </div>
-        <input id="host-filter" type="search" aria-label="Filter hosts by name" placeholder="Filter by name" value=${q} onInput=${(e) => setQ(e.target.value)} />
+        <input id="host-filter" type="search" aria-label="Filter agents by name" placeholder="Filter by name" value=${q} onInput=${(e) => setQ(e.target.value)} />
       </div>
       <div class="scrollx"><div style="min-width:860px">
-        <div class="gt head" style=${'--cols:' + COLS}><span>Host</span><span>Jobs</span><span>Last backup</span><span>Next backup</span><span>Agent</span></div>
-        ${shown.map((h) => html`<${HostRow} key=${h.fqdn} h=${h} />`)}
-        ${shown.length === 0 && html`<p class="muted" style="padding:1rem">${hosts.length === 0 ? 'No hosts yet.' : 'No host matches.'}</p>`}
+        <div class="gt head" style=${'--cols:' + COLS}><span>Agent</span><span>Jobs</span><span>Last backup</span><span>Next backup</span><span>Agent seen</span></div>
+        ${shown.map((h) => html`<${AgentRow} key=${h.fqdn} h=${h} />`)}
+        ${shown.length === 0 && html`<p class="muted" style="padding:1rem">${hosts.length === 0 ? 'No agents yet.' : 'No agent matches.'}</p>`}
       </div></div>
     </section>`;
 }

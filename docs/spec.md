@@ -22,42 +22,52 @@ backups up, see them, restore from them and be alerted, instead of cron jobs and
 
 ### 1.1 Scope
 
-- **restic only.** Holdfast configures, schedules, monitors and restores restic backups.
-- **Host identity is the FQDN.** Each host has one restic repository on S3 under the prefix
-  `repos/<fqdn>`. Any S3 server that meets [storage.md](storage.md) will do: Ceph RGW, MinIO, AWS and
-  others.
-- **Jobs share the host's repository.** Every job on a host writes to that host's repository, and each
+- **restic only.** Holdfast configures, schedules, monitors and restores restic backups. A PostgreSQL job is
+  restic too: pg_dump's output goes into restic (§4.6, decision 055).
+- **What backs up is an agent** (decision 056): a machine, or a pod that backs up a database server. Its identity is
+  its name, set in its own `agent.yaml` and never read from the machine: lower-case letters, digits and hyphens, in
+  dot-separated parts of at most 63, at most 253 in all, such as `web01.example.com`, `matrix` or
+  `k3s-postgres-main`. This spec still says *host* for an agent in many places: the two are the same.
+- **One repository per agent.** Each agent has one restic repository on S3 under the prefix `repos/<agent>`. Any S3
+  server that meets [storage.md](storage.md) will do: Ceph RGW, MinIO, AWS and others.
+- **Jobs share the agent's repository.** Every job of an agent writes to that agent's repository, and each
   snapshot is tagged `job=<id>`.
 - **Only Holdfast's own backups.** The console shows only the backups that Holdfast makes itself. It does
   not show "watched only" backups made by other tools.
 
 ### 1.2 Out of scope for now
 
-- **Kubernetes**, including PostgreSQL on CloudNativePG. Those clusters keep CloudNativePG's own Barman
-  Cloud plugin backups.
+- **Kubernetes volumes and API objects** (decision 002). A PostgreSQL server in Kubernetes, such as one of
+  CloudNativePG, is backed up as any database server, by the agent's container image in a pod (§4.6, decision 055);
+  CloudNativePG's own backups can stay beside it.
 - **Database files on hosts.** A file copy of a running database is not a backup. For example,
-  `/var/lib/pgsql` is excluded. A database is backed up from an export the host writes (§4.6).
+  `/var/lib/pgsql` is excluded. A PostgreSQL database is backed up by a PostgreSQL job, and any other database from
+  an export the host writes (§4.6).
 - **High availability of Holdfast itself** (decision 042): no clustering, standby, active/passive pair or second
   gateway. One server; a lost one is replaced (§2.2).
 - **Windows and macOS machines, service providers backing up many customers, and fleets of thousands** (decision 042).
 
 ### 1.3 Engines and capabilities
 
-A job is an **engine** behind one interface. restic is the only engine today. A PostgreSQL-native engine
-(physical base backups, WAL archiving, point-in-time recovery) is planned for later.
+A job is an **engine** behind one interface. There are two, and both store everything in restic:
+- `restic` backs up paths;
+- `postgresql` backs up one PostgreSQL database, or a server's roles and other globals, with pg_dump streamed into
+  restic (§4.6, decision 055).
+
+A PostgreSQL-native physical engine (base backups, WAL archiving, point-in-time recovery) is planned for later.
 
 Each engine declares which capabilities it supports. The UI, API and CLI show only what the job's engine
 supports.
 
-| Capability | restic engine |
-| --- | --- |
-| identity | yes |
-| schedule / run | yes |
-| freshness | yes |
-| restore points | yes |
-| browse / changes | yes |
-| restore | yes |
-| retention / prune | yes |
+| Capability | restic | postgresql |
+| --- | --- | --- |
+| identity | yes | yes |
+| schedule / run | yes | yes |
+| freshness | yes | yes |
+| restore points | yes | yes |
+| browse / changes | yes | the dump's one file; no Changes |
+| restore | into a new directory, another one, or in place | into a new database, in place, or the dump as a file (§5.4) |
+| retention / prune | yes | yes |
 
 ---
 
@@ -65,9 +75,16 @@ supports.
 
 ### 2.1 Components
 
-**Agent** (`holdfast-agent`, Go, one per host, runs as root)
+**Agent** (`holdfast-agent`, Go): one per machine, as root; or one per database server, in a container as an
+unprivileged user (decision 055)
+- Is named in its own `agent.yaml`, `agent_name`, which is required and never read from the machine (decision 056).
+  An `agent.yaml` that has the name as `fqdn:` loads, and the agent logs that the key is now `agent_name`. The server
+  shows the address the agent last connected from.
 - Has a local scheduler and runs restic itself. restic encrypts on the host.
-- Runs no other command for a job: no dump, and no hook before or after a backup (decision 052).
+- Runs no command a person defines, and no hook before or after a backup (decision 052). For a PostgreSQL job it
+  runs PostgreSQL's own programs from `postgresql.bin_dir` in its `agent.yaml` (pg_dump, pg_dumpall, pg_restore and
+  psql), with arguments Holdfast builds, in a clean environment, the password in a file only the agent reads
+  (decision 055).
 - Spools events to disk until the server has acknowledged them.
 - Connects to the server by HTTPS long-poll. The agent always dials out.
 - Is known to the server by its own key and a self-signed certificate, which it makes at enrollment and the server
@@ -79,7 +96,7 @@ supports.
 **Server** (`holdfast-server`)
 - The configurator. It serves the API and the UI to people on a listener of its own, `ui.listen`
   (decision 034), and to root on the server on a root-only socket.
-- The gateway (decision 041): restic's REST protocol for every host's repository, at `/gateway/v1/<fqdn>/` on the
+- The gateway (decision 041): restic's REST protocol for every host's repository, at `/gateway/v1/<agent>/` on the
   agent listener, in front of the bucket. It knows the host by its certificate, and holds the one gateway key
   (§2.3). It sees only what restic encrypted on the host.
 - The maintenance leader: it runs forget, prune and check.
@@ -122,6 +139,12 @@ There are two programs: holdfast-agent and holdfast-server (decision 041), and t
 
 - Each host has its own repository password, and its own key and certificate, which never leave it. It holds no
   S3 key (decision 041).
+- **A PostgreSQL connection's passwords** (decision 055), the backup user's and the restore user's, are sealed with the
+  credentials key, as repository passwords are, and kept apart from the config: no revision, diff, audit entry or
+  answer holds them, only whether one is set. The server sends them only to the agent the connection belongs to, with
+  its credentials; the agent keeps them in root-only files in its `credentials_dir`, and gives them to PostgreSQL's
+  programs in a pgpass file, never on a command line. They are in the nightly export, still sealed. The off-site
+  instance gets the connections without their passwords.
 - The admin makes two S3 keys per bucket with the S3 server's own tools, and gives them to the server: the
   gateway key and the maintenance key. Holdfast never creates S3 users, keys or policies, so it works with any S3
   server (decision 029).
@@ -145,7 +168,7 @@ There are two programs: holdfast-agent and holdfast-server (decision 041), and t
   server and Prune now. The 7-day protection (§3.4) is Holdfast's own rule on top of it.
 - **Repository passwords are escrowed in the bucket** (decision 036). `escrow.age_recipient` in
   `server.yaml` names an age public key whose private key is kept offline, in the recovery file (below). At host add,
-  and whenever a host's password changes, the server writes `escrow/<fqdn>.age`: the FQDN, the repository URL and the
+  and whenever a host's password changes, the server writes `escrow/<agent>.age`: the agent's name, the repository URL and the
   password, encrypted to that key. A write that fails is shown on the host and tried
   again every 15 minutes; a host added before the recipient was set is written at the next pass. Without a
   recipient (a server set up by hand without one) nothing is written, and every host and `holdfast_escrow_configured`
@@ -185,7 +208,7 @@ There are two programs: holdfast-agent and holdfast-server (decision 041), and t
     - writes each of the export's files that is missing where the new `server.yaml` says, never over one that is
       there, and the exported settings beside it as `server.yaml.from-export`, to compare;
     - brings back every host that has an escrow file in the bucket but is not in the export, one added after it, as
-      `holdfast host import` does (§5.7): with its repository and password, no job, and waiting for a new enrollment
+      `holdfast agent import` does (§5.7): with its repository and password, no job, and waiting for a new enrollment
       code.
 
     An age key file alone works as the identity too, with the credentials key already in place. The installer's
@@ -203,14 +226,25 @@ There are two programs: holdfast-agent and holdfast-server (decision 041), and t
   are static, so one package runs on every supported distribution. The packages are unsigned for now, with
   `SHA256SUMS`. [install.md](install.md) is the guide. `holdfast-freshness`, M1's storage witness, left
   in M10 (decision 045); `holdfast-server` replaces it.
+- **The agent's container image** (decision 055), `ghcr.io/kabsdk/holdfast-agent:<release>`, such as `0.1-dev`, and
+  `:<build>` for each build, is published by the release from `packaging/container/Dockerfile`: Debian, the agent, the
+  pinned restic and PostgreSQL 18's client in `/usr/lib/postgresql/18/bin`. It runs as uid 65532 and needs no
+  Kubernetes API access. It reads `/etc/holdfast/agent.yaml` (a ConfigMap) and keeps its key, certificate, cache,
+  credentials and restores in `/var/lib/holdfast-agent` (a volume), so `agent.yaml` sets `state_dir`,
+  `credentials_dir` and `restore.root` there. Its entrypoint is `holdfast-agent run --enroll-code-file
+  /run/holdfast/enroll/code`: on its first start it enrolls with the code in that file (a Secret), without rewriting
+  `agent.yaml`. One Deployment, with the `Recreate` strategy, per database server.
 - Installing enables no service: each needs its config first. Upgrading restarts a service that runs.
   Removing stops and disables it, and never deletes `/etc/holdfast`, state or backups.
 - **`install.sh`** (decision 044), released beside the packages, installs them and sets the machine up in one line run
   as root, by role: `server`, `agent` (the default) or `cli`, with `HOLDFAST_*` settings in the environment.
   It checks every setting before it changes anything and stops with the list of what is missing or wrong; it never
   prompts. Run again, it only upgrades.
+  - The agent's line needs `HOLDFAST_SERVER`, `HOLDFAST_AGENT_NAME` and `HOLDFAST_CODE`, as `holdfast agent add`
+    prints them (§5.7). The name is never read from the machine (decision 056).
+  - The server's own name, for its URLs and certificates, is `hostname -f`.
   - The server's line needs the bucket and its two keys. It writes the recovery file unless given an age public key
-    (§2.3), and turns the web UI on at `https://<fqdn>/` with a certificate from Holdfast's own CA, unless given one or
+    (§2.3), and turns the web UI on at `https://<agent>/` with a certificate from Holdfast's own CA, unless given one or
     `HOLDFAST_UI_URL=off` (decision 049). OIDC, alerts (`notify:`) and off-site copies are optional settings.
   - On a new machine, the server's line with `HOLDFAST_RECOVERY_FILE` and the settings of the first install rebuilds
     a lost server from the bucket's newest export, and starts it (§2.3). With `/etc/holdfast` put back instead, it
@@ -219,13 +253,16 @@ There are two programs: holdfast-agent and holdfast-server (decision 041), and t
   does with the same settings in lower case, as the roles `server`, `agent` and `cli`. It differs from the installer
   in what it keeps:
   - `server.yaml` follows the settings on every run.
-  - The roles read no host name from the machine: the server and agent roles require `holdfast_fqdn`, unless an agent
-    sets `holdfast_hostname_autodetect`, which takes `hostname -f`. They need no gathered facts.
-  - The agent role adds the host and enrolls it with the `holdfast` command as root on the server.
-  - It makes the jobs a host lacks, each given as a mapping of `holdfast job set`'s flags, and never changes or removes
-    one.
-  - It sets the host-only restore limits in `agent.yaml` when they are given, and takes out a `dumps:` that 0.5.0 left
-    there (§4.6).
+  - The roles read no name from the machine: the server role requires `holdfast_fqdn`, the server's DNS name, and the
+    agent role `holdfast_agent_name`, the agent's name (decision 056). They need no gathered facts.
+  - The agent role adds the agent and enrolls it with the `holdfast` command as root on the server. It refuses a name
+    that differs from the one the agent enrolled with, and writes a name given as `fqdn:` in `agent.yaml` as
+    `agent_name:`.
+  - It makes the jobs an agent lacks, each given as a mapping of `holdfast job set`'s flags, and never changes or
+    removes one. A PostgreSQL job names a connection, which is set in Holdfast, not by the collection.
+  - It sets what only root on the agent sets in `agent.yaml` when it is given: the restore limits, and the PostgreSQL
+    client (`holdfast_postgresql_bin_dir`, `holdfast_postgresql_allow_in_place_restore`). It takes out a `dumps:` that
+    0.5.0 left there (§4.6).
 
   A run with nothing to do changes nothing.
 - **The agent and the server agree on a protocol version.** The agent sends its own with every poll (an agent
@@ -233,8 +270,10 @@ There are two programs: holdfast-agent and holdfast-server (decision 041), and t
   every agent from its minimum on, so it is upgraded first, and agents after it, one by one. Protocol 2 (M6)
   added dump jobs (removed in 0.6.0, decision 052), restores from another host, and pause and resume; protocol 3 (M7)
   added restores from a vault's copy; protocol 4 (M8, decision 041) is the agent's own certificate in place of a token,
-  backups through the gateway, and restores from off-site through it. An agent before 4 cannot log in at all: it
-  enrolls again after its upgrade. A feature an agent does not speak is refused for it, and the rest goes on.
+  backups through the gateway, and restores from off-site through it; protocol 5 (decision 055) added PostgreSQL jobs,
+  connection tests and restores into a database. An agent before 4 cannot log in at all: it enrolls again after its
+  upgrade. A feature an agent does not speak is refused for it, and the rest goes on: a PostgreSQL job on an agent
+  before 5 is the error P004 (§4.5).
 - An agent older than the server accepts is refused with 426 and the range. It logs that it must be
   upgraded, keeps backing up on its cached config, and the server still takes its reports. It gets no new
   config and no commands meanwhile. The host shows the `agent_too_old` problem, and
@@ -253,7 +292,7 @@ There are two programs: holdfast-agent and holdfast-server (decision 041), and t
 
 - There is no Git and there are no approvers.
 - Every save creates a revision in PostgreSQL. A revision holds its number, who made it, when, a message,
-  and the full config (hosts and jobs).
+  and the full config: the agents, their PostgreSQL connections without passwords (§2.3), and their jobs.
 - Any two revisions can be diffed.
 - Each revision also stores the warning codes that were accepted for it (§4.5).
 
@@ -277,6 +316,9 @@ retention. See [decision 013](decisions/013-no-rollback.md).
     `#/offsite/`, the API under `/api/v1/offsite/`, the CLI with `--offsite`. UI = API = CLI holds there too.
   - **Restoring an export** is `holdfast-server restore-export`, as root on a rebuilt server, before it starts
 : there is no server to ask yet. Writing and listing exports is UI, API and CLI as usual (§2.3).
+  - **What only root on an agent sets** is in its `agent.yaml`, never in the UI, the API or the CLI, which only show
+    it: the restore limits (§5.4) and the PostgreSQL client with `postgresql.allow_in_place_restore` (§4.6). A
+    compromised server or admin login is then not root on every agent (decision 030).
 - The API comes first. The UI and the CLI are thin clients of the HTTP API, and all logic, validation and
   checks live behind it (decision 028).
 - Every action is recorded in the host's history and in the audit log.
@@ -300,12 +342,12 @@ would keep.
 - It runs in the middle of the host's longest quiet stretch, so it rarely meets a backup, and it waits for
   a backup's lock rather than failing. A run missed while the server was down waits for the next day's slot.
 - Only the server runs forget and prune, with its maintenance key; agents never do.
-- `holdfast retention run <fqdn>` starts the same run now, with the same protection.
+- `holdfast retention run <agent>` starts the same run now, with the same protection.
   `maintenance.retention: off` in `server.yaml` turns the daily run off.
 - Removing a job never deletes data (§3.5): the daily run covers the jobs in the current config only.
 
 **Pending.** A retention cut becomes pending for 7 days, however the cut was made. `holdfast pending
-<fqdn>` (`GET /api/v1/hosts/{fqdn}/pending`) shows each waiting snapshot, the revision whose policy still
+<agent>` (`GET /api/v1/agents/{agent}/pending`) shows each waiting snapshot, the revision whose policy still
 keeps it, and when the daily run may forget it.
 
 **The hold** (decision 039), with off-site copies (§3.7). The daily run does not forget a snapshot that is not
@@ -315,7 +357,7 @@ holds while the off-site bucket is down or cannot be written. After 7 days the s
 that stalls is an incident, which its lag alert reports long before, not a reason to keep primary data for ever.
 Prune now and Delete now are not held. Without off-site copies nothing is held.
 
-**Keep longer.** `holdfast job keep-longer <fqdn> <job>` saves a new revision in which the job has an older
+**Keep longer.** `holdfast job keep-longer <agent> <job>` saves a new revision in which the job has an older
 retention again: by default the newest one in force during the last 7 days that differs from today's. It
 is a normal save, with the normal checks.
 
@@ -327,23 +369,29 @@ the union, then checks and prunes.
   - the date range;
   - the full list of snapshots, paginated and filterable by month, with every ID clickable;
   - the exact restic commands that will run: `forget -- <ids>`, `check`, `prune`.
-- The admin confirms by typing the host's short name (`holdfast prune-now <fqdn>` shows the page;
+- The admin confirms by typing the host's short name (`holdfast prune-now <agent>` shows the page;
   `--confirm <short name>` goes ahead).
 - It is recorded in the host's history and in the audit log.
 - The deleted snapshot IDs can still be found in search, marked **Deleted**.
 
 **Delete a snapshot** (decision 031)
-- An admin can delete one snapshot, with restic's `forget <id>`. It is a UI action, an API endpoint, and
-  `holdfast snapshot delete <fqdn> <id>`.
+- An admin can delete snapshots, with restic's `forget <id>`. It is a UI action on the job page's calendar (§5.2) and
+  on the snapshot page, an API endpoint (`POST /api/v1/agents/{agent}/snapshots/{id}/delete`), and `holdfast snapshot
+  delete <agent> <snapshot>...`, which takes several.
+- **A deletion always says why** (decision 055): the UI asks for a reason, the API refuses one without a `message`,
+  and the CLI one without `--reason` (`-m`). The reason goes into the audit log and the agent's history, and shows on
+  the pending deletion.
 - It becomes a pending deletion for 7 days, which can be cancelled (`--cancel`). **Delete now** (`--now
   --confirm <short name>`) skips the wait, with the same confirmation as Prune now.
-- It never deletes the snapshot's off-site copy (decision 041). The copy is marked **Deleted in primary**, and an
-  admin can choose **Delete here too** on the off-site pages. That deletion follows the same rules off-site.
+- With off-site copies, the UI deletes in primary (site A), off-site (site B), or both. Deleting in primary never
+  deletes the off-site copy (decision 041): the copy is marked **Deleted in primary**. Both is two deletions, one in
+  each site, each pending and cancelled on its own. Off-site, the CLI is `holdfast --offsite snapshot delete <agent>
+  <snapshot>... --reason …`, and the off-site pages' **Delete here too**; that deletion follows the same rules off-site.
 - The snapshot page shows when the data is really gone in each bucket. Space is freed at the next prune, and
   S3 versioning keeps the old files until the bucket's lifecycle rule expires them. The daily storage test
   reads that rule's days (B011), so the date is the prune's date plus those days.
 
-**Past prunes.** `holdfast prunes [<fqdn>]` lists each forget and prune: when, the daily run or Prune
+**Past prunes.** `holdfast prunes [<agent>]` lists each forget and prune: when, the daily run or Prune
 now or Delete now, who, the snapshots forgotten, what restic said the prune freed, and when the data is
 really gone. Snapshots Holdfast deleted keep tombstones marked **Deleted by Holdfast**; they never count as
 disappeared (§3.6).
@@ -353,13 +401,14 @@ disappeared (§3.6).
 - Removing a job or a host never deletes data.
   - A removed job leaves the config. Its snapshots stay, and the daily run no longer touches them.
   - A removed host is retired: its agent's certificate stops working, and its repository stays and can still be
-    browsed. Adding the same FQDN again brings it back, with its repository, after a new enrollment.
+    browsed. Adding the same name again brings it back, with its repository, after a new enrollment.
+  - A PostgreSQL connection is removed only when no job uses it, and its passwords go with it.
 - Deleting data is a separate **decommission** action:
-  - only for a removed (retired) host, only by an admin (`host.decommission`), who types the FQDN:
-    `holdfast host decommission <fqdn> --confirm <fqdn>`;
+  - only for a removed (retired) host, only by an admin (`host.decommission`), who types the agent's name:
+    `holdfast agent decommission <agent> --confirm <agent>`;
   - it waits 7 days, like every other deletion, and `--cancel` stops it meanwhile. A host waiting for it
     cannot be added back until it is cancelled;
-  - then the server deletes every current object under `repos/<fqdn>/`, and the escrow file, with the
+  - then the server deletes every current object under `repos/<agent>/`, and the escrow file, with the
     maintenance key. S3 keeps their old versions until the lifecycle rule expires them, so the host's page
     gives the date the data is really gone: the decommission's date plus the rule's days (B011). Its
     snapshots keep tombstones marked **Deleted by Holdfast**;
@@ -372,9 +421,9 @@ disappeared (§3.6).
 
 For a repository damaged or emptied behind Holdfast's back (decision 032), or after a mistaken Prune now
 (decision 038):
-- `holdfast host rollback <fqdn> --to <time>` (`GET /api/v1/hosts/{fqdn}/rollback?to=…`) shows what rolling the
+- `holdfast agent rollback <agent> --to <time>` (`GET /api/v1/agents/{agent}/rollback?to=…`) shows what rolling the
   host's prefix back to that time changes: objects brought back and set aside, by kind, the snapshots that come
-  back and those set aside, and when snapshot files were deleted. `--confirm <fqdn>` does it; admin only
+  back and those set aside, and when snapshot files were deleted. `--confirm <agent>` does it; admin only
   (`repository.rollback`). The UI's host page has the same, and the "disappeared" alert links to it.
 - It copies each object's version of then over today's, and puts a delete marker in front of each object that was
   not there then. **No version is deleted**, so a rollback can itself be rolled back, to a time just before it.
@@ -385,13 +434,13 @@ For a repository damaged or emptied behind Holdfast's back (decision 032), or af
 - The host's agent is paused and idle while it runs (`agent_down` when the host is down instead); then `restic
   check` runs, the snapshot list is read again, and the agent resumes and catches up on slots it missed.
   Snapshots set aside get tombstones marked deleted by Holdfast; snapshots that come back are no longer
-  disappeared. `holdfast host rollbacks <fqdn>` lists each rollback and how it went.
+  disappeared. `holdfast agent rollbacks <agent>` lists each rollback and how it went.
 - A rollback past a prune brings back what the prune removed; the daily run forgets it again if no retention in
   force during the last 7 days keeps it.
 
 ### 3.5a A compromised host
 
-`holdfast host rotate <fqdn>` (`config.storage`) does, in this order:
+`holdfast agent rotate <agent>` (`config.storage`) does, in this order:
 1. adds a new restic password to the repository, and checks that it opens it;
 2. stores it, unpins the agent's certificate (the host waits for a new enrollment, which makes it a new key) and
    issues a new enrollment code;
@@ -430,8 +479,8 @@ second bucket, best in another site, with a key of its own there. Adding the sec
 **How it runs.** The server runs a second instance of its own code beside itself, the **off-site instance**, on the
 off-site bucket, with its tables in the schema `offsite` of the same database. The two talk in-process: every
 `offsite.poll` (5 minutes by default) the off-site instance hands over its report and takes the feed: every enrolled
-host, its jobs as they run, its repository's password, the snapshots deleted on request, and the bindings. Nothing
-registers and there is no token.
+host, its jobs as they run, its PostgreSQL connections without their passwords, its repository's password, the
+snapshots deleted on request, and the bindings. Nothing registers and there is no token.
 
 **Hosts and jobs follow the server's**, by revisions of the off-site instance's own:
 - a new host is copied at once, into its own off-site repository, with a password of its own, which the host never
@@ -440,8 +489,8 @@ registers and there is no token.
   off-site: that one is the job's **own**, and stays (decision 053). **Match primary** makes it primary's again, and
   following again. Keeping less than primary is warning **O101**, which the admin accepts; a cut is R104 and waits 7
   days, as everywhere;
-- a job's paths, schedule and primary retention follow the server's, and so does its off-site retention unless it is
-  its own; Exclude does not;
+- a job's paths, or its engine and database for a PostgreSQL job, its schedule and its primary retention follow the
+  server's, and so does its off-site retention unless it is its own; Exclude does not;
 - **Exclude** stops copying a job, and keeps its copies under its off-site retention; **Include** copies it again;
 - a job the server removes is **Retired**: its copies stay, under its off-site retention. A host all of whose jobs are
   retired can be removed off-site, and then decommissioned there, after 7 days;
@@ -468,14 +517,15 @@ Delete now.
 - the off-site pages are the same pages under `#/offsite/`, in red, with the badge "OFF-SITE" and only the off-site
   actions; their API is `/api/v1/offsite/…`, the same routes, and their CLI is `holdfast --offsite …`, the same
   commands. `holdfast offsite exclude|include|match-primary` act on the off-site jobs, and `holdfast offsite copies
-  <fqdn>` lists a host's copies;
+  <agent>` lists a host's copies;
 - the off-site instance's config history and audit log are its own: `holdfast --offsite revision list` and
   `holdfast --offsite audit`.
 
-**A restore from off-site** runs on the host, into a new or another directory, never in place: `holdfast restore
-<fqdn> <snapshot> --from-offsite`, with the copy's ID or its original's. The host's agent gets the copy's password in
+**A restore from off-site** runs on the host, into a new or another directory, or a PostgreSQL dump into a new
+database, never in place: `holdfast restore
+<agent> <snapshot> --from-offsite`, with the copy's ID or its original's. The host's agent gets the copy's password in
 the restore command, sealed, once, and reads its own copy through the gateway's off-site endpoint
-(`/gateway/v1/offsite/<fqdn>/`), read-only, until it reports the restore. Outside such a restore a host cannot read
+(`/gateway/v1/offsite/<agent>/`), read-only, until it reports the restore. Outside such a restore a host cannot read
 its off-site copy at all. The grant is in the off-site audit log.
 
 **The hold** (§3.4) keeps, in primary, a snapshot not copied yet, for up to 7 days.
@@ -541,7 +591,7 @@ Retention is expressed only as time windows, which map to restic as follows.
 
 A protection item is a schedule and a retention bundled together, and they are validated as a unit.
 
-**The default job** (decision 048). `holdfast job set <fqdn> <job> --path …` (`PUT /api/v1/hosts/{fqdn}/jobs/{job}`)
+**The default job** (decision 048). `holdfast job set <agent> <job> --path …` (`PUT /api/v1/agents/{agent}/jobs/{job}`)
 makes a job, and the request may leave things out:
 - a new job takes what it does not give from the default job: daily at 02:00 with 20 minutes' spread; one per day
   for 14 days, per week for 8 weeks, per month for 12 months, per year for 3 years; the newest 3. A new job that
@@ -554,6 +604,13 @@ makes a job, and the request may leave things out:
 So `holdfast job set web01 system --path /etc` is a whole job, and `holdfast job set web01 system --daily 03:00`
 moves its time and keeps the rest; any `--keep-*` flag gives the whole retention. The checks (§4.5) run on the job as
 merged.
+
+**A PostgreSQL job** (§4.6) gives `--connection` and `--database`, or `--globals`, in place of `--path`. Without a job
+ID, `holdfast job set <agent> --connection main --database app --database wiki --globals` makes a job for each
+database, named after it, and `roles` for the globals, all with the same schedule and retention, in one revision
+(`POST /api/v1/agents/{agent}/jobs`, with the jobs by ID; each is checked, and a finding names its job). A database
+whose name is not a job ID (lower-case letters, digits and hyphens) needs one given: `holdfast job set <agent> my-db
+--connection main --database My_DB`.
 
 ### 4.4 Library (cut)
 
@@ -575,6 +632,8 @@ The UI, the API and the CLI use the same checks engine, and every check has a st
 | R005 | A tier has no duration. |
 | S001 | The spread is half the interval or more. |
 | S003 | The schedule is invalid. |
+| P001 | The agent's pg_dump is older than the PostgreSQL server's major version, as the connection's last test found it. pg_dump must be at least as new as the server. |
+| P004 | The agent cannot run PostgreSQL jobs: its agent is older than protocol 5 (§2.4), or it has no PostgreSQL client (`postgresql.bin_dir` in its `agent.yaml`, or no pg_dump that runs there). |
 
 **Warnings** must be accepted one by one.
 
@@ -586,6 +645,10 @@ The UI, the API and the CLI use the same checks engine, and every check has a st
 | R102 | More than 1000 snapshots would be kept. |
 | R103 | The longest gap between runs is more than 1 day. The message gives the worst-case data loss, spread included. |
 | R104 | The change cuts retention. |
+| P003 | The job's database was not on the server at the connection's last test. |
+| P005 | The job's connection has never been tested, so it is not known to work, or its last test failed. |
+
+The P checks are on PostgreSQL jobs only (decision 055). P002 is not used.
 
 **Info**
 
@@ -624,7 +687,7 @@ used again. B013 was never used. The off-site bucket passes B004, B008–B012 an
 - The CLI takes them explicitly, for example `holdfast job set … --accept R102,R104`. Without them it
   refuses the change and prints the same explanation as the UI. The API takes them as `accept`, and
   answers a refused save with 422 and every finding.
-- `holdfast job check` (`POST /api/v1/hosts/{fqdn}/jobs/{job}/check`) runs the checks without saving.
+- `holdfast job check` (`POST /api/v1/agents/{agent}/jobs/{job}/check`) runs the checks without saving.
 - S002 needs at least 5 finished runs. R101, R102 and R103 are estimates from the schedule and the
   windows, so their messages say "about".
 - restic decides what each policy keeps (decision 030). Holdfast runs `restic forget --dry-run` for the
@@ -632,11 +695,81 @@ used again. B013 was never used. The off-site bucket passes B004, B008–B012 an
   what the old one keeps. Removing a tier is therefore not a cut if a finer tier keeps the same snapshots.
   A job with no snapshots yet has nothing to cut. If restic cannot be asked, the change counts as a cut.
 
-### 4.6 Databases and other exports
+### 4.6 Databases: PostgreSQL jobs, and exports
 
-Holdfast runs no command on a host (decision 052): no dump, and no hook before or after a backup. A database, a
-directory server or anything else whose files are not a backup while it runs (§1.2) is backed up from an export the
-host writes itself:
+A database's files are not a backup while it runs (§1.2). A PostgreSQL database is backed up by a PostgreSQL job,
+which dumps it with pg_dump into restic (decision 055). Any other database, a directory server or anything else like
+them is backed up from an export the host writes itself (below).
+
+**Connections.** A connection is how an agent reaches a PostgreSQL server, and belongs to that agent. It is set
+centrally, in the UI on the agent's page, with `holdfast agent connection set <agent> <name> --url <url> --user <user>
+(--password-file <file> | --no-password) [--restore-user <user> --restore-password-file <file>] [-m <message>]`, or
+`PUT /api/v1/agents/{agent}/postgresql/{name}`:
+- the name: lower-case letters, digits and hyphens, at most 63, such as `main`;
+- the URL: libpq's connection URI, `postgresql://`, with a host, such as
+  `postgresql://db01.example.internal:5432/?sslmode=verify-full&sslrootcert=/etc/holdfast/pg/ca.crt`, or a socket
+  directory, `postgresql:///?host=/var/run/postgresql`. It holds no user, password, `passfile` or database: they
+  have fields of their own, and each job names its database. Paths in it are on the agent;
+- the user that backs up, a plain role name. It needs `pg_read_all_data`, and `BYPASSRLS` where a table has row-level
+  security;
+- its password, read by the CLI from a file or standard input (`-`), never from its command line. A password not given
+  keeps the one stored; `--no-password` removes it, for peer authentication on a socket;
+- optionally, a restore user and its password. It needs `CREATEDB` and membership of the roles that own the databases,
+  so that a restored database belongs to its owner. Without it, a dump restores as a file only.
+
+Setting a connection saves a revision, its passwords sealed apart from it (§2.3), and needs `config.storage`.
+Removing one (`holdfast agent connection remove <agent> <name>`, `DELETE …`) is refused while a job uses it, and
+removes its passwords. `holdfast agent connection list <agent>` (`GET /api/v1/agents/{agent}/postgresql`) shows each
+connection, whether its passwords are set, the jobs that use it, and its last test.
+
+**Tests.** Saving a connection makes the agent test it at once; `holdfast agent connection test <agent> <name>`
+(`POST …/postgresql/{name}/test`, `config.jobs`) tests it again, and the CLI waits for the answer (`--wait`, a minute
+by default). The agent connects as the backup user, as a backup would, and reports the server's version, TLS, its own
+pg_dump's version, and every database that takes connections, with its size and owner. With a restore user it also
+connects as that user, and reports whether it may create databases and which roles it is a member of. The job form
+offers the databases of the last test. Each test is in the agent's history and the audit log.
+
+**The agent's part** is in its `agent.yaml`, which only root on the agent sets:
+
+```yaml
+agent_name: db01
+server: https://holdfast.example.internal:8443
+ca_sha256: …
+postgresql:
+  bin_dir: /usr/lib/postgresql/18/bin   # pg_dump, pg_dumpall, pg_restore and psql
+  allow_in_place_restore: false         # true lets an admin restore a dump over the database it came from
+```
+
+Without `bin_dir` the agent takes no PostgreSQL job (P004). It reports its pg_dump's version and whether restores in
+place are allowed.
+
+**Jobs.** A PostgreSQL job names a connection of its agent and one database (letters, digits, `_`, `-` and `.`, at
+most 63), or the globals; it has no paths. A job whose connection the agent does not have is refused, and so is a
+second job of one agent that backs up the same. One job a database, each with its own schedule and retention;
+`holdfast job set` makes several at once (§4.3).
+
+**A backup** is restic's, with the dump as its one file:
+`restic backup --tag job=<id> --stdin-from-command --stdin-filename <database>.dump -- <pg_dump>`, where `<pg_dump>`
+is `env -i` and a clean environment (no `RESTIC_*` or `AWS_*`; the password in a pgpass file only the agent reads),
+then `<bin_dir>/pg_dump --format=custom --compress=0 --lock-wait-timeout=10min --no-password --username=<user>
+--dbname=<the URL, with the database>`. The globals are `pg_dumpall --globals-only --no-role-passwords`, into
+`globals.sql`. The dump is uncompressed so that restic compresses and deduplicates it. A pg_dump that fails, or waits
+more than 10 minutes for a lock, makes no snapshot, and the run fails as any backup does, with pg_dump's message.
+Everything else is a job's as usual: the schedule, retries, retention with its 7-day protection, the storage witness,
+off-site copies.
+
+**Problems.** The agent shows `postgresql` while a connection's last test failed, and P001 while a connection's server
+is newer than the agent's pg_dump (§5.5a).
+
+**In Kubernetes**, the agent's container image (§2.4) backs up a database server from a pod, as one agent named after
+the server, such as `k3s-postgres-main`. Its connection reaches the server's service, such as
+`postgresql://postgres-main-rw.postgres.svc:5432/?sslmode=require`. With CloudNativePG, the cluster's
+`managed.roles` makes the users: `holdfast_backup` with `inRoles: [pg_read_all_data]`, and `holdfast_restore` with
+`createdb: true` and `inRoles` the owners of the databases.
+
+**Exports, for other databases.** Holdfast runs no command a person defines on a host (decision 052): no dump command,
+and no hook before or after a backup. Anything else whose files are not a backup while it runs is backed up from an
+export the host writes itself:
 - a systemd service and timer on the host make the export, with a margin before the job's time (`OnCalendar=`, and
   `TimeoutStartSec=`, `SuccessExitStatus=` and `OnFailure=` as needed);
 - the export writes to a temporary name, and is renamed only when it succeeded, so a running or failed export never
@@ -646,15 +779,15 @@ host writes itself:
   costs nothing as restic deduplicates it, and the failed unit is what alerts.
 
 Holdfast does not order the job after the export, and does not check the file's age; that is deliberate (decision 052).
-The documentation site's *Databases and other exports* has an example for PostgreSQL.
+The documentation site's *Other databases and exports* has an example, for MariaDB.
 
 **Dump jobs from before 0.6.0.** Until 0.6.0 a dump job backed up what a command in the host's `agent.yaml` printed
 (decision 037). What is left of them:
-- `holdfast job set` has no `--dump`, the UI's job form has paths only, and the API refuses a job given a `dump`,
-  citing decision 052.
+- `holdfast job set` has no `--dump`, the UI's job form has paths or a PostgreSQL database, and the API refuses a job
+  given a `dump`, citing decision 052.
 - A dump job left in the config is refused on the next save, with a message that says to give it paths. Every save
   checks the whole config, so until no dump job is left, any save is refused so. Giving it paths (`holdfast job set
-  <fqdn> <job> --path …`) makes it a paths job; removing it is the other way. An agent of 0.6.0 fails its runs with the
+  <agent> <job> --path …`) makes it a paths job; removing it is the other way. An agent of 0.6.0 fails its runs with the
   same reason, so it shows as a problem.
 - An `agent.yaml` that still has `dumps:` loads: the agent logs that it is ignored, and the host's other jobs keep
   running. Agents no longer report dump names.
@@ -669,35 +802,48 @@ Restore and inspection behave like restic does on the host.
 
 ### 5.1 Navigation
 
-- Path: Overview → Host → Job → Snapshot page.
+- Path: Overview → Agent → Job → Snapshot page. The list of agents is **Agents** (decision 056).
 - Every snapshot ID anywhere in the product is a link.
 - A page shows its main actions; the rarer ones, such as Prune now, Roll back or Remove, are in its ⋯ menu.
 
-### 5.1a Host page
+### 5.1a Agent page
 
+- Its name, and the address it last connected from ("from 10.0.4.17").
 - One row per job: its state, its **last 14 days**, its last and next backup, and **Back up now** and **Restore**
-  (from the newest snapshot). Paths, schedule and retention are on the job's page.
+  (from the newest snapshot). A PostgreSQL job shows its database and connection. Paths, schedule and retention are
+  on the job's page.
+- **PostgreSQL connections**, when the agent has any or has a PostgreSQL client: each with its URL, its users,
+  whether their passwords are set, the jobs that use it, and its last test: the server's version, TLS, pg_dump's
+  version and the databases with their sizes and owners, or why it failed. **Test** tests it again; an admin can add,
+  change and remove connections (§4.6). Passwords are typed into the form and never shown back.
 - The last 14 days are a square a day, coloured by the worst backup of the day: failed, incomplete, backed up, or no
   run; a day before the job's first backup is drawn apart, as it had nothing to miss. The server puts each backup on
-  its day, in the time zone asked for: `GET /api/v1/hosts/{fqdn}/days?days=14&tz=…`
-  and `holdfast host days <fqdn>` (up to 92 days, in this machine's zone by default).
+  its day, in the time zone asked for: `GET /api/v1/agents/{agent}/days?days=14&tz=…`
+  and `holdfast agent days <agent>` (up to 92 days, in this machine's zone by default).
 - Recent runs fold: a job's backups on one day that ended the same way are one line.
 
 ### 5.2 Job page
 
-- **What restic keeps**: a row per rule of the job's retention (one per hour, day, week, month or year, every
-  backup, the newest N), with a square per period of the rule's window, oldest on the left. A square holds the
-  snapshot restic keeps by that rule in that period, from the reasons `forget --dry-run` gives (such as "daily within
-  14d"); an empty one is a period without a snapshot. A row shows its newest 30 squares and "+N earlier".
-- **Calendar**: every kept snapshot of the job, a square a day, a block a year: kept, a day the daily rule should
-  have and has not (a missed backup), or a day the retention thinned out.
-- Every square says on hover, or when the keyboard reaches it, its period, its snapshot and restic's reasons for
-  keeping it; it links to the snapshot.
-- **Snapshots**: all of them, paginated and filterable by month, each with the rule that keeps it in restic's own
-  words, and whether a pending prune will delete it, and from when.
+- **One calendar of the job's restore points**, a square a day, by month, back to its oldest restore point.
+- With off-site copies (§3.7), a square's top half is primary (site A) and its bottom half off-site (site B), each in
+  its own state:
+  - primary: **kept**, **deletion waits** (a retention cut or a deletion in its 7 days, §3.4), or **deleted**;
+  - off-site: **copied**, **copy pending**, **deletion waits**, **deleted**, or **never copied** (an excluded job, or
+    a day before copying began).
+
+  Without off-site copies a square is primary's alone. A day with no restore point is empty.
+- Every square says on hover, or when the keyboard reaches it, its day and its restore points in each site.
+- **Choosing a day** lists its restore points: each with its time, its snapshot (a link), restic's reasons for keeping
+  it (such as "daily within 14d"), its state in each site, and **Restore** and **Delete**.
+- **Several days** are chosen with shift-click, or a whole month by its name; Delete then deletes all their restore
+  points, with one reason (§3.4).
+- The job's retention rules are chips; choosing one highlights the days it keeps.
+- The card's header has a line per site: primary, and off-site when there is one.
+- A PostgreSQL job's page names its connection and database; each restore point is a dump.
 - **Find a file in all snapshots** uses `restic find` to show the versions of a file. Each version links to
   the snapshot, opened at that folder.
-- `#/hosts/{fqdn}/jobs/{job}/snapshots`, the snapshot list it replaced, opens it.
+- 0.7's squares per retention rule, its list of snapshots and its separate calendar page are gone:
+  `#/hosts/{agent}/jobs/{job}/snapshots` opens the job page.
 
 ### 5.3 Snapshot page
 
@@ -707,8 +853,10 @@ Restore and inspection behave like restic does on the host.
 | Changes | `restic diff --metadata` against the previous snapshot or any older one: what restic's diff shows, and nothing more. That means the changed paths (added, removed, content changed, metadata only, type changed) and their counts. It never shows contents or line diffs, as restic's diff does not. To compare the lines of a file, **Restore both versions to diff on the host** (§5.4) and run the `diff -u` it prints, on the host. |
 | Restore | See §5.4. |
 
-Deleting the snapshot, or its off-site copy, is in the page's ⋯ menu, as a dialog: Delete in 7 days, or an admin's
-Delete now. It is on no tab.
+A PostgreSQL job's snapshot holds one file, the dump: Files shows it, and there is no Changes tab.
+
+Deleting the snapshot is in the page's ⋯ menu, as a dialog: in primary (site A), off-site (site B) or both, with
+off-site copies; Delete in 7 days, or an admin's Delete now; and always a reason (§3.4). It is on no tab.
 
 ### 5.4 Restore
 
@@ -747,6 +895,26 @@ host.
   with counts and the target directory, is in the host's history and in the Restores tab (§5.5).
 - A restore that the host has not picked up within 24 hours is cancelled, and the cancellation is reported.
 
+**A PostgreSQL dump** (decision 055) restores onto its own database server only, in one of three ways:
+- **Into a new database** beside the original (`holdfast restore <agent> <snapshot> --to-database`), named `<database>-restore-<YYYYMMDD>-<HHMM>` from the dump's time in the server's zone, cut to 63
+  bytes. It needs `restore.new_dir`, as a new directory does: it writes nothing that exists. The restore user creates
+  it, owned by the original database's owner (or by itself when the original is gone), and `pg_restore
+  --single-transaction --exit-on-error` loads the dump into it. If the load fails, the new database is left as it is,
+  for an admin to drop.
+- **In place**, over the database it came from: an admin's (`restore.in_place`), who types the database's name
+  (`--in-place --confirm <database>`), and only where the agent's `agent.yaml` has
+  `postgresql.allow_in_place_restore: true`. The agent first dumps the database as it is, into a snapshot of the job
+  tagged `pre-restore=<restore>`; if that fails, nothing is restored. Then `pg_restore --clean --if-exists
+  --single-transaction --exit-on-error` loads the dump: if anything fails, nothing changed. What the dump holds is
+  replaced; tables made after the dump stay. A database that is gone is made again.
+- **As the dump file**, into a new directory (the default) or another one, as any file is restored. The
+  roles and globals restore this way only: Holdfast never creates roles.
+
+The dump streams from restic into pg_restore, through no file on disk, and pg_restore waits at most 5 minutes for a
+lock. A restore never names another database, never runs on another agent (`--to-host`), and from an off-site copy is
+never in place. Without a restore user on the connection, a dump restores as a file only. A dry run reads the dump with
+`pg_restore --list`, and writes nothing.
+
 **A dump snapshot**, made by a dump job before 0.6.0 (§4.6), is one file: it is restored into a new directory only.
 Loading it is the admin's job, on the host.
 
@@ -765,8 +933,8 @@ host B with `holdfast restore A <snapshot> --to-host B`:
   restore, at most 49 hours (decision 041); B runs restic without locks;
 - A's history and B's both have it.
 
-**From its off-site copy** (§3.7): `holdfast restore <fqdn> <snapshot> --from-offsite`, with the copy's ID or its
-original's (`holdfast offsite copies <fqdn>` lists them), or **Restore from: Off-site copy** on the snapshot's Restore
+**From its off-site copy** (§3.7): `holdfast restore <agent> <snapshot> --from-offsite`, with the copy's ID or its
+original's (`holdfast offsite copies <agent>` lists them), or **Restore from: Off-site copy** on the snapshot's Restore
 tab:
 - it runs on the snapshot's own host, into a new or another directory, never in place;
 - it is granted at once, if the copy is still off-site; the host's agent gets the copy's password sealed, once, and
@@ -784,7 +952,8 @@ tab:
 
 - Shows the restore history for the whole fleet: who restored what, where to, the result, and a link to the
   snapshot.
-- Has a host → job picker that leads to that job's snapshot list.
+- Has an agent → job picker that leads to that job's page.
+- A restore into a database shows the database it went into, on which connection.
 
 ### 5.5a Problems
 
@@ -801,8 +970,9 @@ opens it. The problems are:
   delete;
 - warnings: `incomplete`, `offline`, `drift`, `restic`, `not_made_by_holdfast`, `catalogue`, `retention`,
   `removing`, `enroll` (waiting to enroll again), `escrow` (no recipient, or the write failed), `size`,
-  `agent_too_old` (§2.4), `decommission` while one waits, `rollback` while one runs (§3.5b), and `ahead` (the
-  agent runs a change a restored server lost, §2.3).
+  `agent_too_old` (§2.4), `decommission` while one waits, `rollback` while one runs (§3.5b), `ahead` (the
+  agent runs a change a restored server lost, §2.3), `postgresql` (a PostgreSQL connection's last test failed, §4.6)
+  and `P001` (a connection's server is newer than the agent's pg_dump, so no job can use it).
 
 The server's own problems, which belong to no host, are on every page of the UI and in `holdfast status`: `export`
 (no recipient, a failed export, or none for 2 days), `export_offsite` (§2.3), `recovery_file` (the recovery file is
@@ -822,26 +992,27 @@ Prometheus and the rules that ship with Holdfast are optional, for teams that ha
 ### 5.6 Search
 
 Search finds:
-- hosts;
+- agents;
 - jobs;
 - snapshot IDs, including deleted ones, which are marked **Deleted**.
 
-### 5.7 Add host
+### 5.7 Add agent
 
-1. Enter the FQDN: `holdfast host add <fqdn>`, `POST /api/v1/hosts` with the FQDN alone. It is validated, and a
-   duplicate FQDN is refused. No S3 key: the host's storage is tested with the gateway key (decision 041,
-   [storage.md](storage.md)).
-2. Saving creates a revision. The host has no job: jobs are added with `holdfast job set` (decision 048, §4.3). The
+1. Enter the agent's name (decision 056): `holdfast agent add <agent>`, `POST /api/v1/agents` with the name alone
+   (its field is `fqdn`). It is validated (§1.1), and a duplicate name is refused. No S3 key: the agent's storage is
+   tested with the gateway key (decision 041, [storage.md](storage.md)).
+2. Saving creates a revision. The agent has no job: jobs are added with `holdfast job set` (decision 048, §4.3). The
    UI's form asks for the paths of a first job too, and saves it with that second call, with the default job's
-   schedule and retention.
-4. Holdfast shows a single-use enrollment code, valid for 15 minutes, and the one line to run on the host as root
-   (decision 044), `install_script`: `curl -sfL <release>/install.sh | HOLDFAST_SERVER=<url> HOLDFAST_FQDN=<fqdn>
+   schedule and retention. A PostgreSQL job comes after the agent has enrolled and has a connection (§4.6).
+4. Holdfast shows a single-use enrollment code, valid for 15 minutes, and the one line to run on the machine as root
+   (decision 044), `install_script`: `curl -sfL <release>/install.sh | HOLDFAST_SERVER=<url> HOLDFAST_AGENT_NAME=<agent>
    HOLDFAST_CODE=<code> HOLDFAST_CA_SHA256=<pin> HOLDFAST_VERSION=<the server's release> sh -`, which installs the
    agent's packages, checked against the release's `SHA256SUMS`, and enrolls. The server's release is its version, or,
    for a build between releases such as `0.1.0~dev90`, the development release of the next one, `0.1-dev`, whose
    newest build the line installs (decision 054). With `download_url` in `server.yaml`
    the line fetches from that mirror instead. For a host whose packages are installed already, `install_command` is
-   the enrollment alone: `holdfast-agent enroll --server <url> --fqdn <fqdn> --code <code> --ca-sha256 <pin>`.
+   the enrollment alone: `holdfast-agent enroll --server <url> --name <agent> --code <code> --ca-sha256 <pin>`. An
+   agent in a container enrolls with the code alone, in the file its `--enroll-code-file` names (§2.4).
 5. Enrolling makes the agent an ECDSA key and a self-signed certificate on the host, in a root-only file; the
    key never leaves the host. The agent pins the server (`--ca-sha256`), and the server pins the certificate the
    enrollment came with: from then on that certificate is the host, on every connection (mutual TLS). A new
@@ -849,12 +1020,12 @@ Search finds:
 6. Progress is shown: **waiting → agent connected → first backup done**.
 
 **Import a host from its escrow file**, beside Add host, for an admin on every host:
-`holdfast host import <fqdn> --escrow-file <file>`, or `POST /api/v1/hosts/import`. It is for a host a rebuilt
+`holdfast agent import <agent> --escrow-file <file>`, or `POST /api/v1/agents/import`. It is for a host a rebuilt
 server does not know, as the export it was restored from was made before the host was added. The decrypted escrow
 file goes to the server once and is never shown back. The server checks that the file is that host's and names this
 server's repository for it, tests the storage contract, and proves the password opens the repository; it then adds the
 host with that repository and password, its keys as Holdfast's own, no job, and an enrollment code. It refuses a host
-it knows: `holdfast host enroll-code` is for that. `restore-export` does the same by itself for every host whose
+it knows: `holdfast agent enroll-code` is for that. `restore-export` does the same by itself for every host whose
 escrow file is in the bucket (§2.3), so an import is needed only for a file from elsewhere.
 
 ---
@@ -911,9 +1082,12 @@ for you:** it is not listed, not searchable and not counted (decision 033). Aski
 found". Revisions and the audit log are cut down to your hosts. Nobody sees file contents.
 
 Actions the table does not name:
-- adding a host, issuing an enrollment code and rotating its password
-  (`holdfast host rotate`) need `config.storage`;
+- adding an agent, issuing an enrollment code and rotating its password
+  (`holdfast agent rotate`) need `config.storage`;
+- setting or removing a PostgreSQL connection needs `config.storage`, as it holds credentials; testing one needs
+  `config.jobs` (§4.6);
 - a restore into another directory needs `restore.in_place`, and a restore onto another host needs it on both;
+- a dump restored into a new database needs `restore.new_dir`, and over its database `restore.in_place` (§5.4);
 - saving a job needs `config.jobs`, and also `retention.cut` when it accepts R104;
 - `holdfast retention run` needs `retention.cut`;
 - the restore paths in the Restores list are file names, so they need `browse`.

@@ -471,7 +471,7 @@ func (e *env) addHost(fqdn, jobID string, jobArgs ...string) string {
 		Enrollment struct{ Code string } `json:"enrollment"`
 		Warning    string                `json:"warning"`
 	}
-	out := e.cli("host", "add", fqdn)
+	out := e.cli("agent", "add", fqdn)
 	if err := json.Unmarshal(out, &res); err != nil || res.Enrollment.Code == "" {
 		e.t.Fatalf("host add: %v %s", err, out)
 	}
@@ -524,7 +524,7 @@ func (e *env) enrollWithBinary(bin, fqdn, code, server string, extra ...string) 
 	dir := filepath.Join(e.dir, "agent-"+strings.Split(fqdn, ".")[0])
 	must(e.t, os.MkdirAll(dir, 0o700))
 	a := &agentProc{dir: dir, cfgPath: filepath.Join(dir, "agent.yaml")}
-	args := []string{"enroll", "--server", server, "--fqdn", fqdn, "--code", code,
+	args := []string{"enroll", "--server", server, "--name", fqdn, "--code", code,
 		"--config", a.cfgPath, "--state-dir", filepath.Join(dir, "state"), "--credentials-dir", filepath.Join(dir, "credentials"),
 		"--restic", resticBin, "--poll-timeout", "2s", "--tick", "250ms"}
 	if !slices.Contains(extra, "--ca-sha256") {
@@ -580,7 +580,7 @@ type event struct {
 func (e *env) events(fqdn string) []event {
 	e.t.Helper()
 	var evs []event
-	out, err := e.cliErr("host", "events", fqdn)
+	out, err := e.cliErr("agent", "events", fqdn)
 	if err != nil {
 		return nil
 	}
@@ -832,7 +832,7 @@ type problem struct {
 func (e *env) host(fqdn string) hostView {
 	e.t.Helper()
 	var h hostView
-	out, err := e.cliErr("host", "show", fqdn)
+	out, err := e.cliErr("agent", "show", fqdn)
 	if err != nil {
 		return h // the server may be down in some tests
 	}
@@ -844,7 +844,7 @@ func (e *env) host(fqdn string) hostView {
 func (e *env) hostRaw(fqdn string) map[string]any {
 	e.t.Helper()
 	var m map[string]any
-	must(e.t, json.Unmarshal(e.cli("host", "show", fqdn), &m))
+	must(e.t, json.Unmarshal(e.cli("agent", "show", fqdn), &m))
 	return m
 }
 

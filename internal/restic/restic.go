@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strconv"
@@ -223,6 +224,10 @@ type BackupOptions struct {
 	Time     *time.Time // restic --time; the e2e tests use it to inject a clock
 	// LimitUploadKiB is restic's --limit-upload in KiB/s; 0: none.
 	LimitUploadKiB int
+	// StdinCommand, for a PostgreSQL job (decision 055), is run by restic, and what it prints is stored as one file,
+	// StdinFilename: --stdin-from-command. A command that fails makes no snapshot. Paths and Excludes are then unused.
+	StdinCommand  []string
+	StdinFilename string
 }
 
 // BackupResult is restic's JSON summary.
@@ -256,8 +261,13 @@ func (r Runner) Backup(ctx context.Context, o BackupOptions) (BackupResult, erro
 	if o.LimitUploadKiB > 0 {
 		args = append(args, "--limit-upload", strconv.Itoa(o.LimitUploadKiB))
 	}
-	args = append(args, "--")
-	args = append(args, o.Paths...)
+	if len(o.StdinCommand) > 0 {
+		args = append(args, "--stdin-from-command", "--stdin-filename", o.StdinFilename, "--")
+		args = append(args, o.StdinCommand...)
+	} else {
+		args = append(args, "--")
+		args = append(args, o.Paths...)
+	}
 
 	out, err := r.run(ctx, args...)
 	res, perr := parseSummary(out)
@@ -697,6 +707,40 @@ func (r Runner) RestoreWith(ctx context.Context, snapshot string, o RestoreOptio
 		return sum, errors.New("restic restore printed no summary")
 	}
 	return sum, nil
+}
+
+// Dump writes one file of a snapshot to w, as restic dump does: a PostgreSQL dump on its way into pg_restore
+// (decision 055). Nothing is written to disk.
+func (r Runner) Dump(ctx context.Context, snapshot, path string, w io.Writer) error {
+	args := []string{"dump", snapshot, path}
+	for _, o := range r.Options {
+		args = append([]string{"-o", o}, args...)
+	}
+	if r.CACert != "" {
+		args = append([]string{"--cacert", r.CACert}, args...)
+	}
+	if r.TLSClientCert != "" {
+		args = append([]string{"--tls-client-cert", r.TLSClientCert}, args...)
+	}
+	if r.NoLock {
+		args = append([]string{"--no-lock"}, args...)
+	} else if r.RetryLock > 0 {
+		args = append([]string{"--retry-lock", r.RetryLock.String()}, args...)
+	}
+	cmd := exec.CommandContext(ctx, r.bin(), args...)
+	cmd.Env = r.env()
+	cmd.Cancel = func() error { return cmd.Process.Signal(os.Interrupt) }
+	cmd.WaitDelay = time.Minute
+	stderr := &tailBuffer{max: 8192}
+	cmd.Stdout, cmd.Stderr = w, stderr
+	if err := cmd.Run(); err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			return &Error{Code: ee.ExitCode(), Stderr: stderr.String()}
+		}
+		return err
+	}
+	return nil
 }
 
 // SnapshotInfo returns one snapshot.

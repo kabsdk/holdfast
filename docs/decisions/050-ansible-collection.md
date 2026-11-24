@@ -5,7 +5,10 @@ follows best practice and is as simple as possible while keeping all functionali
 **Amended in 0.6.0:** with decision 052 the roles set no dumps (`holdfast_dumps` is gone) and take out of
 `agent.yaml` a `dumps:` that 0.5.0 left there, so of `agent.yaml` they own only the restore limits. And the server and
 agent roles require `holdfast_fqdn`, where the installer reads `hostname -f`: the roles read no host name from the
-machine.
+machine. **Amended by decisions 055 and 056 (2026-11-24):** the agent role requires `holdfast_agent_name` in place of
+`holdfast_fqdn`, and `holdfast_hostname_autodetect` is gone; the server role keeps `holdfast_fqdn`, its DNS name. Of
+`agent.yaml` the agent role owns the restore limits and the PostgreSQL client (`holdfast_postgresql_bin_dir`,
+`holdfast_postgresql_allow_in_place_restore`), and it writes the name as `agent_name:`.
 
 ## Decision
 

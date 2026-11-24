@@ -118,45 +118,51 @@ func (s *Server) Routes() []Route {
 	}
 	return []Route{
 		r("GET", "/api/v1/status", "", s.apiStatus),
-		r("GET", "/api/v1/hosts", "", s.apiHosts),
-		r("POST", "/api/v1/hosts", "", s.apiAddHost),           // config.storage on the new FQDN, in AddHost
-		r("POST", "/api/v1/hosts/import", "", s.apiImportHost), // admin everywhere, in ImportHost
-		r("GET", "/api/v1/hosts/{fqdn}", access.View, s.apiHost),
-		r("DELETE", "/api/v1/hosts/{fqdn}", access.HostRemove, s.apiRemoveHost),
-		r("DELETE", "/api/v1/hosts/{fqdn}/jobs/{job}", access.HostRemove, s.apiRemoveJob),
-		r("GET", "/api/v1/hosts/{fqdn}/events", access.View, s.apiHostEvents),
-		r("GET", "/api/v1/hosts/{fqdn}/days", access.View, s.apiHostDays),
-		r("POST", "/api/v1/hosts/{fqdn}/enrollment-code", access.ConfigStorage, s.apiEnrollmentCode),
-		r("POST", "/api/v1/hosts/{fqdn}/rotate", access.ConfigStorage, s.apiRotate),
-		r("POST", "/api/v1/hosts/{fqdn}/decommission", access.HostDecommission, s.apiDecommission),
-		r("DELETE", "/api/v1/hosts/{fqdn}/decommission", access.HostDecommission, s.apiCancelDecommission),
-		r("GET", "/api/v1/hosts/{fqdn}/rollback", access.RepositoryRollback, s.apiRollbackPreview),
-		r("POST", "/api/v1/hosts/{fqdn}/rollback", access.RepositoryRollback, s.apiRollback),
-		r("GET", "/api/v1/hosts/{fqdn}/rollbacks", access.View, s.apiRollbacks),
-		r("GET", "/api/v1/hosts/{fqdn}/snapshots", access.View, s.apiSnapshots),
-		r("GET", "/api/v1/hosts/{fqdn}/snapshots/{id}/files", access.Browse, s.apiFiles),
-		r("GET", "/api/v1/hosts/{fqdn}/snapshots/{id}/changes", access.Browse, s.apiChanges),
-		r("GET", "/api/v1/hosts/{fqdn}/find", access.Browse, s.apiFind),
-		r("POST", "/api/v1/hosts/{fqdn}/acknowledge", access.Maintenance, s.apiAcknowledge),
-		r("POST", "/api/v1/hosts/{fqdn}/snapshots/{id}/restore", access.RestoreNewDir, s.apiRestore), // in place: in Restore
-		r("POST", "/api/v1/hosts/{fqdn}/snapshots/{id}/restore-pair", access.RestoreNewDir, s.apiRestorePair),
-		r("GET", "/api/v1/hosts/{fqdn}/restore-pair", access.Browse, s.apiRestorePairStatus),
+		r("GET", "/api/v1/agents", "", s.apiHosts),
+		r("POST", "/api/v1/agents", "", s.apiAddHost),           // config.storage on the new FQDN, in AddHost
+		r("POST", "/api/v1/agents/import", "", s.apiImportHost), // admin everywhere, in ImportHost
+		r("GET", "/api/v1/agents/{fqdn}", access.View, s.apiHost),
+		r("DELETE", "/api/v1/agents/{fqdn}", access.HostRemove, s.apiRemoveHost),
+		r("DELETE", "/api/v1/agents/{fqdn}/jobs/{job}", access.HostRemove, s.apiRemoveJob),
+		r("GET", "/api/v1/agents/{fqdn}/events", access.View, s.apiHostEvents),
+		r("GET", "/api/v1/agents/{fqdn}/days", access.View, s.apiHostDays),
+		r("POST", "/api/v1/agents/{fqdn}/enrollment-code", access.ConfigStorage, s.apiEnrollmentCode),
+		r("POST", "/api/v1/agents/{fqdn}/rotate", access.ConfigStorage, s.apiRotate),
+		r("POST", "/api/v1/agents/{fqdn}/decommission", access.HostDecommission, s.apiDecommission),
+		r("DELETE", "/api/v1/agents/{fqdn}/decommission", access.HostDecommission, s.apiCancelDecommission),
+		r("GET", "/api/v1/agents/{fqdn}/rollback", access.RepositoryRollback, s.apiRollbackPreview),
+		r("POST", "/api/v1/agents/{fqdn}/rollback", access.RepositoryRollback, s.apiRollback),
+		r("GET", "/api/v1/agents/{fqdn}/rollbacks", access.View, s.apiRollbacks),
+		r("GET", "/api/v1/agents/{fqdn}/snapshots", access.View, s.apiSnapshots),
+		r("GET", "/api/v1/agents/{fqdn}/snapshots/{id}/files", access.Browse, s.apiFiles),
+		r("GET", "/api/v1/agents/{fqdn}/snapshots/{id}/changes", access.Browse, s.apiChanges),
+		r("GET", "/api/v1/agents/{fqdn}/find", access.Browse, s.apiFind),
+		r("POST", "/api/v1/agents/{fqdn}/acknowledge", access.Maintenance, s.apiAcknowledge),
+		r("POST", "/api/v1/agents/{fqdn}/snapshots/{id}/restore", access.RestoreNewDir, s.apiRestore), // in place: in Restore
+		r("POST", "/api/v1/agents/{fqdn}/snapshots/{id}/restore-pair", access.RestoreNewDir, s.apiRestorePair),
+		r("GET", "/api/v1/agents/{fqdn}/restore-pair", access.Browse, s.apiRestorePairStatus),
 		r("GET", "/api/v1/restores", "", s.apiRestores),
 		r("GET", "/api/v1/search", "", s.apiSearch),
-		r("PUT", "/api/v1/hosts/{fqdn}/jobs/{job}", access.ConfigJobs, s.apiSetJob), // R104: retention.cut, in SetJob
-		r("POST", "/api/v1/hosts/{fqdn}/jobs/{job}/check", access.ConfigJobs, s.apiCheckJob),
-		r("POST", "/api/v1/hosts/{fqdn}/jobs/{job}/keep-longer", access.ConfigJobs, s.apiKeepLonger),
-		r("POST", "/api/v1/hosts/{fqdn}/jobs/{job}/exclude", access.ConfigJobs, s.apiExclude(true)), // off-site (vault.go)
-		r("POST", "/api/v1/hosts/{fqdn}/jobs/{job}/include", access.ConfigJobs, s.apiExclude(false)),
-		r("POST", "/api/v1/hosts/{fqdn}/jobs/{job}/match-primary", access.ConfigJobs, s.apiMatchPrimary), // R104: retention.cut, in SetJob
-		r("POST", "/api/v1/hosts/{fqdn}/jobs/{job}/run", access.BackupRun, s.apiRunNow),
-		r("GET", "/api/v1/hosts/{fqdn}/pending", access.View, s.apiPending),
-		r("POST", "/api/v1/hosts/{fqdn}/retention/run", access.RetentionCut, s.apiRunRetention),
-		r("GET", "/api/v1/hosts/{fqdn}/prune-now", access.RetentionCut, s.apiPruneNowPlan),
-		r("POST", "/api/v1/hosts/{fqdn}/prune-now", access.RetentionCut, s.apiPruneNow),
-		r("POST", "/api/v1/hosts/{fqdn}/snapshots/{id}/delete", access.SnapshotDelete, s.apiDeleteSnapshot),
-		r("DELETE", "/api/v1/hosts/{fqdn}/snapshots/{id}/delete", access.SnapshotDelete, s.apiCancelDeletion),
-		r("GET", "/api/v1/hosts/{fqdn}/prunes", access.View, s.apiPrunes),
+		r("PUT", "/api/v1/agents/{fqdn}/jobs/{job}", access.ConfigJobs, s.apiSetJob), // R104: retention.cut, in SetJob
+		r("POST", "/api/v1/agents/{fqdn}/jobs", access.ConfigJobs, s.apiSetJobs),     // several jobs, one revision
+		// PostgreSQL connections (decision 055): they hold credentials, so setting one is config.storage, an admin's.
+		r("GET", "/api/v1/agents/{fqdn}/postgresql", access.View, s.apiConnections),
+		r("PUT", "/api/v1/agents/{fqdn}/postgresql/{name}", access.ConfigStorage, s.apiSetConnection),
+		r("DELETE", "/api/v1/agents/{fqdn}/postgresql/{name}", access.ConfigStorage, s.apiRemoveConnection),
+		r("POST", "/api/v1/agents/{fqdn}/postgresql/{name}/test", access.ConfigJobs, s.apiTestConnection),
+		r("POST", "/api/v1/agents/{fqdn}/jobs/{job}/check", access.ConfigJobs, s.apiCheckJob),
+		r("POST", "/api/v1/agents/{fqdn}/jobs/{job}/keep-longer", access.ConfigJobs, s.apiKeepLonger),
+		r("POST", "/api/v1/agents/{fqdn}/jobs/{job}/exclude", access.ConfigJobs, s.apiExclude(true)), // off-site (vault.go)
+		r("POST", "/api/v1/agents/{fqdn}/jobs/{job}/include", access.ConfigJobs, s.apiExclude(false)),
+		r("POST", "/api/v1/agents/{fqdn}/jobs/{job}/match-primary", access.ConfigJobs, s.apiMatchPrimary), // R104: retention.cut, in SetJob
+		r("POST", "/api/v1/agents/{fqdn}/jobs/{job}/run", access.BackupRun, s.apiRunNow),
+		r("GET", "/api/v1/agents/{fqdn}/pending", access.View, s.apiPending),
+		r("POST", "/api/v1/agents/{fqdn}/retention/run", access.RetentionCut, s.apiRunRetention),
+		r("GET", "/api/v1/agents/{fqdn}/prune-now", access.RetentionCut, s.apiPruneNowPlan),
+		r("POST", "/api/v1/agents/{fqdn}/prune-now", access.RetentionCut, s.apiPruneNow),
+		r("POST", "/api/v1/agents/{fqdn}/snapshots/{id}/delete", access.SnapshotDelete, s.apiDeleteSnapshot),
+		r("DELETE", "/api/v1/agents/{fqdn}/snapshots/{id}/delete", access.SnapshotDelete, s.apiCancelDeletion),
+		r("GET", "/api/v1/agents/{fqdn}/prunes", access.View, s.apiPrunes),
 		r("GET", "/api/v1/prunes", "", s.apiPrunes),
 		r("GET", "/api/v1/revisions", "", s.apiRevisions),
 		r("GET", "/api/v1/revisions/{n}", "", s.apiRevision),
@@ -170,7 +176,7 @@ func (s *Server) Routes() []Route {
 		r("PUT", "/api/v1/access", "", s.apiSetAccess),               // admin everywhere, in SetAccess
 		r("GET", "/api/v1/sessions", "", s.apiSessions),              // admin everywhere
 		r("DELETE", "/api/v1/sessions/{user}", "", s.apiEndSessions), // admin everywhere
-		r("GET", "/api/v1/hosts/{fqdn}/offsite", access.View, s.apiOffsiteCopies),
+		r("GET", "/api/v1/agents/{fqdn}/offsite", access.View, s.apiOffsiteCopies),
 		r("GET", "/api/v1/exports", "", s.apiExports),
 		r("POST", "/api/v1/exports", "", s.apiExportNow),      // admin everywhere, in ExportNow
 		r("POST", "/api/v1/notify/test", "", s.apiNotifyTest), // admin everywhere, in NotifyTest

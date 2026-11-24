@@ -93,7 +93,7 @@ func snapshotCmd() *cobra.Command {
 
 	var job, month string
 	var all, refresh bool
-	list := &cobra.Command{Use: "list <fqdn>", Short: "A host's snapshots, newest first", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, a []string) error {
+	list := &cobra.Command{Use: "list <agent>", Short: "A host's snapshots, newest first", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, a []string) error {
 		q := url.Values{}
 		if job != "" {
 			q.Set("job", job)
@@ -108,7 +108,7 @@ func snapshotCmd() *cobra.Command {
 			q.Set("refresh", "1")
 		}
 		var rows []snapshotRow
-		raw, err := call("GET", "/api/v1/hosts/"+url.PathEscape(a[0])+"/snapshots?"+q.Encode(), nil, &rows)
+		raw, err := call("GET", "/api/v1/agents/"+url.PathEscape(a[0])+"/snapshots?"+q.Encode(), nil, &rows)
 		if err != nil {
 			return err
 		}
@@ -153,7 +153,7 @@ func snapshotCmd() *cobra.Command {
 	c.AddCommand(list, snapshotDeleteCmd())
 
 	var filesPage int
-	files := &cobra.Command{Use: "files <fqdn> <snapshot> [path]", Short: "One directory of a snapshot: names and metadata", Args: cobra.RangeArgs(2, 3), RunE: func(_ *cobra.Command, a []string) error {
+	files := &cobra.Command{Use: "files <agent> <snapshot> [path]", Short: "One directory of a snapshot: names and metadata", Args: cobra.RangeArgs(2, 3), RunE: func(_ *cobra.Command, a []string) error {
 		q := url.Values{"page": {strconv.Itoa(filesPage)}}
 		if len(a) == 3 {
 			q.Set("path", a[2])
@@ -163,7 +163,7 @@ func snapshotCmd() *cobra.Command {
 			Entries            []node
 			Total, Page, Pages int
 		}
-		raw, err := call("GET", "/api/v1/hosts/"+url.PathEscape(a[0])+"/snapshots/"+url.PathEscape(a[1])+"/files?"+q.Encode(), nil, &p)
+		raw, err := call("GET", "/api/v1/agents/"+url.PathEscape(a[0])+"/snapshots/"+url.PathEscape(a[1])+"/files?"+q.Encode(), nil, &p)
 		if err != nil {
 			return err
 		}
@@ -191,7 +191,7 @@ func snapshotCmd() *cobra.Command {
 
 	var against string
 	var changesPage int
-	changes := &cobra.Command{Use: "changes <fqdn> <snapshot>", Short: "What changed since the previous snapshot of its job, or since --against", Args: cobra.ExactArgs(2), RunE: func(_ *cobra.Command, a []string) error {
+	changes := &cobra.Command{Use: "changes <agent> <snapshot>", Short: "What changed since the previous snapshot of its job, or since --against", Args: cobra.ExactArgs(2), RunE: func(_ *cobra.Command, a []string) error {
 		q := url.Values{"page": {strconv.Itoa(changesPage)}}
 		if against != "" {
 			q.Set("against", against)
@@ -204,7 +204,7 @@ func snapshotCmd() *cobra.Command {
 			TypeChanged                        int `json:"type_changed"`
 			Changes                            []struct{ Path, Modifier string }
 		}
-		raw, err := call("GET", "/api/v1/hosts/"+url.PathEscape(a[0])+"/snapshots/"+url.PathEscape(a[1])+"/changes?"+q.Encode(), nil, &v)
+		raw, err := call("GET", "/api/v1/agents/"+url.PathEscape(a[0])+"/snapshots/"+url.PathEscape(a[1])+"/changes?"+q.Encode(), nil, &v)
 		if err != nil {
 			return err
 		}
@@ -226,14 +226,14 @@ func snapshotCmd() *cobra.Command {
 	changes.Flags().IntVar(&changesPage, "page", 1, "page of 1000 changes")
 	c.AddCommand(changes)
 
-	c.AddCommand(&cobra.Command{Use: "find <fqdn> <pattern>", Short: "Find a file in all of a host's snapshots", Args: cobra.ExactArgs(2), RunE: func(_ *cobra.Command, a []string) error {
+	c.AddCommand(&cobra.Command{Use: "find <agent> <pattern>", Short: "Find a file in all of a host's snapshots", Args: cobra.ExactArgs(2), RunE: func(_ *cobra.Command, a []string) error {
 		var found []struct {
 			ShortID string    `json:"short_id"`
 			Time    time.Time `json:"time"`
 			JobID   string    `json:"job_id"`
 			Matches []node
 		}
-		raw, err := call("GET", "/api/v1/hosts/"+url.PathEscape(a[0])+"/find?"+url.Values{"pattern": {a[1]}}.Encode(), nil, &found)
+		raw, err := call("GET", "/api/v1/agents/"+url.PathEscape(a[0])+"/find?"+url.Values{"pattern": {a[1]}}.Encode(), nil, &found)
 		if err != nil {
 			return err
 		}

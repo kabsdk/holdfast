@@ -1,11 +1,11 @@
 ---
-# The jobs the host lacks, made with holdfast job set as root on the server, which checks each as it would from the UI.
-# A job the host has is left as it is: after it is made, Holdfast's UI and CLI change it, with their checks and revisions.
-# Each job is a mapping of holdfast job set's flags, an underscore for a dash: a list repeats the flag, true gives it
-# alone, false leaves it out.
-- name: Read the host's jobs on the server
+# The jobs the agent lacks, made with holdfast job set as root on the server, which checks each as it would from the UI.
+# A job the agent has is left as it is: after it is made, Holdfast's UI and CLI change it, with their checks and
+# revisions. Each job is a mapping of holdfast job set's flags, an underscore for a dash: a list repeats the flag, true
+# gives it alone, false leaves it out. A PostgreSQL job gives connection and database (or globals: true).
+- name: Read the agent's jobs on the server
   ansible.builtin.command:
-    argv: [holdfast, host, show, "{{ holdfast_fqdn }}", --json]
+    argv: [holdfast, agent, show, "{{ holdfast_agent_name }}", --json]
   delegate_to: "{{ holdfast_server_host }}"
   register: agent_host
   changed_when: false
@@ -13,7 +13,7 @@
 
 - name: Make each job it lacks (holdfast job set)
   ansible.builtin.command:
-    argv: "{{ ['holdfast', 'job', 'set', holdfast_fqdn, item.key, '-m', 'made by Ansible (kabsdk.holdfast.agent)'] + agent_job_flags }}"
+    argv: "{{ ['holdfast', 'job', 'set', holdfast_agent_name, item.key, '-m', 'made by Ansible (kabsdk.holdfast.agent)'] + agent_job_flags }}"
   delegate_to: "{{ holdfast_server_host }}"
   throttle: 1
   changed_when: true

@@ -210,6 +210,12 @@ func followFeed(cur config.Document, feed proto.VaultFeed) (config.Document, []s
 			}
 			primary := fj.Retention
 			j.Paths, j.Excludes, j.Dump, j.Schedule, j.Primary, j.Retired = fj.Paths, fj.Excludes, fj.Dump, fj.Schedule, &primary, false
+			// A PostgreSQL job is copied as it is: its engine and its database (decision 055).
+			j.Engine, j.PostgreSQL = config.EngineRestic, nil
+			if fj.Engine == config.EnginePostgreSQL && fj.PostgreSQL != nil {
+				p := *fj.PostgreSQL
+				j.Engine, j.PostgreSQL = config.EnginePostgreSQL, &p
+			}
 			if !j.OwnRetention {
 				j.Retention = fj.Retention // the same as primary, now and after every change there
 			}

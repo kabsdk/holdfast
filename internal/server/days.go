@@ -34,7 +34,7 @@ type JobDays struct {
 	Days  []DayRuns `json:"days"`
 }
 
-// HostDays is the answer of GET /api/v1/hosts/{fqdn}/days.
+// HostDays is the answer of GET /api/v1/agents/{fqdn}/days.
 type HostDays struct {
 	FQDN string    `json:"fqdn"`
 	Zone string    `json:"zone"`

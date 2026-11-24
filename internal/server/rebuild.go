@@ -30,7 +30,7 @@ import (
 //     encrypted to the escrow's age recipient; with off-site copies, in the off-site bucket too;
 //   - holdfast-server restore-export loads one into a new, empty database (serverd);
 //   - an agent that runs a revision newer than a restored server's head keeps it, and is shown;
-//   - holdfast host import brings back a host the export does not have, from its escrow file.
+//   - holdfast agent import brings back a host the export does not have, from its escrow file.
 
 const (
 	exportAt    = 30 * time.Minute // after midnight in the default zone
@@ -380,7 +380,7 @@ func (s *Server) ImportHost(ctx context.Context, a Actor, in ImportHostInput) (I
 	bad := func(path, format string, args ...any) error {
 		return &ValidationError{config.Problems{{Path: path, Message: fmt.Sprintf(format, args...)}}}
 	}
-	if err := config.ValidFQDN(in.FQDN); err != nil {
+	if err := config.ValidAgentName(in.FQDN); err != nil {
 		return ImportHostResult{}, bad("fqdn", "%v", err)
 	}
 	var f EscrowFile
@@ -403,7 +403,7 @@ func (s *Server) ImportHost(ctx context.Context, a Actor, in ImportHostInput) (I
 		in.Message = "Import host " + in.FQDN + " from its escrow file"
 	}
 	if _, err := s.st.Q().GetHost(ctx, in.FQDN); err == nil {
-		return ImportHostResult{}, fmt.Errorf("Holdfast knows host %s already: holdfast host enroll-code %s gives its agent a new code: %w", in.FQDN, in.FQDN, ErrConflict)
+		return ImportHostResult{}, fmt.Errorf("Holdfast knows host %s already: holdfast agent enroll-code %s gives its agent a new code: %w", in.FQDN, in.FQDN, ErrConflict)
 	} else if !errors.Is(err, store.ErrNotFound) {
 		return ImportHostResult{}, err
 	}

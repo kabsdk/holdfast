@@ -24,7 +24,7 @@ func TestChecks(t *testing.T) {
 	var host struct {
 		Enrollment struct{ Code string } `json:"enrollment"`
 	}
-	must(t, json.Unmarshal(e.cli("host", "add", fqdn), &host))
+	must(t, json.Unmarshal(e.cli("agent", "add", fqdn), &host))
 	type rev struct {
 		Number   int64    `json:"number"`
 		Accepted []string `json:"accepted_codes"`
@@ -92,10 +92,10 @@ func TestChecks(t *testing.T) {
 func TestJobDefaults(t *testing.T) {
 	e := newEnv(t)
 	const fqdn = "def01.example.com"
-	if out, err := e.cliErr("host", "add", fqdn, "--job", "system"); err == nil {
+	if out, err := e.cliErr("agent", "add", fqdn, "--job", "system"); err == nil {
 		t.Fatalf("host add took a job: %s", out)
 	}
-	e.cli("host", "add", fqdn)
+	e.cli("agent", "add", fqdn)
 	e.cli("job", "set", fqdn, "system", "--path", "/etc")
 	type job struct {
 		Paths    []string       `json:"paths"`

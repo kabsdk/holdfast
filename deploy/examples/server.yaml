@@ -57,7 +57,7 @@ maintenance:
   # forgets nothing by itself; holdfast retention run, Prune now and Delete now still work.
   retention: daily
 
-# Each host's repository password, encrypted to this age public key, in escrow/<fqdn>.age in the bucket
+# Each host's repository password, encrypted to this age public key, in escrow/<agent>.age in the bucket
 # (decision 036), and the nightly export of the server's database and files, in meta/<date>.age, which a new server
 # is restored from if this one is lost (decision 040, docs/runbooks/rebuild-holdfast.md). The installer makes the key
 # pair and puts the private key in the recovery file; with your own, put only the public key here and add the private

@@ -17,7 +17,6 @@ import (
 	"math/big"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -88,6 +87,9 @@ type Agent struct {
 
 	// paused is set by a pause command, under mu: no run starts until it ends.
 	paused *proto.Paused
+
+	// pgClientVersion is pg_dump's version in postgresql.bin_dir, once found (decision 055).
+	pgClientVersion string
 
 	wake     chan struct{}
 	flushNow chan struct{}
@@ -346,6 +348,7 @@ func (a *Agent) facts(ctx context.Context) proto.Facts {
 	f.Now = a.now().UTC()
 	bounds := a.cfg.Restore
 	f.RestoreBounds = &bounds
+	f.PostgreSQL = a.pgFacts(ctx)
 	return f
 }
 
@@ -369,9 +372,7 @@ func (a *Agent) readFacts(ctx context.Context) proto.Facts {
 			}
 		}
 	}
-	if out, err := exec.CommandContext(ctx, "hostname", "-f").Output(); err == nil {
-		f.HostnameFQDN = strings.TrimSpace(string(out))
-	}
+	// The machine's hostname is not read: an agent is known by its name and the address it connects from (decision 056).
 	f.Timezone = time.Local.String()
 	if runtime.GOOS != "linux" {
 		f.OSID = runtime.GOOS
@@ -500,7 +501,12 @@ func (a *Agent) applyCredentials(c proto.Credentials) error {
 	}
 	// An agent from before decision 041 kept an S3 key here. No host holds one now.
 	_ = os.Remove(filepath.Join(a.cfg.CredentialsDir, "s3.env"))
-	if err := writeFileAtomic(a.path("credentials.sha256"), []byte(credentialsDigest([]byte(c.RepoPassword))), 0o600); err != nil {
+	// The PostgreSQL connections' passwords (decision 055), root-only, beside it.
+	if err := a.writePGSecrets(c.PostgreSQL); err != nil {
+		return err
+	}
+	digest := credentialsDigest(append([]byte(c.RepoPassword), a.pgSecretsDigest()...))
+	if err := writeFileAtomic(a.path("credentials.sha256"), []byte(digest), 0o600); err != nil {
 		return err
 	}
 	if err := writeFileAtomic(a.path("credentials.version"), []byte(fmt.Sprint(c.Version)), 0o600); err != nil {
@@ -528,7 +534,7 @@ func (a *Agent) verifyCredentials() {
 		return // credentials not received yet, or written by an agent from before this check
 	}
 	pass, err := os.ReadFile(filepath.Join(a.cfg.CredentialsDir, "repo.pass"))
-	if err == nil && credentialsDigest(pass) == strings.TrimSpace(string(want)) {
+	if err == nil && credentialsDigest(append(pass, a.pgSecretsDigest()...)) == strings.TrimSpace(string(want)) {
 		return
 	}
 	a.mu.Lock()
@@ -882,6 +888,8 @@ func (a *Agent) execCommand(ctx context.Context, c proto.Command) {
 		a.runBackup(ctx, *job, c.ID, nil, 0, 0)
 	case proto.CommandCheckNow:
 		a.runCheck(ctx, c.ID)
+	case proto.CommandPGTest:
+		a.runPGTest(ctx, c)
 	case proto.CommandRestore:
 		a.runRestore(ctx, c)
 	case proto.CommandPause:
@@ -1024,6 +1032,21 @@ func (a *Agent) runBackup(ctx context.Context, j proto.JobConfig, commandID stri
 		err = fmt.Errorf("the job names the dump %q, but Holdfast 0.6 runs no command on a host (decision 052): "+
 			"replace it with a paths job that backs up what the command writes", j.Dump)
 	}
+	var detail map[string]string
+	if j.PostgreSQL != nil { // pg_dump or pg_dumpall, streamed into restic: one file, one snapshot (decision 055)
+		var argv []string
+		var file string
+		if argv, file, err = a.pgDumpCommand(j); err == nil {
+			opts = restic.BackupOptions{Host: a.cfg.FQDN, Tags: []string{"job=" + j.ID}, LimitUploadKiB: j.LimitUploadKiB, StdinCommand: argv, StdinFilename: file}
+		}
+		detail = map[string]string{"connection": j.PostgreSQL.Connection, "database": j.PostgreSQL.Database, "file": file}
+		if j.PostgreSQL.Globals {
+			detail["globals"] = "true"
+		}
+		if pf := a.pgFacts(ctx); pf != nil {
+			detail["pg_dump"] = pf.Client
+		}
+	}
 	timeout := a.runTimeout(j.Schedule)
 	rctx, cancel := context.WithTimeout(ctx, timeout)
 	if err == nil {
@@ -1035,9 +1058,12 @@ func (a *Agent) runBackup(ctx context.Context, j proto.JobConfig, commandID stri
 		return false
 	}
 	ev := proto.Event{Kind: proto.KindBackup, JobID: j.ID, CommandID: commandID, ScheduledFor: slot, SpreadDelayS: delay,
-		Started: started, Finished: a.now().UTC(), Revision: rev}
+		Started: started, Finished: a.now().UTC(), Revision: rev, Detail: detail}
 	if retry > 0 {
-		ev.Detail = map[string]string{"retry": fmt.Sprintf("%d of %d", retry, len(RetryAfter))}
+		if ev.Detail == nil {
+			ev.Detail = map[string]string{}
+		}
+		ev.Detail["retry"] = fmt.Sprintf("%d of %d", retry, len(RetryAfter))
 	}
 	switch {
 	case timedOut:

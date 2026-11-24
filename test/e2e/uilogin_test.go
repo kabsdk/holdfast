@@ -92,7 +92,7 @@ func TestScreenshots(t *testing.T) {
 	filesCode := e.addHost(files, "home", "--path", src, "--daily", "03:00")
 	e.cli("job", "set", files, "projects", "--path", "/srv/projects-that-are-gone", testAccept)
 	e.startAgent(files, filesCode)
-	e.cli("host", "add", app)
+	e.cli("agent", "add", app)
 	for _, h := range []string{web, db, files} {
 		e.waitProgress(h, "first_backup_done", 2*time.Minute)
 	}
@@ -123,32 +123,28 @@ func TestScreenshots(t *testing.T) {
 	waitText(t, ctx, "the last backup failed") // files01's failed job, under its host
 	shot("overview")
 
-	open(t, ctx, "#/hosts/"+web)
+	open(t, ctx, "#/agents/"+web)
 	waitText(t, ctx, "Last 14 days")
 	shot("host")
 
-	open(t, ctx, "#/hosts/"+web+"/configure/system")
+	open(t, ctx, "#/agents/"+web+"/configure/system")
 	waitText(t, ctx, "What you get")
 	waitText(t, ctx, "holdfast job set "+web+" system")
 	shot("configure")
 
-	open(t, ctx, "#/hosts/"+web+"/jobs/system")
-	waitText(t, ctx, "What restic keeps")
+	open(t, ctx, "#/agents/"+web+"/jobs/system")
+	waitText(t, ctx, "Restore points")
 	shot("job")
 
-	open(t, ctx, "#/hosts/"+web+"/jobs/system/calendar")
-	waitText(t, ctx, "with a kept snapshot")
-	shot("calendar")
-
-	open(t, ctx, "#/hosts/"+web+"/snapshots/"+snap+"/files?path="+url.QueryEscape(src))
+	open(t, ctx, "#/agents/"+web+"/snapshots/"+snap+"/files?path="+url.QueryEscape(src))
 	waitText(t, ctx, "news.html")
 	shot("snapshot")
 
-	open(t, ctx, "#/hosts/"+web+"/snapshots/"+snap+"/changes")
+	open(t, ctx, "#/agents/"+web+"/snapshots/"+snap+"/changes")
 	waitText(t, ctx, "news.html")
 	shot("changes")
 
-	open(t, ctx, "#/hosts/"+web+"/snapshots/"+snap+"/restore")
+	open(t, ctx, "#/agents/"+web+"/snapshots/"+snap+"/restore")
 	waitText(t, ctx, "Everything in the snapshot")
 	shot("restore")
 
@@ -168,8 +164,8 @@ func TestScreenshots(t *testing.T) {
 	waitText(t, ctx, "Audit log")
 	shot("audit")
 
-	open(t, ctx, "#/add-host")
-	field(t, ctx, "FQDN", "web02.example.com")
+	open(t, ctx, "#/add-agent")
+	field(t, ctx, "Name", "web02")
 	shot("add-host")
 
 	open(t, ctx, "#/settings")

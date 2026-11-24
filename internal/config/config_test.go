@@ -90,15 +90,15 @@ func TestValidate(t *testing.T) {
 	}
 }
 
-func TestFQDNAndJobID(t *testing.T) {
-	for _, ok := range []string{"web01.example.com", "a.b", "x-1.dc1.example.com"} {
-		if err := ValidFQDN(ok); err != nil {
+func TestAgentNameAndJobID(t *testing.T) {
+	for _, ok := range []string{"web01.example.com", "a.b", "x-1.dc1.example.com", "matrix", "k3s-postgres-main", "web01"} {
+		if err := ValidAgentName(ok); err != nil {
 			t.Errorf("%s: %v", ok, err)
 		}
 	}
-	for _, bad := range []string{"", "web01", "Web01.example.com", "web01.example.com.", "-a.example.com", "a_b.example.com", strings.Repeat("a", 64) + ".com"} {
-		if ValidFQDN(bad) == nil {
-			t.Errorf("%q accepted as an FQDN", bad)
+	for _, bad := range []string{"", "Web01.example.com", "web01.example.com.", ".web01", "-a.example.com", "a_b.example.com", "a..b", strings.Repeat("a", 64) + ".com"} {
+		if ValidAgentName(bad) == nil {
+			t.Errorf("%q accepted as an agent's name", bad)
 		}
 	}
 	for _, ok := range []string{"system", "www", "db-dumps", "1"} {

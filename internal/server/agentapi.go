@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -93,6 +94,22 @@ func (s *Server) agentAuth(next http.HandlerFunc) http.HandlerFunc {
 }
 
 func hostOf(r *http.Request) string { return r.Context().Value(hostKey).(string) }
+
+const remoteKey ctxKey = 3
+
+// withRemote carries the address an agent's request came from, without its port: what Holdfast shows of where an
+// agent runs (decision 056).
+func withRemote(ctx context.Context, addr string) context.Context {
+	if h, _, err := net.SplitHostPort(addr); err == nil {
+		addr = h
+	}
+	return context.WithValue(ctx, remoteKey, addr)
+}
+
+func remoteOf(ctx context.Context) string {
+	s, _ := ctx.Value(remoteKey).(string)
+	return s
+}
 
 func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 	var req proto.EnrollRequest
@@ -182,7 +199,7 @@ func (s *Server) handlePoll(w http.ResponseWriter, r *http.Request) {
 	if err != nil || wait < 0 || wait > MaxPollWait {
 		wait = 25 * time.Second
 	}
-	resp, err := s.Poll(r.Context(), hostOf(r), req, wait)
+	resp, err := s.Poll(withRemote(r.Context(), r.RemoteAddr), hostOf(r), req, wait)
 	if err != nil {
 		if r.Context().Err() != nil {
 			return
@@ -211,7 +228,8 @@ func (s *Server) Poll(ctx context.Context, fqdn string, req proto.PollRequest, w
 	if err := q.RecordHeartbeat(ctx, fqdn, store.Heartbeat{AgentVersion: req.Facts.AgentVersion, ResticVersion: req.Facts.ResticVersion,
 		OSID: req.Facts.OSID, OSVersion: req.Facts.OSVersion, HostnameFQDN: req.Facts.HostnameFQDN, Timezone: req.Facts.Timezone,
 		ClockOffsetMS: offset, AppliedRevision: req.Applied.Revision, AppliedSHA256: req.Applied.SHA256, CredentialsVersion: req.CredentialsVersion,
-		RestoreBounds: req.Facts.RestoreBounds, Protocol: req.Facts.Protocol, Paused: req.Paused}, now); err != nil {
+		RestoreBounds: req.Facts.RestoreBounds, Protocol: req.Facts.Protocol, Paused: req.Paused, RemoteAddr: remoteOf(ctx),
+		PostgreSQL: req.Facts.PostgreSQL}, now); err != nil {
 		return proto.PollResponse{}, err
 	}
 	if err := q.AckCommands(ctx, fqdn, req.AckedCommands, now); err != nil {
@@ -279,6 +297,10 @@ func (s *Server) pollAnswer(ctx context.Context, fqdn string, req proto.PollRequ
 			return resp, false, held, err
 		}
 		resp.Credentials = &proto.Credentials{Version: c.Version, RepoPassword: pw}
+		// The passwords of its PostgreSQL connections travel with them, to this agent only (decision 055).
+		if resp.Credentials.PostgreSQL, err = s.pgSecrets(ctx, q, fqdn); err != nil {
+			return resp, false, held, err
+		}
 		changed = true
 	}
 	cmds, err := q.PendingCommands(ctx, fqdn, s.now())
@@ -303,6 +325,14 @@ func (s *Server) pollAnswer(ctx context.Context, fqdn string, req proto.PollRequ
 					if err := json.Unmarshal([]byte(plain), pc.Restore.Source); err != nil {
 						return resp, false, held, fmt.Errorf("restore command %s: %w", c.ID, err)
 					}
+				}
+			}
+			if c.Kind == proto.CommandPGTest && len(c.Payload) > 0 {
+				var p struct {
+					Connection string `json:"connection"`
+				}
+				if err := json.Unmarshal(c.Payload, &p); err == nil {
+					pc.Connection = p.Connection
 				}
 			}
 			if c.Kind == proto.CommandPause && len(c.Payload) > 0 {

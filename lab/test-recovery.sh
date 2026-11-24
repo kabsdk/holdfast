@@ -4,7 +4,7 @@
 #   The bare-metal runbook's first path (docs/runbooks/bare-metal.md), on HF_REBUILD_VM (default: the first agent
 #   named or of the lab): the fidelity snapshot noted; the fixture moved aside to /root/hf-fixture.orig; the agent's
 #   packages removed, and /etc/holdfast and /var/lib/holdfast-agent deleted; the packages installed again from this
-#   build; a new code (holdfast host enroll-code); the agent enrolled with restore.allow_in_place; the noted snapshot
+#   build; a new code (holdfast agent enroll-code); the agent enrolled with restore.allow_in_place; the noted snapshot
 #   restored in place; hf-fidelity compare of the restored fixture with the one moved aside. allow_in_place is set back
 #   to false afterwards.
 # M6's dump test went with dump jobs in 0.6.0 (decision 052).
@@ -62,9 +62,9 @@ if command -v dpkg >/dev/null; then dpkg -i "$d/holdfast-restic_${v}_amd64.deb" 
 else rpm -U "$d/holdfast-restic-$v.x86_64.rpm" "$d/holdfast-agent-$v.x86_64.rpm"; fi
 echo "installed: $(holdfast-agent version)"
 EOF
-	out=$(hf host enroll-code "$fqdn" --json) || { result FAIL "$vm rebuild" "holdfast host enroll-code failed"; return 1; }
+	out=$(hf agent enroll-code "$fqdn" --json) || { result FAIL "$vm rebuild" "holdfast agent enroll-code failed"; return 1; }
 	code=$(js 'print(j["code"])' <<<"$out")
-	if ! vm_ssh "$vm" "read -r code && holdfast-agent enroll --server $server_url --fqdn $fqdn --ca-sha256 $pin --code \"\$code\" &&
+	if ! vm_ssh "$vm" "read -r code && holdfast-agent enroll --server $server_url --name $fqdn --ca-sha256 $pin --code \"\$code\" &&
 		sed -i 's/^\( *\)allow_in_place: false/\1allow_in_place: true/' /etc/holdfast/agent.yaml && grep -q 'allow_in_place: true' /etc/holdfast/agent.yaml &&
 		systemctl enable -q --now holdfast-agent" <<<"$code"; then
 		code=
@@ -73,7 +73,7 @@ EOF
 	fi
 	code=
 	for ((i = 0; i < 60; i++)); do
-		out=$(hf host show "$fqdn" --json 2>/dev/null) && [[ $(js 'a = j.get("agent") or {}
+		out=$(hf agent show "$fqdn" --json 2>/dev/null) && [[ $(js 'a = j.get("agent") or {}
 print(j["state"] == "enrolled" and (a.get("restore_bounds") or {}).get("allow_in_place") is True)' <<<"$out") == True ]] && break
 		sleep 2
 	done

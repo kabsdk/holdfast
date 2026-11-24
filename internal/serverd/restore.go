@@ -215,7 +215,7 @@ func restoreExport(name, defaultConfig string, args []string, out io.Writer) err
 	back := hostsFromEscrow(ctx, out, set, bucket, stores["public"], sealer, maint, ids, hosts)
 	fmt.Fprintln(out, "now start holdfast-server: agents enrolled before the export reconnect by themselves (docs/runbooks/rebuild-holdfast.md)")
 	for _, fqdn := range back {
-		fmt.Fprintf(out, "  %s came back from escrow/: enroll it again (holdfast host enroll-code %s, and the line it prints), and set its jobs\n", fqdn, fqdn)
+		fmt.Fprintf(out, "  %s came back from escrow/: enroll it again (holdfast agent enroll-code %s, and the line it prints), and set its jobs\n", fqdn, fqdn)
 	}
 	return nil
 }
@@ -258,13 +258,13 @@ func restoreFiles(out io.Writer, set server.Settings, cfgPath string, files map[
 }
 
 // hostsFromEscrow brings back each host that has an escrow file in the bucket but is not in the export: one added after
-// it. It is what holdfast host import does, for each: the escrow file decrypted with the recovery
+// it. It is what holdfast agent import does, for each: the escrow file decrypted with the recovery
 // file's age key, checked, and the host added with its repository and password, and no job.
 func hostsFromEscrow(ctx context.Context, out io.Writer, set server.Settings, bucket storage.S3Bucket, st *store.Store, sealer *creds.Sealer,
 	maint storage.Key, ids []age.Identity, known []store.Host) []string {
 	names, err := bucket.ListEscrow(ctx)
 	if err != nil {
-		fmt.Fprintf(out, "could not list escrow/ for hosts added after the export: %v; holdfast host import brings each back\n", err)
+		fmt.Fprintf(out, "could not list escrow/ for hosts added after the export: %v; holdfast agent import brings each back\n", err)
 		return nil
 	}
 	have := map[string]bool{}
@@ -307,7 +307,7 @@ func hostsFromEscrow(ctx context.Context, out io.Writer, set server.Settings, bu
 				Message: "Brought back from escrow/ by restore-export: added after the export"})
 		}
 		if err != nil {
-			fmt.Fprintf(out, "%s has an escrow file but could not be brought back: %v; holdfast host import, once the server runs\n", fqdn, err)
+			fmt.Fprintf(out, "%s has an escrow file but could not be brought back: %v; holdfast agent import, once the server runs\n", fqdn, err)
 			continue
 		}
 		back = append(back, fqdn)

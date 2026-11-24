@@ -81,7 +81,7 @@ print(r[0]["id"] if r else "")' "$snap" <<<"$out")
 	copy[$vm]=$c
 	n=0
 	for ((i = 0; i < 30; i++)); do
-		n=$(hf host show "$fqdn" --json | js 'print((j.get("offsite") or {}).get("copies", 0))')
+		n=$(hf agent show "$fqdn" --json | js 'print((j.get("offsite") or {}).get("copies", 0))')
 		((n > 0)) && break
 		sleep 5
 	done
