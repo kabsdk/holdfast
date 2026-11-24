@@ -30,11 +30,11 @@ func TestLoginAndRoles(t *testing.T) {
 		{"group":"web-team","role":"viewer","hosts":["web01.example.com"]}]`), 0o600))
 	e.cli("access", "set", "--file", bindings, "-m", "web-team sees web01")
 
-	// The browser: an admin sees both hosts; wes, in a fresh browser, only web01.
+	// The browser: an admin sees both hosts on the Overview, which lists all of them; wes, in a fresh browser, only web01.
 	ada := newBrowser(t)
 	uiLogin(t, ada, "ada")
-	run(t, ada, "the fleet", chromedp.Click(`.chip:nth-of-type(2)`, chromedp.ByQuery)) // All hosts
-	if fleet := textOf(t, ada, "main table"); !strings.Contains(fleet, web) || !strings.Contains(fleet, db) {
+	run(t, ada, "the overview", chromedp.WaitVisible(`section.list .hostrow`, chromedp.ByQuery))
+	if fleet := textOf(t, ada, "section.list"); !strings.Contains(fleet, web) || !strings.Contains(fleet, db) {
 		t.Fatalf("ada must see both hosts:\n%s", fleet)
 	}
 	if nav := textOf(t, ada, "nav.side"); !strings.Contains(nav, "Access") {
@@ -42,8 +42,8 @@ func TestLoginAndRoles(t *testing.T) {
 	}
 	wes := newBrowser(t)
 	uiLogin(t, wes, "wes")
-	run(t, wes, "the fleet", chromedp.Click(`.chip:nth-of-type(2)`, chromedp.ByQuery))
-	if fleet := textOf(t, wes, "main table"); !strings.Contains(fleet, web) || strings.Contains(fleet, db) {
+	run(t, wes, "the overview", chromedp.WaitVisible(`section.list .hostrow`, chromedp.ByQuery))
+	if fleet := textOf(t, wes, "section.list"); !strings.Contains(fleet, web) || strings.Contains(fleet, db) {
 		t.Fatalf("wes must see web01 only:\n%s", fleet)
 	}
 	if nav := textOf(t, wes, "nav.side"); strings.Contains(nav, "Access") {
