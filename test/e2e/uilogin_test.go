@@ -149,7 +149,7 @@ func TestScreenshots(t *testing.T) {
 	shot("changes")
 
 	open(t, ctx, "#/hosts/"+web+"/snapshots/"+snap+"/restore")
-	waitText(t, ctx, "3 · Run")
+	waitText(t, ctx, "Everything in the snapshot")
 	shot("restore")
 
 	// A restore done, so the Restores page and the audit log have one to show.

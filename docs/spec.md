@@ -707,11 +707,18 @@ Restore and inspection behave like restic does on the host.
 | Changes | `restic diff --metadata` against the previous snapshot or any older one: what restic's diff shows, and nothing more. That means the changed paths (added, removed, content changed, metadata only, type changed) and their counts. It never shows contents or line diffs, as restic's diff does not. To compare the lines of a file, **Restore both versions to diff on the host** (§5.4) and run the `diff -u` it prints, on the host. |
 | Restore | See §5.4. |
 
+Deleting the snapshot, or its off-site copy, is in the page's ⋯ menu, as a dialog: Delete in 7 days, or an admin's
+Delete now. It is on no tab.
+
 ### 5.4 Restore
 
+The Restore tab is one column: where from (with an off-site copy), what, where to, then the Run bar.
+
 **Selection**
-- Everything is ticked by default. This is an exclusion model: items you untick appear as **Left out**
-  chips.
+- A tree of the snapshot's paths, a folder opened at a time, with a tick each. Everything is ticked by default:
+  what you untick appears as **Left out** chips (restic's `--exclude`). Unticking everything and ticking what you want
+  makes them **Only** chips (`--include`). restic takes one or the other, never both, so a tick that would need both
+  is greyed out.
 
 **Target**, one of:
 - **A new directory** (the default). Only root can read it. The default path is
@@ -759,7 +766,8 @@ host B with `holdfast restore A <snapshot> --to-host B`:
 - A's history and B's both have it.
 
 **From its off-site copy** (§3.7): `holdfast restore <fqdn> <snapshot> --from-offsite`, with the copy's ID or its
-original's (`holdfast offsite copies <fqdn>` lists them):
+original's (`holdfast offsite copies <fqdn>` lists them), or **Restore from: Off-site copy** on the snapshot's Restore
+tab:
 - it runs on the snapshot's own host, into a new or another directory, never in place;
 - it is granted at once, if the copy is still off-site; the host's agent gets the copy's password sealed, once, and
   reads the copy through the gateway's off-site endpoint, read-only and without locks, until it reports the restore.

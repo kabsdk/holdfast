@@ -103,6 +103,7 @@ export const api = {
   offsiteExclude: (f, job, body) => req('POST', `/api/v1/offsite/hosts/${e(f)}/jobs/${e(job)}/exclude`, body),
   offsiteInclude: (f, job, body) => req('POST', `/api/v1/offsite/hosts/${e(f)}/jobs/${e(job)}/include`, body),
   offsiteMatchPrimary: (f, job, body) => req('POST', `/api/v1/offsite/hosts/${e(f)}/jobs/${e(job)}/match-primary`, body),
+  offsiteDeleteSnapshot: (f, id, body) => req('POST', `/api/v1/offsite/hosts/${e(f)}/snapshots/${e(id)}/delete`, body),
   exports: () => req('GET', '/api/v1/exports'),
   exportNow: () => req('POST', '/api/v1/exports'),
   logout: () => req('POST', '/auth/logout'),

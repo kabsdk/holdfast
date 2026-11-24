@@ -293,6 +293,12 @@ func TestOffsite(t *testing.T) {
 	waitText(t, ctx, "Off-site keeps")
 	waitText(t, ctx, "the same as primary")
 	waitText(t, ctx, "Stop copying")
+	// A snapshot with an off-site copy names it, and its Restore tab asks where from.
+	open(t, ctx, "#/hosts/"+fqdn+"/snapshots/"+s6+"/restore")
+	waitText(t, ctx, "Off-site copy "+c6.ID[:8])
+	waitText(t, ctx, "Restore from")
+	clickText(t, ctx, "button", "Off-site copy")
+	waitText(t, ctx, "from the off-site copy into")
 	if errs := errs(); len(errs) > 0 {
 		t.Fatalf("the UI logged errors:\n%s", strings.Join(errs, "\n"))
 	}

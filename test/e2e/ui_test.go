@@ -168,9 +168,26 @@ func TestUIPages(t *testing.T) {
 	waitText(t, ctx, "Restore only this")
 	open(t, ctx, "#/hosts/"+web+"/snapshots/"+snaps[0]+"/changes")
 	waitText(t, ctx, "added")
+	// Restore: a tree of ticks. Unticking a folder leaves it out; the dry run goes through the agent.
 	open(t, ctx, "#/hosts/"+web+"/snapshots/"+snaps[0]+"/restore")
+	waitText(t, ctx, "Everything in the snapshot")
+	run(t, ctx, "untick the snapshot's first path", chromedp.Click(`.tree [role=treeitem] input[type=checkbox]`, chromedp.ByQuery))
+	waitText(t, ctx, "Left out")
+	waitText(t, ctx, "Everything except 1 item")
 	clickText(t, ctx, "button", "Dry run")
 	waitText(t, ctx, "nothing was written")
+
+	// Delete is in the snapshot's ⋯ menu, as a dialog; Keep it closes it and deletes nothing.
+	run(t, ctx, "open the snapshot's menu", chromedp.Click(`button[aria-label="More snapshot actions"]`, chromedp.ByQuery))
+	// The menu opens inside the window, even this narrow one, and its item takes the click.
+	var left float64
+	run(t, ctx, "where the menu opens", chromedp.Evaluate(`document.querySelector('.menu-pop').getBoundingClientRect().left`, &left))
+	if left < 0 {
+		t.Fatalf("the menu opens %v px off the window's left edge", -left)
+	}
+	clickText(t, ctx, "button", "Delete snapshot…")
+	waitText(t, ctx, "Delete in 7 days")
+	clickText(t, ctx, "button", "Keep it")
 
 	// Prune now: the preview, and the button stays off until the short name is typed.
 	open(t, ctx, "#/hosts/"+web+"/prune-now")

@@ -22,6 +22,10 @@ What each release of Holdfast changes. The Ansible collection has its own notes 
   page's **Primary | Off-site** switch with the copies' squares and list and the job's off-site settings. The host
   page's off-site table goes. New problems `offsite_lag` (a job's copies behind by more than twice its longest gap)
   on the host's own page, beside `offsite_copy`, so the server's alerts send them too.
+- Web UI: a snapshot's **Restore** tab is one column ending in the Run bar, and what to restore is a **tree of ticks**
+  (Left out or Only, restic's `--exclude` or `--include`), in place of a box of paths to type. With an off-site copy
+  it asks **Restore from: primary or the off-site copy**. **Delete** moved to the snapshot's ⋯ menu, as a dialog, for
+  the snapshot and for its off-site copy.
 
 ## 0.1.0 (2026-11-24)
 

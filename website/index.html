@@ -554,16 +554,16 @@ holdfast snapshot list web01.example.com</code></pre></div></li>
         <figcaption><strong>Calendar.</strong> Every kept snapshot of a job, a square a day, a block a year, newest first: green where one is kept, dashed where the daily rule should have one and has none, grey where the retention has thinned them out. Hover a day for its snapshot and why it is kept; click it to open it.</figcaption>
       </figure>
       <figure class="shot">
-        <img src="img/snapshot.png" alt="A snapshot's page: its host, job, paths, time and ID; Files, Changes and Restore tabs; a folder's files with size, owner, mode and time, each with a Restore only this button; and below, deleting the snapshot." loading="lazy">
-        <figcaption><strong>A snapshot.</strong> Its files, by name and metadata only, never their contents, each with <strong>Restore only this</strong>. Below, deleting the snapshot, which waits 7 days.</figcaption>
+        <img src="img/snapshot.png" alt="A snapshot's page: its host, job, time, size and paths on one line; Files, Changes and Restore tabs; a folder's files with size, owner, mode and time, each with a Restore only this button." loading="lazy">
+        <figcaption><strong>A snapshot.</strong> Its files, by name and metadata only, never their contents, each with <strong>Restore only this</strong>. Deleting the snapshot, which waits 7 days, is in its <strong>⋯</strong> menu, as a dialog.</figcaption>
       </figure>
       <figure class="shot">
         <img src="img/changes.png" alt="A snapshot's Changes tab: compared with the previous snapshot, one file added, /srv/www/news.html, and two folders whose metadata changed." loading="lazy">
         <figcaption><strong>Changes.</strong> What changed between this snapshot and an older one, from <code>restic diff --metadata</code>: added, removed, content changed and metadata only, by path, never the contents. Here <code>news.html</code> was added.</figcaption>
       </figure>
       <figure class="shot">
-        <img src="img/restore.png" alt="A snapshot's Restore tab: paths to leave out; the target, a new folder under /var/restore, the original location or another folder, the last two not allowed on this host, or another host; a reason for the audit log; and Dry run and Restore the snapshot buttons." loading="lazy">
-        <figcaption><strong>Restore.</strong> Leave paths out if you want, choose the target, and run it, or try a dry run first. A new root-only folder under <code>/var/restore</code> is always allowed; the original location, another folder or another host only where the host's <code>agent.yaml</code> allows it. The restore runs on the host, through its agent, and the repository's password stays there.</figcaption>
+        <img src="img/restore.png" alt="A snapshot's Restore tab, one column: a tree of the snapshot's paths with ticks; the target, a new folder under /var/restore, the original location or another folder, the last two not allowed on this host; and the Run bar with a reason, Dry run and Restore." loading="lazy">
+        <figcaption><strong>Restore.</strong> Untick what to leave out, or untick everything and tick what you want; choose the target, and run it, or try a dry run first. With an off-site copy it asks first whether to restore from primary or the copy. A new root-only folder under <code>/var/restore</code> is always allowed; the original location, another folder or another host only where the host's <code>agent.yaml</code> allows it. The restore runs on the host, through its agent, and the repository's password stays there.</figcaption>
       </figure>
       <figure class="shot">
         <img src="img/restores.png" alt="The Restores page: a host and job picker to start a restore, and the history, with one successful restore of web01's system job into a new folder under /var/restore." loading="lazy">

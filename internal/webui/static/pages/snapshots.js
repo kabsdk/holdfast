@@ -1,5 +1,6 @@
-import { html, useState, useEffect, usePoll, useAction, link, go, fmtTime, fmtDay, bytes, Pill, Snap, can, ErrorBox, Loading } from '../lib.js';
+import { html, useState, useEffect, usePoll, useAction, link, fmtTime, fmtDay, bytes, Pill, can, ErrorBox, Loading, Menu } from '../lib.js';
 import { api } from '../api.js';
+import { Restore, DeleteDialog, EVERYTHING, onlyThis } from './restore.js';
 
 // fate is what happens to a snapshot, in a word or two: kept and why, waiting to be deleted, or gone.
 export function fate(s) {
@@ -107,103 +108,16 @@ function Changes({ fqdn, id, host, older }) {
         <span>page ${ch.data.page} of ${ch.data.pages}</span><button class="small" disabled=${page >= ch.data.pages} onClick=${() => setPage(page + 1)}>Next</button></div>`}`}`;
 }
 
-function Restore({ fqdn, snap, host, only }) {
-  const [leaveOut, setLeaveOut] = useState('');
-  const [target, setTarget] = useState('new');
-  const [dir, setDir] = useState('/srv/recovered');
-  const [overwrite, setOverwrite] = useState('');
-  const [reason, setReason] = useState('');
-  // Onto another host: an admin's. That host reads this one's repository through the gateway, for this
-  // restore only (decision 041).
-  const [toHost, setToHost] = useState('');
-  const act = useAction();
-  const [result, setResult] = useState(null);
-  const bounds = host.agent?.restore_bounds;
-  const isDump = (snap.tags || []).some((t) => t.startsWith('dump='));
-  const elsewhere = toHost.trim() !== '' && toHost.trim() !== fqdn;
-  const body = (dryRun) => ({
-    target, directory: target === 'directory' ? dir : undefined,
-    include: only.length ? only : undefined,
-    exclude: !only.length && leaveOut.trim() ? leaveOut.split('\n').map((x) => x.trim()).filter(Boolean) : undefined,
-    overwrite: target !== 'new' && overwrite ? overwrite : undefined, dry_run: dryRun, message: reason || undefined,
-    ...(elsewhere ? { to_host: toHost.trim() } : {}),
-  });
-  useEffect(() => {
-    if (!act.done || !act.done.command) return;
-    const t = setInterval(async () => {
-      const r = await api.restores().catch(() => null);
-      const ev = r && r.done.find((e) => e.command_id === act.done.command);
-      if (ev) { setResult(ev); clearInterval(t); }
-    }, 2000);
-    return () => clearInterval(t);
-  }, [act.done]);
-  const inPlace = can(host, 'restore.in_place');
-  return html`<div class="grid2"><div>
-    <h3>1 · What to restore</h3>
-    ${only.length ? html`<p>Only <code>${only.join(', ')}</code>. <a href="#" onClick=${(e) => { e.preventDefault(); go(location.hash.slice(1).replace(/\?.*/, '')); location.reload(); }}>Restore everything instead</a></p>`
-      : html`<p class="muted">Everything in the snapshot (paths: <code>${(snap.paths || []).join(' ')}</code>). To leave something out, give its path, one per line:</p>
-        <textarea placeholder="/etc/ssl/private" value=${leaveOut} onInput=${(e) => setLeaveOut(e.target.value)} />`}
-    <h3>2 · Target on ${elsewhere ? toHost : fqdn}</h3>
-    ${isDump && html`<p class="muted">This snapshot was made by a dump job, before 0.6.0: one file, restored into a new directory. Loading it is done on the host.</p>`}
-    <label class="field"><input type="radio" checked=${target === 'new'} onChange=${() => setTarget('new')} /> A new restore directory under ${elsewhere ? 'that host’s restore root' : bounds?.root || '/var/restore'}, made by the agent, root-only (mode 0700). Files keep their owner, mode and ACLs.</label>
-    ${inPlace && !isDump && !elsewhere && html`<label class="field"><input type="radio" checked=${target === 'in_place'} onChange=${() => setTarget('in_place')} disabled=${bounds && !bounds.allow_in_place} />
-      The original location: writes into the live paths. The agent first backs up exactly what it will replace. ${bounds && !bounds.allow_in_place ? html`<span class="muted">(this host does not allow it: restore.allow_in_place in agent.yaml)</span>` : ''}</label>`}
-    ${inPlace && !isDump && html`<label class="field"><input type="radio" checked=${target === 'directory'} onChange=${() => setTarget('directory')} disabled=${!elsewhere && bounds && !bounds.allow_other_directories} />
-      Another directory: <input value=${dir} onInput=${(e) => setDir(e.target.value)} disabled=${target !== 'directory'} />
-      ${!elsewhere && bounds && !bounds.allow_other_directories ? html`<span class="muted"> (this host does not allow it)</span>` : ''}</label>`}
-    ${inPlace && html`<details><summary>Onto another host</summary>
-      <p class="muted">Restore this snapshot on another host, which must allow it (restore.allow_other_hosts in its agent.yaml). That host may read
-        ${fqdn}'s repository through this server for this restore only, and never write to it. Its root learns ${fqdn}'s repository password.</p>
-      <label class="field"><span>Host</span><input value=${toHost} onInput=${(e) => { setToHost(e.target.value); if (target === 'in_place') setTarget('new'); }} placeholder="the other host's FQDN" /></label>
-    </details>`}
-    ${target !== 'new' && html`<label class="field"><span>If a file already exists (restic --overwrite)</span>
-      <select value=${overwrite} onChange=${(e) => setOverwrite(e.target.value)}>
-        <option value="">restic's default</option><option value="always">always replace</option><option value="if-changed">replace only if the content differs</option>
-        <option value="if-newer">replace only if the snapshot's copy is newer</option><option value="never">never replace: add missing files only</option>
-      </select></label>`}
-  </div><div>
-    <h3>3 · Run</h3>
-    <p class="muted">Runs as root on ${fqdn}, through its agent. The repository and its password stay on the host; you never see them.</p>
-    <label class="field"><span>Reason (audit log)</span><input value=${reason} onInput=${(e) => setReason(e.target.value)} placeholder="such as a ticket" /></label>
-    <div class="row">
-      <button disabled=${act.busy} onClick=${() => { setResult(null); act.run(() => api.restore(fqdn, snap.id, body(true))); }}>Dry run</button>
-      <button class=${target === 'in_place' ? 'warn' : 'primary'} disabled=${act.busy} onClick=${() => { setResult(null); act.run(() => api.restore(fqdn, snap.id, body(false))); }}>
-        ${target === 'in_place' ? 'Restore into the live paths' : only.length ? `Restore ${only.length} paths` : 'Restore the snapshot'}</button>
-    </div>
-    <${ErrorBox} error=${act.error} />
-    ${act.done && !result && html`<div class="banner info">Queued; the agent picks it up on its next poll, within 24 hours.</div>`}
-    ${result && html`<div class=${'banner ' + (result.status === 'success' ? 'ok' : 'error')}>
-      ${result.detail?.dry_run === 'true' ? 'Dry run: nothing was written. ' : ''}${result.status}: ${result.detail?.files_restored || 0} of ${result.total_files} files
-      ${result.detail?.directory ? html` into <code>${result.detail.directory}</code>` : ''}${result.detail?.pre_restore ? html`; safety backup <code>${result.detail.pre_restore.slice(0, 8)}</code>` : ''}
-      ${result.error && html`<div>${result.error}</div>`}</div>`}
-  </div></div>`;
-}
-
-function DeleteSnapshot({ fqdn, snap, host, onDone }) {
-  const [confirmText, setConfirm] = useState('');
-  const [reason, setReason] = useState('');
-  const act = useAction();
-  const short = fqdn.split('.')[0];
-  if (!can(host, 'snapshot.delete') || snap.gone_at) return null;
-  return html`<div class="panel"><h3>${snap.deleted_in_primary_at ? 'Delete here too' : 'Delete this snapshot'}</h3>
-    <p class="muted">restic forgets it after 7 days, unless the deletion is cancelled; its space is freed at the next prune, and S3 keeps the old versions until the bucket's lifecycle rule expires them. Delete now skips the 7 days.</p>
-    <label class="field"><span>Why (audit log)</span><input value=${reason} onInput=${(e) => setReason(e.target.value)} /></label>
-    <div class="row">
-      ${snap.deletion_requested_at ? html`<button onClick=${() => act.run(() => api.cancelDeletion(fqdn, snap.id)).then(onDone)}>Cancel the deletion</button>`
-        : html`<button onClick=${() => act.run(() => api.deleteSnapshot(fqdn, snap.id, { message: reason })).then(onDone)}>Delete after 7 days</button>`}
-      <input placeholder=${'type ' + short + ' to Delete now'} value=${confirmText} onInput=${(e) => setConfirm(e.target.value)} />
-      <button class="danger" disabled=${confirmText !== short || act.busy} onClick=${() => act.run(() => api.deleteSnapshot(fqdn, snap.id, { message: reason, now: true, confirm: confirmText })).then(onDone)}>Delete now</button>
-    </div>
-    <${ErrorBox} error=${act.error} />
-    ${act.done && act.done.status === 'pending' && html`<div class="banner warning">Pending: the daily run forgets it from ${fmtTime(act.done.prunable_at)}.</div>`}
-    ${act.done && act.done.status === 'deleting' && html`<div class="banner warning">Deleting now (run ${act.done.run}). Config history lists it.</div>`}
-  </div>`;
-}
-
-export function Snapshot({ fqdn, id, tab, vault }) {
+export function Snapshot({ fqdn, id, tab, vault, hosts }) {
   const all = usePoll(() => api.snapshots(fqdn, { all: true }), [fqdn], 30000);
   const hostPoll = usePoll(() => api.host(fqdn), [fqdn], 0);
-  const [only, setOnly] = useState([]);
+  // With an off-site bucket: the snapshot's copy, for its line here, Restore from it, and deleting it (decision 053).
+  const withOff = !vault && !!hostPoll.data?.offsite;
+  const copies = usePoll(() => (withOff ? api.offsiteCopies(fqdn) : Promise.resolve([])), [fqdn, withOff], 60000);
+  const [sel, setSel] = useState(EVERYTHING);
+  const [dlg, setDlg] = useState(null);
+  const [deleted, setDeleted] = useState(null);
+  const act = useAction();
   if (all.error || hostPoll.error) return html`<${ErrorBox} error=${all.error || hostPoll.error} />`;
   if (!all.data || !hostPoll.data) return html`<${Loading} what="the snapshot" />`;
   // The off-site pages restore nothing themselves: a restore from off-site is asked on the host's own page (decision 039).
@@ -215,17 +129,33 @@ export function Snapshot({ fqdn, id, tab, vault }) {
   const base = link('hosts', fqdn, 'snapshots', snap.id);
   const tabs = [['files', 'Files', 'browse'], ['changes', 'Changes', 'browse'], ['restore', 'Restore', 'restore.new_dir']].filter(([, , p]) => can(host.data, p));
   const t = tab.split('?')[0];
-  return html`<h1>Snapshot <span class="mono">${snap.short_id}</span></h1>
-    ${f.text && html`<div class=${'banner ' + (f.kind || 'info')}>${f.text}</div>`}
-    <dl class="facts"><dt>Host</dt><dd><a href=${link('hosts', fqdn)}>${fqdn}</a></dd><dt>Job</dt><dd>${snap.job_id ? html`<a href=${link('hosts', fqdn, 'jobs', snap.job_id)}>${snap.job_id}</a>` : html`<span class="muted">none: not made by Holdfast</span>`}</dd>
-      <dt>Paths</dt><dd class="mono">${(snap.paths || []).join(' ')}</dd><dt>Taken</dt><dd>${fmtTime(snap.time)}</dd>
-      <dt>Files · size</dt><dd>${snap.total_files ?? '—'} · ${bytes(snap.total_bytes)}</dd><dt>ID</dt><dd class="mono">${snap.id}</dd>
-      ${snap.original && html`<dt>Copied from</dt><dd class="mono">${snap.original} <span class="muted">· in primary</span></dd>`}</dl>
+  const copy = withOff ? (copies.data || []).find((c) => c.original === snap.id) : null;
+  const mayDelete = can(host.data, 'snapshot.delete');
+  return html`
+    <div class="spread">
+      <div style="min-width:0">
+        <h1>Snapshot <span class="mono">${snap.short_id}</span></h1>
+        <p class="muted"><a href=${link('hosts', fqdn)}>${fqdn}</a> · ${snap.job_id ? html`<a href=${link('hosts', fqdn, 'jobs', snap.job_id)}>${snap.job_id}</a>` : 'not made by Holdfast'} · ${fmtTime(snap.time)} · ${snap.total_files ?? '—'} files · ${bytes(snap.total_bytes)} · ${(snap.paths || []).map((p) => html`<code>${p}</code> `)}</p>
+        ${snap.original && html`<p class="muted">A copy of <span class="mono">${snap.original.slice(0, 8)}</span> in primary.</p>`}
+        ${copy && html`<p class="muted">Off-site copy <span class="mono">${copy.id.slice(0, 8)}</span>.</p>`}
+      </div>
+      <${Menu} label="More snapshot actions" items=${[
+        { label: 'Copy the full ID', run: () => { try { navigator.clipboard.writeText(snap.id).catch(() => {}); } catch { /* not allowed here */ } } },
+        !snap.gone_at && mayDelete && !snap.deletion_requested_at && { label: snap.deleted_in_primary_at ? 'Delete here too…' : 'Delete snapshot…', danger: true, run: () => setDlg('p') },
+        copy && mayDelete && { label: 'Delete the off-site copy…', danger: true, run: () => setDlg('o') },
+      ]} />
+    </div>
+    ${f.text && html`<div class=${'banner ' + (f.kind || 'info')}><span>${f.text}</span>
+      ${snap.deletion_requested_at && !snap.gone_at && mayDelete && html` <button class="small" onClick=${() => act.run(() => api.cancelDeletion(fqdn, snap.id)).then(all.reload)}>Cancel the deletion</button>`}</div>`}
+    <${ErrorBox} error=${act.error} />
+    ${deleted && deleted.status === 'pending' && html`<div class="banner warning">Deletion asked: the daily run forgets it from ${fmtTime(deleted.prunable_at)}.</div>`}
+    ${deleted && deleted.status === 'deleting' && html`<div class="banner warning">Deleting now (run ${deleted.run}). Config history lists it.</div>`}
     ${!snap.gone_at && tabs.length > 0 && html`<div class="tabs">${tabs.map(([k, label]) => html`<a class=${t === k ? 'on' : ''} href=${base + '/' + k}>${label}</a>`)}</div>
-      ${t === 'files' && can(host.data, 'browse') && html`<${Files} fqdn=${fqdn} id=${snap.id} host=${host.data} onRestoreOnly=${(p) => { setOnly([p]); go(base.slice(1) + '/restore'); }} />`}
+      ${t === 'files' && can(host.data, 'browse') && html`<${Files} fqdn=${fqdn} id=${snap.id} host=${host.data} onRestoreOnly=${(p) => { setSel(onlyThis(p)); location.hash = base + '/restore'; }} />`}
       ${t === 'changes' && can(host.data, 'browse') && html`<${Changes} fqdn=${fqdn} id=${snap.id} host=${host.data} older=${older} />`}
-      ${t === 'restore' && can(host.data, 'restore.new_dir') && html`<${Restore} fqdn=${fqdn} snap=${snap} host=${host.data} only=${only} />`}`}
+      ${t === 'restore' && can(host.data, 'restore.new_dir') && html`<${Restore} fqdn=${fqdn} snap=${snap} host=${host.data} hosts=${hosts} sel=${sel} setSel=${setSel} copy=${copy} />`}`}
     ${!can(host.data, 'browse') && html`<p class="muted">File names are for editors and admins (decision 033).</p>`}
-    <${DeleteSnapshot} fqdn=${fqdn} snap=${snap} host=${host.data} onDone=${all.reload} />`;
+    ${dlg && html`<${DeleteDialog} fqdn=${fqdn} id=${dlg === 'o' ? copy.id : snap.id} short=${dlg === 'o' ? copy.id.slice(0, 8) : snap.short_id} offsite=${dlg === 'o'} hasCopy=${!!copy}
+      onClose=${() => setDlg(null)} onDone=${(r) => { setDlg(null); setDeleted(r); all.reload(); copies.reload(); }} />`}`;
 }
 

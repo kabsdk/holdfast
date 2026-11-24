@@ -138,6 +138,7 @@ button.link:hover { background: none; text-decoration: underline; }
 
 /* The ⋯ menu of a page's rarer actions. */
 .menu { position: relative; display: inline-flex; }
+.spread > .menu, .spread > .row { margin-left: auto; }
 button.icon { display: inline-flex; align-items: center; justify-content: center; min-width: 2.4rem; padding: .3rem; }
 .menu-pop { position: absolute; right: 0; top: calc(100% + 6px); z-index: 15; width: 250px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
   box-shadow: 0 10px 28px rgba(20,27,43,.16); padding: 6px; display: flex; flex-direction: column; }
@@ -179,6 +180,36 @@ a.slot:hover, a.slot:focus-visible, a.cell:hover, a.cell:focus-visible { outline
 .cal .wl { font-size: 11px; line-height: 13px; color: var(--muted); }
 .cell { display: block; width: 13px; height: 13px; border-radius: 3px; box-sizing: border-box; }
 .c-out { background: transparent; }
+
+/* The Restore tab: one column, from, what, where, then the Run bar; and the delete dialog. */
+.restore { max-width: 880px; display: flex; flex-direction: column; gap: 1rem; }
+.restore .list + .list { margin-top: 0; }
+.step { color: var(--muted); font-weight: 600; margin-right: .4rem; }
+.tree { border-top: 1px solid var(--line); padding: .35rem 0; }
+.tnode { display: flex; align-items: center; gap: .3rem; padding: .2rem 1rem; font-size: 13.5px; }
+.tnode:hover { background: #fafbfc; }
+.tnode label { display: inline-flex; align-items: center; gap: .45rem; cursor: pointer; }
+.tnode label.dis { color: #9aa3b2; cursor: default; }
+.tnode input { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); }
+.fold { display: inline-flex; align-items: center; justify-content: center; width: 1.4rem; height: 1.4rem; padding: 0; border: 0; background: none; color: var(--muted); }
+.restore-chips { padding: .6rem 1rem; border-top: 1px solid var(--line); margin: 0; align-items: center; }
+.chip-x { display: inline-flex; align-items: center; gap: .2rem; padding: .1rem .2rem .1rem .6rem; border-radius: 999px; background: #eef0f4; }
+.chip-x button { border: 0; background: none; padding: 0 .35rem; color: var(--muted); }
+.opts { display: flex; flex-direction: column; gap: .5rem; padding: 0 1rem .9rem; }
+.opt { display: flex; gap: .6rem; align-items: flex-start; padding: .6rem .75rem; border: 1px solid var(--line); border-radius: 8px; cursor: pointer; }
+.opt > span { display: flex; flex-direction: column; gap: .15rem; }
+.opt.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.opt.dis { background: #fafbfc; color: #9aa3b2; cursor: default; }
+.opt input[type=radio] { margin-top: .2rem; accent-color: var(--accent); }
+.warnline { margin: 0 1rem .9rem; color: var(--warn); font-size: 13px; }
+.runbar { padding: .8rem 1rem; display: flex; flex-direction: column; gap: .6rem; }
+.runbar p { margin: 0; }
+button.danger-line { color: var(--err); border-color: var(--err); }
+.scrim { position: fixed; inset: 0; z-index: 50; background: rgba(21,27,43,.45); display: flex; justify-content: center; align-items: flex-start; padding: 12vh 1rem 1rem; }
+.dialog { width: 100%; max-width: 480px; background: var(--panel); border-radius: 12px; box-shadow: 0 20px 50px rgba(20,27,43,.3); padding: 1.2rem; display: flex; flex-direction: column; gap: .7rem; }
+.dialog h2 { margin: 0; font-size: 1.15rem; }
+.dialog p { margin: 0; }
+.dialog details { border-top: 1px solid var(--line); padding-top: .6rem; }
 .offstate { font-size: 13px; }
 .offstate.ok { color: var(--ok); }
 .offstate.error { color: var(--err); }

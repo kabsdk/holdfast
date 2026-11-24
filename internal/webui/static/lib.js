@@ -229,8 +229,11 @@ export function Problem({ p }) {
 export function Menu({ label, items }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
+  const pop = useRef(null);
   useEffect(() => {
     if (!open) return undefined;
+    // A menu that would start off the left edge, on a narrow window, opens rightwards instead.
+    if (pop.current && pop.current.getBoundingClientRect().left < 8) { pop.current.style.left = '0'; pop.current.style.right = 'auto'; }
     const outside = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
     const esc = (e) => { if (e.key === 'Escape') setOpen(false); };
     document.addEventListener('click', outside);
@@ -243,7 +246,7 @@ export function Menu({ label, items }) {
     <button type="button" class="icon" aria-label=${label} aria-haspopup="menu" aria-expanded=${open ? 'true' : 'false'} onClick=${() => setOpen(!open)}>
       <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"></circle><circle cx="12" cy="12" r="1.8"></circle><circle cx="19" cy="12" r="1.8"></circle></svg>
     </button>
-    ${open && html`<div class="menu-pop" role="menu">${list.map((it, i) => it === '-'
+    ${open && html`<div class="menu-pop" role="menu" ref=${pop}>${list.map((it, i) => it === '-'
       ? html`<div key=${i} class="menu-sep" role="separator"></div>`
       : it.href
         ? html`<a key=${i} role="menuitem" class=${'menu-item' + (it.danger ? ' danger' : '')} href=${it.href} onClick=${() => setOpen(false)}>
