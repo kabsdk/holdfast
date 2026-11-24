@@ -904,18 +904,25 @@ host.
 - **Into a new database** beside the original (`holdfast restore <agent> <snapshot> --to-database`), named `<database>-restore-<YYYYMMDD>-<HHMM>` from the dump's time in the server's zone, cut to 63
   bytes. The snapshot list gives each such snapshot that name beforehand (`restore_database`), so every client shows
   the name the restore uses. It needs `restore.new_dir`, as a new directory does: it writes nothing that exists. The
-  restore user creates it, owned by the original database's owner, and `pg_restore --single-transaction
-  --exit-on-error` loads the dump into it. When the original database is gone, its roles may be gone too: the copy and
-  everything in it belong to the restore user, without the dump's owners and grants (`--no-owner --no-acl`). If the
-  load fails, the new database is left as it is, for an admin to drop.
+  restore user creates it, owned by the original database's owner, and loads the dump into it (below). When the
+  original database is gone, its roles may be gone too: the copy and everything in it belong to the restore user,
+  without the dump's owners and grants (`--no-owner --no-acl`). If the load fails, the new database is left as it is,
+  for an admin to drop.
 - **In place**, over the database it came from: an admin's (`restore.in_place`), who types the database's name
   (`--in-place --confirm <database>`), and only where the agent's `agent.yaml` has
   `postgresql.allow_in_place_restore: true`. The agent first dumps the database as it is, into a snapshot of the job
-  tagged `pre-restore=<restore>`; if that fails, nothing is restored. Then `pg_restore --clean --if-exists
-  --single-transaction --exit-on-error` loads the dump: if anything fails, nothing changed. What the dump holds is
-  replaced; tables made after the dump stay. A database that is gone is made again.
+  tagged `pre-restore=<restore>`; if that fails, nothing is restored. Then it loads the dump with `--clean --if-exists`:
+  if anything fails, nothing changed. What the dump holds is replaced; tables made after the dump stay. A database
+  that is gone is made again.
 - **As the dump file**, into a new directory (the default) or another one, as any file is restored. The
   roles and globals restore this way only: Holdfast never creates roles.
+
+Loading a dump streams it from restic through `pg_restore`, which writes it as SQL, into `psql --single-transaction`
+with `ON_ERROR_STOP`, as the restore user: one transaction, stopping at the first error, nothing written to disk.
+`psql` commits only once `pg_restore` has finished well. The agent's client is often newer than the server (one
+client for every server it backs up, P001), and pg_restore's own session settings may be ones an older server does
+not know: the agent leaves those out, such as `transaction_timeout` on a server older than PostgreSQL 17. A dry run
+reads the dump with `pg_restore --list` and writes nothing.
 
 The dump streams from restic into pg_restore, through no file on disk, and pg_restore waits at most 5 minutes for a
 lock. A restore never names another database, never runs on another agent (`--to-host`), and from an off-site copy is

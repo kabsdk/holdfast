@@ -45,11 +45,14 @@ type pgServer struct {
 }
 
 // startPostgres runs a PostgreSQL 18 server for one test, as the user postgres, on loopback and a socket of its own.
-func startPostgres(t *testing.T) *pgServer {
+func startPostgres(t *testing.T) *pgServer { return startPostgresFrom(t, pgBin18) }
+
+// startPostgresFrom runs the PostgreSQL server in bin, such as PostgreSQL 16's.
+func startPostgresFrom(t *testing.T, bin string) *pgServer {
 	t.Helper()
 	requireRoot(t)
-	if _, err := os.Stat(filepath.Join(pgBin18, "postgres")); err != nil {
-		t.Skip("needs PostgreSQL 18's server in " + pgBin18 + " (test/e2e/Dockerfile installs it)")
+	if _, err := os.Stat(filepath.Join(bin, "postgres")); err != nil {
+		t.Skip("needs PostgreSQL's server in " + bin + " (test/e2e/Dockerfile installs it)")
 	}
 	u, err := user.Lookup("postgres")
 	must(t, err)
@@ -79,7 +82,7 @@ func startPostgres(t *testing.T) *pgServer {
 		must(t, os.Chown(dst, uid, gid))
 	}
 
-	p.asPostgres(t, filepath.Join(pgBin18, "initdb"), "-D", p.data, "-U", "postgres", "--auth-local=peer", "--auth-host=scram-sha-256",
+	p.asPostgres(t, filepath.Join(bin, "initdb"), "-D", p.data, "-U", "postgres", "--auth-local=peer", "--auth-host=scram-sha-256",
 		"--encoding=UTF8", "--locale=C.UTF-8")
 	conf := fmt.Sprintf("listen_addresses = '127.0.0.1'\nport = %d\nunix_socket_directories = '%s'\nssl = on\nssl_cert_file = '%s'\nssl_key_file = '%s'\n",
 		p.port, p.sock, filepath.Join(dir, "server.crt"), filepath.Join(dir, "server.key"))
@@ -94,13 +97,13 @@ func startPostgres(t *testing.T) *pgServer {
 	for _, n := range []string{"pg_hba.conf", "pg_ident.conf"} {
 		must(t, os.Chown(filepath.Join(p.data, n), uid, gid))
 	}
-	p.asPostgres(t, filepath.Join(pgBin18, "pg_ctl"), "-D", p.data, "-l", filepath.Join(dir, "server.log"), "-w", "start")
+	p.asPostgres(t, filepath.Join(bin, "pg_ctl"), "-D", p.data, "-l", filepath.Join(dir, "server.log"), "-w", "start")
 	t.Cleanup(func() {
 		if t.Failed() {
 			b, _ := os.ReadFile(filepath.Join(dir, "server.log"))
 			t.Logf("==== postgresql ====\n%s", tail(string(b), 6000))
 		}
-		cmd := exec.Command(filepath.Join(pgBin18, "pg_ctl"), "-D", p.data, "-m", "immediate", "stop")
+		cmd := exec.Command(filepath.Join(bin, "pg_ctl"), "-D", p.data, "-m", "immediate", "stop")
 		cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: p.uid, Gid: p.gid}}
 		_ = cmd.Run()
 		_ = os.RemoveAll(dir)
@@ -579,6 +582,68 @@ SELECT setval('shop.customer_id_seq', 7000);`)
 	}
 	if !slices.ContainsFunc(e.host(old).Problems, func(p problem) bool { return p.Code == "P001" }) {
 		t.Fatalf("the agent must show P001: %+v", e.host(old).Problems)
+	}
+}
+
+// TestPostgreSQLOlderServer (decision 055): the agent's client is newer than the server, as a pod with PostgreSQL 18's
+// client that backs up a PostgreSQL 16 cluster. Its dumps restore there, into a new database and in place, the same as
+// the original: pg_restore's SQL leaves out the settings PostgreSQL 16 does not know (transaction_timeout, new in 17),
+// which pg_restore straight into the database sends, failing the load (found in the lab).
+func TestPostgreSQLOlderServer(t *testing.T) {
+	pg := startPostgresFrom(t, pgBin16)
+	if v := pg.sql(t, "postgres", "SHOW server_version_num"); !strings.HasPrefix(v, "16") {
+		t.Fatalf("not PostgreSQL 16: %s", v)
+	}
+	pg.sql(t, "postgres", `CREATE ROLE app NOLOGIN;
+CREATE ROLE holdfast_backup LOGIN IN ROLE pg_read_all_data;
+CREATE ROLE holdfast_restore LOGIN CREATEDB IN ROLE app;
+CREATE DATABASE app OWNER app;`)
+	pg.sql(t, "app", `SET ROLE app;
+CREATE TABLE items (id int PRIMARY KEY, name text NOT NULL, data jsonb);
+INSERT INTO items SELECT g, 'item ' || g, jsonb_build_object('n', g) FROM generate_series(1, 2000) g;
+CREATE VIEW big AS SELECT * FROM items WHERE id > 1000;`)
+	original := pg.dump(t, "app")
+
+	e := newEnv(t)
+	const name = "pg-old"
+	a := e.enrollAgent(name, e.addAgent(name))
+	setPostgreSQL(t, a, pgBin18, true, filepath.Join(t.TempDir(), "restore"))
+	e.runAgent(a)
+	e.cli("agent", "connection", "set", name, "main", "--url", fmt.Sprintf("postgresql:///?host=%s&port=%d", pg.sock, pg.port),
+		"--user", "holdfast_backup", "--no-password", "--restore-user", "holdfast_restore")
+	if r := e.pgTest(name, "main").LastTest.Result; !strings.HasPrefix(r.ServerVersion, "16.") || !strings.HasPrefix(r.Client, "18.") {
+		t.Fatalf("the test of PostgreSQL 16 with pg_dump 18: %+v", r)
+	}
+	e.cli("job", "set", name, "app", "--connection", "main", "--database", "app", testAccept)
+	if ev := e.runJob(name, "app"); ev.Status != "success" {
+		t.Fatalf("backup: %+v", ev)
+	}
+	var snap string
+	waitFor(t, "the snapshot in the catalogue", time.Minute, func() bool {
+		if s := e.snapshotsOf(name, "app"); len(s) > 0 {
+			snap = s[0].ShortID
+		}
+		return snap != ""
+	})
+	restore := func(args ...string) restoreResult {
+		t.Helper()
+		var ev restoreResult
+		must(t, json.Unmarshal(e.cli(append([]string{"restore", name}, append(args, "--wait")...)...), &ev))
+		return ev
+	}
+	ev := restore(snap, "--to-database", "-m", "e2e: into PostgreSQL 16")
+	if ev.Status != "success" || ev.Detail["tables"] != "1" {
+		t.Fatalf("restore into a new database on PostgreSQL 16: %+v", ev)
+	}
+	if got := pg.dump(t, ev.Detail["database"]); got != original {
+		t.Fatalf("the restored database differs from the original:\n%s", firstDiff(original, got))
+	}
+	pg.sql(t, "app", "DELETE FROM items WHERE id > 10; DROP VIEW big;")
+	if ev := restore(snap, "--in-place", "--confirm", "app", "-m", "e2e: in place on PostgreSQL 16"); ev.Status != "success" {
+		t.Fatalf("restore in place on PostgreSQL 16: %+v", ev)
+	}
+	if got := pg.dump(t, "app"); got != original {
+		t.Fatalf("the database restored in place differs from the original:\n%s", firstDiff(original, got))
 	}
 }
 

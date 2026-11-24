@@ -32,10 +32,16 @@ and amends [decision 052](052-holdfast-runs-no-commands-on-hosts.md). Built in 0
     owned by the original's owner. It writes nothing that exists, so it needs `restore.new_dir`, as a new folder does;
   - in place, over the database it came from: an admin's (`restore.in_place`), who types the database's name, and only
     where the agent's `agent.yaml` allows it. The agent first dumps the database as it is, into a snapshot tagged
-    `pre-restore`, then runs `pg_restore --clean --if-exists --single-transaction --exit-on-error`: if anything
-    fails, nothing changed. Tables made after the dump stay. A database that is gone is made again;
+    `pre-restore`, then loads the dump with `--clean --if-exists` in one transaction: if anything fails, nothing
+    changed. Tables made after the dump stay. A database that is gone is made again;
   - as the dump file, into a new folder, as any file is restored. Roles and globals restore this way only: Holdfast
     never creates roles.
+
+  A load is `pg_restore` writing the dump as SQL into `psql --single-transaction` with `ON_ERROR_STOP`, not
+  `pg_restore` straight into the database. One client restores into every server it backs up, and a newer
+  pg_restore sends session settings an older server rejects (`SET transaction_timeout`, PostgreSQL 17's, fails every
+  restore into 16): the agent leaves those out of the SQL. Found in the lab, restoring into a PostgreSQL 16 cluster with
+  PostgreSQL 18's client.
 
   Never into another database by name, never onto another agent, and never in place from an off-site copy.
 - **Checks** (spec §4.5): P001, the agent's pg_dump is older than the server (error); P003, the database was not on

@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -366,6 +367,13 @@ func (a *Agent) runPGRestore(ctx context.Context, cmd proto.Command, r restic.Ru
 	if noOwner {
 		ev.Detail["no_owner"] = "true"
 	}
+	// The server's version: pg_restore's SQL leaves out what an older server does not know.
+	serverNum := 0
+	if rows, err := a.psql(ctx, spec.Connection, c, pgRestoreUser, "postgres", "SELECT current_setting('server_version_num')"); err != nil {
+		return fmt.Errorf("connecting as %s: %v", c.RestoreUser, err)
+	} else if len(rows) == 1 && len(rows[0]) == 1 {
+		serverNum, _ = strconv.Atoi(rows[0][0])
+	}
 	if cmd.Restore.DryRun {
 		// The dump must be one pg_restore reads: its table of contents, read through the pipe, writes nothing.
 		if err := a.pgPipe(ctx, r, sn, spec, c, pgRestoreArgs{list: true}); err != nil {
@@ -387,7 +395,7 @@ func (a *Agent) runPGRestore(ctx context.Context, cmd proto.Command, r restic.Ru
 		}
 	}
 	ev.Detail["owner"] = owner
-	if err := a.pgPipe(ctx, r, sn, spec, c, pgRestoreArgs{db: target, clean: spec.InPlace && targetExists, noOwner: noOwner}); err != nil {
+	if err := a.pgPipe(ctx, r, sn, spec, c, pgRestoreArgs{db: target, clean: spec.InPlace && targetExists, noOwner: noOwner, serverNum: serverNum}); err != nil {
 		if !targetExists {
 			return fmt.Errorf("%v; database %s was made for this restore and is left as it is, empty or partly loaded: drop it, or restore again under another name", err, target)
 		}
@@ -401,27 +409,25 @@ func (a *Agent) runPGRestore(ctx context.Context, cmd proto.Command, r restic.Ru
 }
 
 type pgRestoreArgs struct {
-	list    bool   // pg_restore --list: read the dump, write nothing
-	db      string // the database to load into
-	clean   bool   // in place: drop and make again what the dump holds, in the one transaction
-	noOwner bool   // the original is gone: no owners or grants from the dump, whose roles may be gone too
+	list      bool   // pg_restore --list: read the dump, write nothing
+	db        string // the database to load into
+	clean     bool   // in place: drop and make again what the dump holds, in the one transaction
+	noOwner   bool   // the original is gone: no owners or grants from the dump, whose roles may be gone too
+	serverNum int    // the server's version, such as 160003: what the client says that an older server does not know is left out
 }
 
-// pgPipe streams the dump out of restic into pg_restore: nothing is written to disk.
+// pgPipe streams the dump out of restic into PostgreSQL: nothing is written to disk. For a dry run pg_restore reads the
+// dump's table of contents (--list). To load it, pg_restore writes the dump as SQL and psql runs that in one
+// transaction, stopping at the first error. That works on a server older than the client too: pg_restore's own session
+// settings that the server does not know, such as transaction_timeout before PostgreSQL 17, are left out. pg_restore
+// straight into the database sends them, and the load fails at once.
 func (a *Agent) pgPipe(ctx context.Context, r restic.Runner, sn restic.Snapshot, spec *proto.PGRestore, c proto.PGConnection, o pgRestoreArgs) error {
-	pass, err := a.pgPassFile(spec.Connection, pgRestoreUser, c.RestoreUser)
-	if err != nil {
-		return err
-	}
-	args := []string{"--no-password", "--username=" + c.RestoreUser}
-	if o.list {
-		args = []string{"--list"}
-	} else {
-		u, err := pgURL(c.URL, o.db)
-		if err != nil {
-			return err
-		}
-		args = append(args, "--dbname="+u, "--single-transaction", "--exit-on-error")
+	bin := a.cfg.PostgreSQL.BinDir
+	cctx, cancel := context.WithTimeout(ctx, restoreTimeout)
+	defer cancel()
+	args := []string{"--list"}
+	if !o.list {
+		args = []string{"--file=-"}
 		if o.clean {
 			args = append(args, "--clean", "--if-exists")
 		}
@@ -429,40 +435,124 @@ func (a *Agent) pgPipe(ctx context.Context, r restic.Runner, sn restic.Snapshot,
 			args = append(args, "--no-owner", "--no-acl")
 		}
 	}
-	cctx, cancel := context.WithTimeout(ctx, restoreTimeout)
-	defer cancel()
-	cmd := exec.CommandContext(cctx, filepath.Join(a.cfg.PostgreSQL.BinDir, "pg_restore"), args...)
-	// A lock an application holds waits at most 5 minutes; then the transaction fails, and nothing changed.
-	cmd.Env = a.pgEnv(pass, "PGOPTIONS=-c lock_timeout=300000")
+	restore := exec.CommandContext(cctx, filepath.Join(bin, "pg_restore"), args...)
+	restore.Env = a.pgEnv("")
 	pr, pw := io.Pipe()
-	cmd.Stdin = pr
-	stderr := &tailBufferAgent{max: 8192}
-	cmd.Stdout, cmd.Stderr = io.Discard, stderr
-	if err := cmd.Start(); err != nil {
+	restore.Stdin = pr
+	restoreErr := &tailBufferAgent{max: 8192}
+	restore.Stderr = restoreErr
+
+	// The SQL goes to psql, as the restore user, in one transaction. A lock an application holds waits at most 5
+	// minutes; then the transaction fails, and nothing changed.
+	var load *exec.Cmd
+	var sql io.ReadCloser
+	var loadIn io.WriteCloser
+	loadErr := &tailBufferAgent{max: 8192}
+	if o.list {
+		restore.Stdout = io.Discard
+	} else {
+		pass, err := a.pgPassFile(spec.Connection, pgRestoreUser, c.RestoreUser)
+		if err != nil {
+			return err
+		}
+		u, err := pgURL(c.URL, o.db)
+		if err != nil {
+			return err
+		}
+		if sql, err = restore.StdoutPipe(); err != nil {
+			return err
+		}
+		load = exec.Command(filepath.Join(bin, "psql"), "-X", "-q", "-v", "ON_ERROR_STOP=1", "--single-transaction", "--no-password",
+			"--username="+c.RestoreUser, "--dbname="+u, "--file=-")
+		load.Env = a.pgEnv(pass, "PGOPTIONS=-c lock_timeout=300000")
+		load.Stdout, load.Stderr = io.Discard, loadErr
+		if loadIn, err = load.StdinPipe(); err != nil {
+			return err
+		}
+		if err := load.Start(); err != nil {
+			return err
+		}
+	}
+	if err := restore.Start(); err != nil {
+		if load != nil {
+			_ = load.Process.Kill()
+			_ = load.Wait()
+		}
 		return err
+	}
+
+	// The SQL is copied to psql. psql commits only once pg_restore has finished well: if pg_restore fails, psql is
+	// stopped first, so a dump read only partly never commits. If psql stops (an error), pg_restore's output is closed.
+	copied := make(chan bool, 1) // whether psql stopped reading
+	if sql != nil {
+		go func() {
+			werr := pgCopySQL(loadIn, sql, o.serverNum)
+			if werr != nil {
+				_ = sql.Close()
+			}
+			copied <- werr != nil
+		}()
+	} else {
+		copied <- false
 	}
 	// pg_restore may finish before the dump does: --list reads only the table of contents. Then nothing reads the pipe
 	// any more, and restic's writes must fail rather than wait.
 	waited := make(chan error, 1)
+	var loadGone bool
 	go func() {
-		err := cmd.Wait()
+		loadGone = <-copied
+		err := restore.Wait()
 		_ = pr.CloseWithError(errPGRestoreExited)
+		if load != nil {
+			if err == nil {
+				_ = loadIn.Close() // the end of the SQL: psql commits
+			} else {
+				_ = load.Process.Kill() // no COMMIT: the server rolls the transaction back
+			}
+		}
 		waited <- err
 	}()
 	dumpErr := r.Dump(cctx, sn.ID, "/"+spec.File, pw)
 	_ = pw.CloseWithError(dumpErr)
-	waitErr := <-waited
-	switch {
-	case waitErr != nil:
-		msg := strings.TrimSpace(stderr.String())
-		if msg == "" {
-			msg = waitErr.Error()
+	restoreWaitErr := <-waited
+	var loadWaitErr error
+	if load != nil {
+		loadWaitErr = load.Wait()
+	}
+	tail := func(b *tailBufferAgent, err error) string {
+		if msg := strings.TrimSpace(b.String()); msg != "" {
+			return msg
 		}
-		return fmt.Errorf("pg_restore: %s", msg)
+		return err.Error()
+	}
+	switch {
+	case loadGone && loadWaitErr != nil:
+		return fmt.Errorf("loading the dump: %s", tail(loadErr, loadWaitErr))
+	case restoreWaitErr != nil:
+		return fmt.Errorf("pg_restore: %s", tail(restoreErr, restoreWaitErr))
+	case loadWaitErr != nil:
+		return fmt.Errorf("loading the dump: %s", tail(loadErr, loadWaitErr))
 	case dumpErr != nil && !o.list:
 		return fmt.Errorf("reading the dump from the repository: %v", dumpErr)
 	}
 	return nil
+}
+
+// pgCopySQL copies pg_restore's SQL to psql, line by line, leaving out the session settings a server older than
+// PostgreSQL 17 does not know. It returns the error of a write: psql stopped reading.
+func pgCopySQL(dst io.Writer, src io.Reader, serverNum int) error {
+	br := bufio.NewReaderSize(src, 1<<20)
+	for {
+		line, rerr := br.ReadBytes('\n')
+		if len(line) > 0 && !(serverNum > 0 && serverNum < 170000 && bytes.Equal(bytes.TrimSpace(line), []byte("SET transaction_timeout = 0;"))) {
+			if _, err := dst.Write(line); err != nil {
+				return err
+			}
+		}
+		if rerr != nil {
+			return nil
+		}
+	}
 }
 
 // errPGRestoreExited is what restic's writes into the pipe get once pg_restore has exited.

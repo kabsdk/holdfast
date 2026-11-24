@@ -26,7 +26,8 @@ replaces it under the same name and tag, `v0.1-dev`, and installs as an upgrade 
   once. `holdfast job set <agent> --connection c --database a --database b` makes a job each. A dump restores into
   a new database beside the original, in place by an admin where the agent allows it (after a safety dump, in one
   transaction), or as a file; a dump whose database and roles are gone restores into a new database owned by the
-  restore user, and so does one whose job was removed since. The checks P001, P003, P004 and P005, and the problem `postgresql`. Agent protocol 5.
+  restore user, and so does one whose job was removed since. A dump loads into a server older than the agent's client
+  too, such as PostgreSQL 16 with PostgreSQL 18's client. The checks P001, P003, P004 and P005, and the problem `postgresql`. Agent protocol 5.
 - **The agent's container image**, `ghcr.io/kabsdk/holdfast-agent`, with restic and PostgreSQL 18's client, backs up
   a PostgreSQL server in Kubernetes from a pod.
 - **holdfast**: the CLI, with every action the web UI has.
@@ -48,4 +49,4 @@ replaces it under the same name and tag, `v0.1-dev`, and installs as an upgrade 
   Ansible collection `kabsdk.holdfast`, whose agent role sets the PostgreSQL client in `agent.yaml`.
 - The documentation, at [kabsdk.github.io/holdfast](https://kabsdk.github.io/holdfast/).
 - Tested with restic 0.19.1, with PostgreSQL 16 and 17 as the server's database, and PostgreSQL jobs against
-  PostgreSQL 18 with its own client and with the older client 16 (P001).
+  PostgreSQL 18 with its own client and with the older client 16 (P001), and against PostgreSQL 16 with client 18.
