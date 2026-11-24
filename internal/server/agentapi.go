@@ -281,7 +281,7 @@ func (s *Server) pollAnswer(ctx context.Context, fqdn string, req proto.PollRequ
 		resp.Credentials = &proto.Credentials{Version: c.Version, RepoPassword: pw}
 		changed = true
 	}
-	cmds, err := q.PendingCommands(ctx, fqdn)
+	cmds, err := q.PendingCommands(ctx, fqdn, s.now())
 	if err != nil {
 		return resp, false, held, err
 	}
