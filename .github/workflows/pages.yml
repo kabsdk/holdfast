@@ -1,4 +1,8 @@
 # Publishes the documentation, website/, to GitHub Pages: https://kabsdk.github.io/holdfast/
+#
+# Two jobs, as actions/deploy-pages recommends: build uploads the site, and deploy starts only once that upload is
+# complete. With both steps in one job, deploy-pages at times found no artifact ("No artifacts named github-pages
+# were found for this workflow run") although the upload had succeeded.
 name: Pages
 
 on:
@@ -9,23 +13,29 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
   group: pages
   cancel-in-progress: false
 
 jobs:
-  deploy:
+  build:
     runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: website
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/upload-pages-artifact@v4
-        with:
-          path: website
       - id: deploy
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
