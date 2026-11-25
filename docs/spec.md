@@ -406,6 +406,8 @@ disappeared (§3.6).
     browsed. Adding the same name again brings it back, with its repository, after a new enrollment. Its agent was
     stopped on purpose, so `/metrics` drops it (the `holdfast_agent_*` series and its repository check's time), and
     `HoldfastAgentOffline` and `HoldfastMaintenanceStale` do not fire for it; its repository's metrics stay.
+    `holdfast agent list` and `agent show` give its status as `retired`, with the date its repository is deleted
+    while a decommission waits, and `decommissioned` after it, never `agent offline`.
   - A PostgreSQL connection is removed only when no job uses it, and its passwords go with it.
 - Deleting data is a separate **decommission** action:
   - only for a removed (retired) host, only by an admin (`host.decommission`), who types the agent's name:
