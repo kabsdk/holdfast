@@ -62,8 +62,16 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	gauge("holdfast_agent_restic_pinned", "1 if the agent runs the restic Holdfast is tested with (decision 032).")
 	gauge("holdfast_agent_protocol", "The agent protocol the agent last reported; 0 from an agent before M5, which speaks 1.")
 	gauge("holdfast_agent_too_old", "1 if the agent speaks an older protocol than this server accepts: it gets no config changes until it is upgraded.")
+	// A retired host's agent was stopped on purpose (spec §3.5): nothing is said about it, so no alert fires for an agent
+	// that is meant to be silent. Its repository's own metrics below stay.
+	retired := map[string]bool{}
 	for _, h := range hosts {
-		if h.Agent == nil {
+		if h.State == "retired" {
+			retired[h.FQDN] = true
+		}
+	}
+	for _, h := range hosts {
+		if h.Agent == nil || retired[h.FQDN] {
 			continue
 		}
 		a := h.Agent
@@ -125,7 +133,9 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		gauge("holdfast_maintenance_last_success_timestamp_seconds", "When the agent's repository check last succeeded.")
 		names := make([]string, 0, len(last))
 		for f := range last {
-			names = append(names, f)
+			if !retired[f] { // its agent runs the check, and a retired host has none
+				names = append(names, f)
+			}
 		}
 		sort.Strings(names)
 		for _, f := range names {

@@ -2,7 +2,10 @@ package server
 
 import (
 	"context"
+	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/kabsdk/holdfast/internal/proto"
 )
@@ -47,6 +50,25 @@ func TestRemoveJobAndHost(t *testing.T) {
 	}
 	pw := first.Credentials.RepoPassword
 	running := proto.PollRequest{Applied: proto.Applied{Revision: first.Config.Revision, SHA256: first.Config.SHA256}, CredentialsVersion: first.Credentials.Version}
+	metrics := func() string {
+		rr := httptest.NewRecorder()
+		s.AgentHandler().ServeHTTP(rr, httptest.NewRequest("GET", "/metrics", nil))
+		return rr.Body.String()
+	}
+	now := time.Now().UTC()
+	if _, err := s.Events(ctx, fqdn, []proto.Event{{ID: "check-1", Kind: proto.KindCheck, Status: proto.StatusSuccess, Started: now, Finished: now}}); err != nil {
+		t.Fatal(err)
+	}
+	agentSeries := []string{
+		`holdfast_agent_last_seen_timestamp_seconds{host="web01.example.com"}`,
+		`holdfast_agent_config_in_sync{host="web01.example.com"}`,
+		`holdfast_maintenance_last_success_timestamp_seconds{host="web01.example.com",kind="check"}`,
+	}
+	for _, want := range agentSeries {
+		if !strings.Contains(metrics(), want) {
+			t.Fatalf("an enrolled host's metrics lack %s", want)
+		}
+	}
 	if _, err := s.RemoveHost(ctx, root, fqdn, RemoveInput{Message: "decommissioned rack 4"}); err != nil {
 		t.Fatal(err)
 	}
@@ -69,6 +91,17 @@ func TestRemoveJobAndHost(t *testing.T) {
 	}
 	if _, err := q.AgentByCertificate(ctx, certOf(fqdn)); err == nil {
 		t.Fatal("a retired host's agent certificate must stop working")
+	}
+	// Its agent was stopped on purpose: the metrics say nothing about it, so HoldfastAgentOffline and
+	// HoldfastMaintenanceStale do not fire for it. The host itself is still there, retired.
+	m := metrics()
+	for _, gone := range agentSeries {
+		if strings.Contains(m, gone) {
+			t.Errorf("a retired host's metrics still have %s", gone)
+		}
+	}
+	if !strings.Contains(m, `holdfast_host_state{host="web01.example.com",state="retired"} 1`) {
+		t.Error("a retired host's state must stay in the metrics")
 	}
 
 	// Adding it again brings it back, with the same repository password.

@@ -403,7 +403,9 @@ disappeared (§3.6).
     PostgreSQL job's dumps still restore into a database, as they did: the server takes the job, its connection and
     database, from the newest revision that had it, and the snapshot list carries them (`postgresql`).
   - A removed host is retired: its agent's certificate stops working, and its repository stays and can still be
-    browsed. Adding the same name again brings it back, with its repository, after a new enrollment.
+    browsed. Adding the same name again brings it back, with its repository, after a new enrollment. Its agent was
+    stopped on purpose, so `/metrics` drops it (the `holdfast_agent_*` series and its repository check's time), and
+    `HoldfastAgentOffline` and `HoldfastMaintenanceStale` do not fire for it; its repository's metrics stay.
   - A PostgreSQL connection is removed only when no job uses it, and its passwords go with it.
 - Deleting data is a separate **decommission** action:
   - only for a removed (retired) host, only by an admin (`host.decommission`), who types the agent's name:
