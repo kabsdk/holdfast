@@ -41,6 +41,11 @@ VMs with Ceph.
 
 CI runs the unit tests, the end-to-end suite, the installer's test and the collection's test on every pull request.
 
+`main` is protected (the repository's ruleset `main`, which nobody bypasses): a change lands only through a pull
+request whose three CI checks pass on a branch up to date with `main`, merged by rebase or squash, so the history stays
+linear. Nothing is pushed to `main` directly, and it is never force-pushed or deleted. Merge one pull request at a
+time: the next one is brought up to date and tested again before it can merge.
+
 ## A pull request
 
 - **Tests.** Every feature comes with end-to-end tests against real restic and S3, in `test/e2e`.
