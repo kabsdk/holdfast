@@ -223,6 +223,13 @@ type hostView struct {
 
 func hostStatus(h hostView) string {
 	switch {
+	// A retired host's agent was stopped on purpose (spec §3.5): not "offline".
+	case h.State == "retired" && h.Decommission != nil && h.Decommission.DoneAt != nil:
+		return "decommissioned"
+	case h.State == "retired" && h.Decommission != nil:
+		return "retired, deleted on " + h.Decommission.DueAt.Local().Format("2006-01-02")
+	case h.State == "retired":
+		return "retired"
 	case h.State == "awaiting_enrollment":
 		return "waiting for agent"
 	case !h.Online:

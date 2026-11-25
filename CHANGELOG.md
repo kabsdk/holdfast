@@ -11,7 +11,8 @@ replaces it under the same name and tag, `v0.1-dev`, and installs as an upgrade 
 - **holdfast-server**: config revisions in PostgreSQL, enrollment, the HTTP API, the web UI, the gateway through which
   hosts back up without an S3 key, maintenance under the 7-day protection, the storage witness, alerts by mail,
   webhook and heartbeat, Prometheus metrics, and the nightly export. A removed host's agent, stopped on purpose,
-  is left out of the metrics, so it raises no `HoldfastAgentOffline` or `HoldfastMaintenanceStale`.
+  is left out of the metrics, so it raises no `HoldfastAgentOffline` or `HoldfastMaintenanceStale`, and `holdfast
+  agent list` shows it as retired, not offline.
 - **holdfast-agent**: runs restic on each host on its own schedule, through the server's gateway; restores on the
   host; and keeps its events until the server is back. Holdfast runs no command a person defines on a host: an
   export of anything but PostgreSQL is the host's own job, on its own timer, and a Holdfast job backs up its files
