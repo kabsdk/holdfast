@@ -13,8 +13,8 @@ type Rollback struct {
 	To                time.Time  `json:"to"`
 	RequestedAt       time.Time  `json:"requested_at"`
 	FinishedAt        *time.Time `json:"finished_at,omitempty"`
-	Status            string     `json:"status"` // running, success or failed
-	AgentDown         bool       `json:"agent_down"`
+	Status            string     `json:"status"`     // running, success or failed
+	AgentDown         bool       `json:"agent_down"` // the agent was not paused: down, or too old to pause; the gateway held its writes
 	Message           string     `json:"message,omitempty"`
 	BroughtBack       int        `json:"brought_back"`
 	SetAside          int        `json:"set_aside"`

@@ -400,6 +400,16 @@ func TestUIPages(t *testing.T) {
 		t.Fatal("Prune now must stay disabled until the short name is typed")
 	}
 
+	// Roll back: what was deleted or overwritten, to bring back; no time to type (decision 058).
+	open(t, ctx, "#/agents/"+web+"/rollback")
+	waitText(t, ctx, "Rollbacks of this repository")
+	waitText(t, ctx, "holdfast agent rollback "+web)
+	var timeFields int
+	run(t, ctx, "the rollback page's fields", chromedp.Evaluate(`document.querySelectorAll('input[type=datetime-local], input[type=date]').length`, &timeFields))
+	if timeFields != 0 {
+		t.Fatal("the rollback page asks for a time; it lists what to bring back")
+	}
+
 	// Add agent, with no S3 key (decision 041): the enrollment code and the install command. Its name need not be an
 	// FQDN (decision 056).
 	const added = "app07"

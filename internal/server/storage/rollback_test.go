@@ -75,3 +75,37 @@ func TestPlanRollback(t *testing.T) {
 		t.Fatalf("undoing the rollback: back %+v, aside %+v", undo.BringBack, undo.SetAside)
 	}
 }
+
+// Changes lists what was deleted or overwritten after a time: a delete marker over a version, or a version over
+// another; a version over a delete marker, such as one a rollback brought back, is no loss, and locks/ is left out.
+func TestChanges(t *testing.T) {
+	const p = "repos/web01.example.com/"
+	t0 := time.Date(2026, 11, 20, 0, 0, 0, 0, time.UTC)
+	at := func(h int) time.Time { return t0.Add(time.Duration(h) * time.Hour) }
+	v := func(key string, h int, marker bool) ObjectVersion {
+		return ObjectVersion{Key: p + key, LastModified: at(h), IsDeleteMarker: marker}
+	}
+	versions := []ObjectVersion{
+		v("snapshots/aaaa", 1, false), v("snapshots/aaaa", 5, true), // deleted at 5
+		v("data/00/0001", 1, false), v("data/00/0001", 5, true), v("data/00/0001", 9, false), // deleted, then brought back
+		v("index/i1", 1, false), v("index/i1", 7, false), // overwritten at 7
+		v("snapshots/bbbb", 0, false), v("snapshots/bbbb", 2, true), // deleted at 2: before since
+		v("locks/l1", 1, false), v("locks/l1", 3, true), // a lock: left out
+		v("holdfast-probe-0a1b2c", 4, false), v("holdfast-probe-0a1b2c", 4, true), // the storage test's probe: left out
+		v("config", 0, false),
+	}
+	got := Changes(p, versions, at(3))
+	want := []Change{
+		{Key: p + "data/00/0001", Kind: "data", At: at(5)},
+		{Key: p + "snapshots/aaaa", Kind: "snapshots", At: at(5)},
+		{Key: p + "index/i1", Kind: "index", At: at(7), Overwritten: true},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("changes: %+v, want %+v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("change %d: %+v, want %+v", i, got[i], want[i])
+		}
+	}
+}

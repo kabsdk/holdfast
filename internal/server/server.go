@@ -18,6 +18,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/kabsdk/holdfast/internal/access"
@@ -54,6 +55,7 @@ type Server struct {
 	refresher catalogueRefresher
 	maintBusy busyHosts   // one forget-or-prune at a time per host
 	repoLock  repoLocks   // a vault's copy, or a forget-or-prune: never both at once
+	frozen    sync.Map    // the hosts whose repositories are rolled back: the gateway refuses their writes
 	oidc      oidcClient  // the server's side of the OIDC provider (decision 034)
 	links     loginLinks  // root's one-time links into the UI
 	notes     notifyState // the server's own alerts
@@ -138,6 +140,9 @@ func New(set Settings, d Deps) (*Server, error) {
 // read it under a grant, for a restore onto it (decision 041).
 func (s *Server) gatewayAccess(ctx context.Context, host, repo string) gateway.Access {
 	if host == repo {
+		if _, ok := s.frozen.Load(repo); ok {
+			return gateway.Frozen // a rollback runs (decision 058)
+		}
 		return gateway.Own
 	}
 	if ok, err := s.st.Q().HasGrant(ctx, host, repo, store.SitePrimary, s.now()); err == nil && ok {

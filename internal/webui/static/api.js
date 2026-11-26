@@ -61,6 +61,7 @@ export const api = {
   rotate: (f, body) => req('POST', `/api/v1/agents/${e(f)}/rotate`, body),
   decommission: (f, body) => req('POST', `/api/v1/agents/${e(f)}/decommission`, body),
   cancelDecommission: (f, body) => req('DELETE', `/api/v1/agents/${e(f)}/decommission`, body),
+  rollbackPoints: (f) => req('GET', `/api/v1/agents/${e(f)}/rollback`),
   rollbackPreview: (f, to) => req('GET', `/api/v1/agents/${e(f)}/rollback${q({ to })}`),
   rollback: (f, body) => req('POST', `/api/v1/agents/${e(f)}/rollback`, body),
   rollbacks: (f) => req('GET', `/api/v1/agents/${e(f)}/rollbacks`),

@@ -1630,7 +1630,7 @@ holdfast whoami                         <span class="c"># who you are and what y
         <tr><td>agent connection set|list|test|remove</td><td>An agent's PostgreSQL connections; <code>set</code> and <code>remove</code> are an admin's (<a href="#postgresql">PostgreSQL</a>).</td></tr>
         <tr><td>agent rotate</td><td>Admin. After a compromise: a new repository password, the agent's certificate unpinned, a new code.</td></tr>
         <tr><td>agent acknowledge</td><td>Admin. Clear the red alerts for changes made outside Holdfast, after looking into them.</td></tr>
-        <tr><td>agent rollback|rollbacks</td><td>Admin. Roll a repository back to a time, from S3's old versions; list past rollbacks.</td></tr>
+        <tr><td>agent rollback|rollbacks</td><td>Admin. Without <code>--to</code>, what was deleted or overwritten, to bring back; with it, roll a repository back to that time, from S3's old versions; list past rollbacks.</td></tr>
         <tr><td>agent decommission</td><td>Admin. Delete a removed agent's repository after 7 days.</td></tr>
         <tr><td>agent import</td><td>Admin. Add an agent back from its decrypted escrow file, for one that a rebuild did not bring back by itself.</td></tr>
         <tr><td>job set|check|run|remove|keep-longer</td><td>Jobs (<a href="#jobs">Jobs and schedules</a>), and PostgreSQL jobs with <code>--connection</code>, <code>--database</code> and <code>--globals</code>.</td></tr>
@@ -1797,9 +1797,11 @@ holdfast agent acknowledge web01.example.com</code></pre></div></li>
   <div class="sub" id="rollback">
     <h3>Rolling a repository back</h3>
     <p>For a repository damaged or emptied behind Holdfast's back, or after a mistaken Prune now. A rollback copies each object's version of a past time over today's, from S3's old versions, and puts a delete marker in front of each object that was not there then. <strong>No version is deleted</strong>, so a rollback can itself be rolled back.</p>
-    <div class="cmd"><pre><code>holdfast agent rollback web01.example.com --to "2026-11-20 03:00"                         <span class="c"># shows what changes</span>
-holdfast agent rollback web01.example.com --to "2026-11-20 03:00" --confirm web01.example.com --wait</code></pre></div>
-    <p>The preview lists the objects brought back and set aside, and the snapshots that come back. The host's agent is paused while it runs; then <code>restic check</code> runs and the agent resumes. It is refused for a time before the host's last password rotation, or older than the lifecycle rule's days. Admin only; the "disappeared" alert in the UI links to it.</p>
+    <p>It starts from what was deleted or overwritten: each moment, newest first, with what went and who did it, one of Holdfast's runs or not Holdfast. Bringing one back rolls back to just before it; bringing back an older one also undoes the newer ones, and sets aside the backups made since.</p>
+    <div class="cmd"><pre><code>holdfast agent rollback web01.example.com                                              <span class="c"># what was deleted or overwritten, each with its --to</span>
+holdfast agent rollback web01.example.com --to 2026-11-20T02:59:59Z                    <span class="c"># shows what changes</span>
+holdfast agent rollback web01.example.com --to 2026-11-20T02:59:59Z --confirm web01.example.com --wait</code></pre></div>
+    <p>The preview lists the objects brought back and set aside, and the snapshots that come back. While it runs, the server's gateway refuses the agent's writes, whether the agent is online or not, and an online agent is paused too; then <code>restic check</code> runs and the agent resumes. It is refused for a time before the host's last password rotation, or older than the lifecycle rule's days. Admin only. In the UI, an agent's <strong>⋯ → Roll back…</strong> lists the same, and <strong>Bring back…</strong> shows the preview; the "disappeared" alert links to it.</p>
   </div>
 
   <div class="sub" id="decommission">

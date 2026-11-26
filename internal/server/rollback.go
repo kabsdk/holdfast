@@ -52,27 +52,15 @@ type RollbackPreview struct {
 
 // RollbackPreviewFor works out a rollback of fqdn's repository to to, without changing anything.
 func (s *Server) RollbackPreviewFor(ctx context.Context, fqdn string, to time.Time) (RollbackPreview, error) {
-	h, err := s.st.Q().GetHost(ctx, fqdn)
+	h, w, err := s.rollbackWindow(ctx, fqdn)
 	if err != nil {
-		return RollbackPreview{}, fmt.Errorf("host %s: %w", fqdn, err)
+		return RollbackPreview{}, err
 	}
 	now := s.now()
 	p := RollbackPreview{FQDN: fqdn, To: to.UTC(), Confirm: fqdn, BringBack: map[string]int{}, SetAside: map[string]int{},
 		SnapshotsBack: []string{}, SnapshotsSetAside: []string{}, ForgottenBefore: []string{}, SnapshotDeletions: []time.Time{}}
-	days := 0
-	if h.Storage != nil {
-		days = h.Storage.NoncurrentDays
-	}
-	if days > 0 {
-		p.Oldest = now.AddDate(0, 0, -days).UTC()
-	}
-	if last, err := s.st.Q().ListAuditFiltered(ctx, store.AuditFilter{FQDN: fqdn, Action: "host.rotated", Limit: 1}); err == nil && len(last) > 0 {
-		at := last[0].At
-		p.LastRotation = &at
-		if at.After(p.Oldest) {
-			p.Oldest = at.UTC()
-		}
-	}
+	days := w.days
+	p.Oldest, p.LastRotation = w.oldest, w.lastRotation
 	switch {
 	case decommissioned(h):
 		p.Refused = "the host was decommissioned: its repository is deleted"
@@ -128,9 +116,7 @@ func (s *Server) RollbackPreviewFor(ctx context.Context, fqdn string, to time.Ti
 type RollbackInput struct {
 	To      time.Time `json:"to"`
 	Confirm string    `json:"confirm"` // the FQDN, typed
-	// AgentDown says the host is down, so its agent cannot be paused: only for an agent that is offline.
-	AgentDown bool   `json:"agent_down,omitempty"`
-	Message   string `json:"message,omitempty"`
+	Message string    `json:"message,omitempty"`
 }
 
 // Rollback starts a rollback of fqdn's repository, in the background, and returns its record.
@@ -156,24 +142,16 @@ func (s *Server) Rollback(ctx context.Context, a Actor, fqdn string, in Rollback
 	if err != nil {
 		return store.Rollback{}, err
 	}
-	// The agent backs up on its own, so it is paused first, unless the host is removed or down.
-	pause := h.State == "enrolled"
-	if pause {
+	// The gateway refuses the agent's writes while it runs, online or not, so nothing can write into the repository
+	// meanwhile (decision 058). An online agent is paused too, so it does not log failed backups; an offline one, or
+	// one too old to pause, meets the gateway.
+	pause := false
+	if h.State == "enrolled" {
 		ag, err := q.GetAgent(ctx, fqdn)
 		online := err == nil && ag.LastSeenAt != nil && s.now().Sub(*ag.LastSeenAt) < OfflineAfter
-		switch {
-		case in.AgentDown && online:
-			return store.Rollback{}, &ValidationError{config.Problems{{Path: "agent_down", Message: "the agent is online, so it is paused instead"}}}
-		case in.AgentDown:
-			pause = false
-		case !online:
-			return store.Rollback{}, &ValidationError{config.Problems{{Path: "agent_down", Message: "the agent is offline, so it cannot be paused: " +
-				"if the host is down, say so (agent_down), and make sure it stays down until the rollback is done"}}}
-		case (proto.Facts{Protocol: ag.Protocol}).AgentProtocol() < proto.ProtocolRecovery:
-			return store.Rollback{}, fmt.Errorf("%s's agent cannot be paused: upgrade holdfast-agent first: %w", fqdn, ErrConflict)
-		}
+		pause = online && (proto.Facts{Protocol: ag.Protocol}).AgentProtocol() >= proto.ProtocolRecovery
 	}
-	r := store.Rollback{FQDN: fqdn, Actor: a.Name, To: p.To, RequestedAt: s.now(), Status: "running", AgentDown: in.AgentDown, Message: in.Message}
+	r := store.Rollback{FQDN: fqdn, Actor: a.Name, To: p.To, RequestedAt: s.now(), Status: "running", AgentDown: !pause, Message: in.Message}
 	err = s.st.InTx(ctx, func(q *store.Q) error {
 		id, err := q.StartRollback(ctx, r)
 		if err != nil {
@@ -182,7 +160,7 @@ func (s *Server) Rollback(ctx context.Context, a Actor, fqdn string, in Rollback
 		r.ID = id
 		return q.Audit(ctx, store.AuditEntry{Actor: a.Name, Source: a.Source, Action: "repository.rollback_started", FQDN: fqdn,
 			Detail: map[string]any{"rollback": id, "to": p.To, "bring_back": len(p.plan.BringBack), "set_aside": len(p.plan.SetAside),
-				"snapshots_back": p.SnapshotsBack, "snapshots_set_aside": p.SnapshotsSetAside, "agent_down": in.AgentDown, "message": in.Message}})
+				"snapshots_back": p.SnapshotsBack, "snapshots_set_aside": p.SnapshotsSetAside, "agent_paused": pause, "message": in.Message}})
 	})
 	if err != nil {
 		return store.Rollback{}, err
@@ -218,6 +196,8 @@ func (s *Server) runRollback(r store.Rollback, pause bool) {
 	lock := s.repoLock.get(r.FQDN) // in a vault, a copy that runs finishes first
 	lock.Lock()
 	defer lock.Unlock()
+	s.frozen.Store(r.FQDN, true)
+	defer s.frozen.Delete(r.FQDN)
 
 	if pause {
 		id, err := s.pauseAgent(ctx, r.FQDN, r.Actor)
@@ -331,6 +311,16 @@ func (s *Server) resumeAgent(ctx context.Context, fqdn, actor, pauseID string) {
 /* ---------------- API ---------------- */
 
 func (s *Server) apiRollbackPreview(w http.ResponseWriter, r *http.Request) {
+	// Without a time, what can be rolled back to: the moments something was deleted or overwritten.
+	if r.URL.Query().Get("to") == "" {
+		pts, err := s.RollbackPointsFor(r.Context(), r.PathValue("fqdn"))
+		if err != nil {
+			apiError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, pts)
+		return
+	}
 	to, err := time.Parse(time.RFC3339, r.URL.Query().Get("to"))
 	if err != nil {
 		apiError(w, &ValidationError{config.Problems{{Path: "to", Message: "give the time as RFC 3339, such as 2026-11-20T03:00:00Z"}}})

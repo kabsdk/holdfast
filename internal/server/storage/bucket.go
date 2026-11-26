@@ -104,13 +104,13 @@ func SnapshotIDs(steps []RollbackStep) []string {
 // PlanRollback works out, from a prefix's versions, what rolling it back to to changes. For each object it takes
 // the version current at that time, and compares it with today's: one there then and gone or different now comes
 // back; one there now and not then is set aside. locks/ is left alone: restic's locks are not part of the
-// repository's state.
+// repository's state, nor are the storage test's probes.
 func PlanRollback(prefix string, versions []ObjectVersion, to time.Time) RollbackPlan {
 	plan := RollbackPlan{To: to, BringBack: []RollbackStep{}, SetAside: []RollbackStep{}, Deletions: []time.Time{}}
 	byKey := map[string][]ObjectVersion{}
 	for _, v := range versions {
 		rel := strings.TrimPrefix(v.Key, prefix)
-		if strings.HasPrefix(rel, "locks/") {
+		if notState(rel) {
 			continue
 		}
 		byKey[v.Key] = append(byKey[v.Key], v)
@@ -152,6 +152,56 @@ func PlanRollback(prefix string, versions []ObjectVersion, to time.Time) Rollbac
 	}
 	sort.Slice(plan.Deletions, func(i, j int) bool { return plan.Deletions[i].Before(plan.Deletions[j]) })
 	return plan
+}
+
+// Change is one object deleted or overwritten in a prefix: what a rollback can undo, from the version before it.
+type Change struct {
+	Key         string    `json:"key"`
+	Kind        string    `json:"kind"` // data, index, snapshots, keys, config, or other
+	At          time.Time `json:"at"`
+	Overwritten bool      `json:"overwritten,omitempty"` // a new version over one that was there; else deleted
+}
+
+// Changes lists, from a prefix's versions, each object deleted (a delete marker over a version) or overwritten (a
+// version over another) after since, oldest first. A version over a delete marker is no loss, such as a rollback
+// bringing an object back, and locks/ and the storage test's probes are left out, as in PlanRollback. restic never overwrites a file of its own, so
+// an overwrite is never restic's.
+func Changes(prefix string, versions []ObjectVersion, since time.Time) []Change {
+	byKey := map[string][]ObjectVersion{}
+	for _, v := range versions {
+		if notState(strings.TrimPrefix(v.Key, prefix)) {
+			continue
+		}
+		byKey[v.Key] = append(byKey[v.Key], v)
+	}
+	out := []Change{}
+	for k, vs := range byKey {
+		sort.Slice(vs, func(i, j int) bool { return vs[i].LastModified.Before(vs[j].LastModified) })
+		kind := kindOf(strings.TrimPrefix(k, prefix))
+		for i := 1; i < len(vs); i++ {
+			if vs[i-1].IsDeleteMarker || !vs[i].LastModified.After(since) {
+				continue
+			}
+			out = append(out, Change{Key: k, Kind: kind, At: vs[i].LastModified, Overwritten: !vs[i].IsDeleteMarker})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].At.Equal(out[j].At) {
+			return out[i].At.Before(out[j].At)
+		}
+		return out[i].Key < out[j].Key
+	})
+	return out
+}
+
+// ProbePrefix begins the names of the storage test's probe objects, which it writes and deletes again: restic
+// ignores them, as their names are not object IDs.
+const ProbePrefix = "holdfast-probe-"
+
+// notState says an object under a prefix is no part of the repository's state: restic's locks, and the storage
+// test's probes.
+func notState(rel string) bool {
+	return strings.HasPrefix(rel, "locks/") || strings.HasPrefix(rel, ProbePrefix)
 }
 
 func kindOf(rel string) string {
