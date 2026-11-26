@@ -115,6 +115,7 @@ func TestUIPages(t *testing.T) {
 	waitText(t, ctx, "Last 14 days")
 	open(t, ctx, "#/agents/"+web)
 	waitText(t, ctx, "Backs up")
+	waitText(t, ctx, "Stored") // what each job takes in the repository
 	waitText(t, ctx, "Set in its agent.yaml")
 	clickText(t, ctx, "button", "Back up now")
 	waitText(t, ctx, "Queued")

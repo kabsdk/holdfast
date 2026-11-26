@@ -952,6 +952,15 @@ type JobView struct {
 	Lagging  bool              `json:"lagging,omitempty"`
 	// OwnRetention: the off-site retention was set off-site; without it, it is primary's and follows it (decision 053).
 	OwnRetention bool `json:"own_retention,omitempty"`
+	// Stored is what the job's restore points take in this site's repository: restic stats --mode raw-data, each piece
+	// of data once, as stored, measured once a day with the repository's size. Absent until measured.
+	Stored *JobStored `json:"stored,omitempty"`
+}
+
+// JobStored is one measurement of what a job takes in its repository.
+type JobStored struct {
+	Bytes      int64     `json:"bytes"`
+	MeasuredAt time.Time `json:"measured_at"`
 }
 
 // HostView is one host as the API shows it.
@@ -1015,6 +1024,14 @@ func (s *Server) Hosts(ctx context.Context) ([]HostView, error) {
 	statuses, err := q.ListJobStatus(ctx)
 	if err != nil {
 		return nil, err
+	}
+	sizes, err := q.ListJobSizes(ctx)
+	if err != nil {
+		return nil, err
+	}
+	stored := map[[2]string]*JobStored{}
+	for _, z := range sizes {
+		stored[[2]string{z.FQDN, z.JobID}] = &JobStored{Bytes: z.Bytes, MeasuredAt: z.MeasuredAt}
 	}
 	counts, err := q.CountCatalogue(ctx)
 	if err != nil {
@@ -1114,6 +1131,7 @@ func (s *Server) Hosts(ctx context.Context) ([]HostView, error) {
 			if in, ok := inBucket[[2]string{h.FQDN, id}]; ok && !s.set.IsVault() {
 				jv.InBucket = &in
 			}
+			jv.Stored = stored[[2]string{h.FQDN, id}]
 			if s.set.IsVault() {
 				// Off-site jobs lag rather than go stale: the agents back them up in primary (decision 039).
 				jv.Primary, jv.Excluded, jv.Retired, jv.OwnRetention, jv.Stale = j.Primary, j.Excluded, j.Retired, j.OwnRetention, false

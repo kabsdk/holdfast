@@ -290,3 +290,35 @@ func must(t *testing.T, err error) {
 		t.Fatal(err)
 	}
 }
+
+// A job's size is one measurement: a job restic could not measure keeps its last, and a job without snapshots, or one
+// the host no longer has, has none.
+func TestJobSizes(t *testing.T) {
+	s, ctx := testStore(t), context.Background()
+	q := s.Q()
+	const fqdn = "web01.example.com"
+	sizes := func() map[string]JobSize {
+		t.Helper()
+		all, err := q.ListJobSizes(ctx)
+		must(t, err)
+		out := map[string]JobSize{}
+		for _, z := range all {
+			out[z.FQDN+"/"+z.JobID] = z
+		}
+		return out
+	}
+	t1 := time.Date(2026, 11, 26, 3, 0, 0, 0, time.UTC)
+	must(t, q.RecordJobSizes(ctx, fqdn, map[string]int64{"home": 100, "etc": 200}, nil, t1))
+	must(t, q.RecordJobSizes(ctx, "db01.example.com", map[string]int64{"home": 7}, nil, t1))
+	t2 := t1.Add(24 * time.Hour)
+	must(t, q.RecordJobSizes(ctx, fqdn, map[string]int64{"home": 150}, []string{"etc"}, t2))
+	got := sizes()
+	if h, e := got[fqdn+"/home"], got[fqdn+"/etc"]; h.Bytes != 150 || !h.MeasuredAt.Equal(t2) || e.Bytes != 200 || !e.MeasuredAt.Equal(t1) {
+		t.Fatalf("a measured job takes its new size, one that failed keeps its last: %+v", got)
+	}
+	must(t, q.RecordJobSizes(ctx, fqdn, map[string]int64{"home": 160}, nil, t2.Add(24*time.Hour)))
+	got = sizes()
+	if _, ok := got[fqdn+"/etc"]; ok || got[fqdn+"/home"].Bytes != 160 || got["db01.example.com/home"].Bytes != 7 {
+		t.Fatalf("a job without a size this time has none, and other hosts' stay: %+v", got)
+	}
+}

@@ -527,6 +527,27 @@ func (r Runner) Snapshots(ctx context.Context, tags ...string) ([]Snapshot, erro
 	return s, nil
 }
 
+// StoredSize is restic stats --mode raw-data: the data a set of snapshots uses, each piece once.
+type StoredSize struct {
+	TotalSize             int64 `json:"total_size"` // as it is stored: compressed
+	TotalUncompressedSize int64 `json:"total_uncompressed_size"`
+	SnapshotsCount        int64 `json:"snapshots_count"`
+}
+
+// Stored returns what the snapshots with a tag take in the repository, each piece of data counted once (restic
+// stats --mode raw-data). With no such snapshot it is zero.
+func (r Runner) Stored(ctx context.Context, tag string) (StoredSize, error) {
+	out, err := r.run(ctx, "stats", "--mode", "raw-data", "--json", "--tag", tag)
+	if err != nil {
+		return StoredSize{}, err
+	}
+	var s StoredSize
+	if err := json.Unmarshal(out, &s); err != nil {
+		return StoredSize{}, err
+	}
+	return s, nil
+}
+
 // Check verifies the repository structure and re-reads a subset of the pack data. subset uses
 // restic's syntax, such as "3/30" for day 3 of a 30-day cycle; empty checks structure only.
 func (r Runner) Check(ctx context.Context, subset string) error {

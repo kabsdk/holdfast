@@ -1,6 +1,6 @@
 // An agent's page (decision 056): its jobs with what each backs up and its last 14 days, its PostgreSQL connections, its
 // recent runs and where its repository is. Every rule is the server's; this asks and shows.
-import { html, useState, useEffect, usePoll, useAction, link, offsiteLink, go, ago, until, fmtTime, fmtDay, dur, bytes, scheduleText, Pill, Snap, can, ErrorBox, Loading, EnrollLines, Menu, Problem, icons, fullDate, clock, localDay, browserZone, isPG, Kind, dbIcon, repoPath } from '../lib.js';
+import { html, useState, useEffect, usePoll, useAction, link, offsiteLink, go, ago, until, fmtTime, fmtDay, dur, bytes, scheduleText, Pill, Snap, can, ErrorBox, Loading, EnrollLines, Menu, Problem, icons, fullDate, clock, localDay, browserZone, isPG, Kind, dbIcon, repoPath, storedTip } from '../lib.js';
 import { api } from '../api.js';
 import { jobState, agentSub } from './overview.js';
 
@@ -150,7 +150,7 @@ function Strip({ job, days }) {
     ${days.days.map((d) => html`<span class=${cls(d)} data-tip=${tip(d)}></span>`)}</div>`;
 }
 
-function JobRow({ host, job, days, cut, onRun, queued, vault, cols }) {
+function JobRow({ host, job, days, cut, onRun, queued, vault, cols, storedB }) {
   const probs = (host.problems || []).filter((p) => p.job_id === job.id);
   const s = job.status || {};
   const off = !vault && host.offsite ? offState(host, job) : null;
@@ -167,6 +167,8 @@ function JobRow({ host, job, days, cut, onRun, queued, vault, cols }) {
     <div><div class="num">${s.last_success_at ? ago(s.last_success_at) : '—'}</div>${s.last_success_at && html`<div class="sub">${fmtTime(s.last_success_at)}</div>`}</div>
     <span class="num muted">${job.next_runs?.[0] ? until(job.next_runs[0]) : '—'}</span>
     ${off && html`<div><div class=${'offstate ' + off.kind}>${off.text}</div>${off.sub && html`<div class="sub">${off.sub}</div>`}</div>`}
+    <div class="stored"><div class="num" data-tip=${storedTip(job.stored, off ? 'site A' : '')}>${job.stored ? bytes(job.stored.bytes) : '—'}${off ? html` <span class="muted">site A</span>` : ''}</div>
+      ${off && html`<div class="sub" data-tip=${storedTip(storedB, 'site B')}>${storedB ? bytes(storedB.bytes) : '—'} site B</div>`}</div>
     <div class="row" style="justify-content:flex-end;gap:.4rem">
       ${queued && html`<span class="ok" style="font-size:12.5px">Queued</span>`}
       ${!vault && can(host, 'backup.run') && html`<button class="small" disabled=${queued} onClick=${onRun}>Back up now</button>`}
@@ -174,8 +176,8 @@ function JobRow({ host, job, days, cut, onRun, queued, vault, cols }) {
     </div>
   </div>`;
 }
-const JOB_COLS = 'minmax(0,1.5fr) minmax(0,1.5fr) 225px minmax(0,1fr) minmax(0,.8fr) 210px';
-const JOB_COLS_OFFSITE = 'minmax(0,1.4fr) minmax(0,1.4fr) 225px minmax(0,1fr) minmax(0,.7fr) minmax(0,.9fr) 210px';
+const JOB_COLS = 'minmax(0,1.5fr) minmax(0,1.5fr) 225px minmax(0,1fr) minmax(0,.8fr) minmax(0,.7fr) 210px';
+const JOB_COLS_OFFSITE = 'minmax(0,1.4fr) minmax(0,1.4fr) 225px minmax(0,1fr) minmax(0,.7fr) minmax(0,.9fr) minmax(0,.9fr) 210px';
 
 // Recent runs, folded: a job's backups on one day that ended the same way are one line, and so are a run and its
 // retries. Restores, checks and the rest are a line each.
@@ -389,6 +391,7 @@ export function Host({ fqdn, reloadHosts, vault, settings }) {
   const cuts = usePoll(() => api.retentionCuts(), [fqdn], 60000);
   const withOff = !vault && !!host.data?.offsite;
   const siteB = usePoll(() => (withOff ? api.offsiteSettings() : Promise.resolve(null)), [withOff], 0);
+  const hostB = usePoll(() => (withOff ? api.offsiteHost(fqdn) : Promise.resolve(null)), [fqdn, withOff], 60000); // site B's Stored
   const [panel, setPanel] = useState('');
   const [queued, setQueued] = useState({});
   const act = useAction();
@@ -448,9 +451,10 @@ export function Host({ fqdn, reloadHosts, vault, settings }) {
       <div class="list-head"><h2 id="jobs-h">${vault ? 'Copied jobs' : 'Jobs'}</h2>
         ${days.error && html`<span class="muted">The last 14 days could not be read: ${days.error.message}</span>`}</div>
       ${h.jobs.length === 0 ? html`<p class="muted" style="padding:0 1rem 1rem">No job yet.${!vault && can(h, 'config.jobs') ? html` <a href=${link('agents', h.fqdn, 'configure')}>Add one</a>.` : ''}</p>` : html`
-      <div class="scrollx"><div style=${'min-width:' + (withOff ? 1000 : 880) + 'px'}>
-        <div class="gt head" style=${'--cols:' + cols}><span>Job</span><span>Backs up</span><span>Last 14 days</span><span>Last backup</span><span>Next</span>${withOff && html`<span>Off-site</span>`}<span></span></div>
+      <div class="scrollx"><div style=${'min-width:' + (withOff ? 1090 : 960) + 'px'}>
+        <div class="gt head" style=${'--cols:' + cols}><span>Job</span><span>Backs up</span><span>Last 14 days</span><span>Last backup</span><span>Next</span>${withOff && html`<span>Off-site</span>`}<span>Stored</span><span></span></div>
         ${h.jobs.map((j) => html`<${JobRow} key=${j.id} host=${h} job=${j} vault=${vault} cols=${cols} queued=${!!queued[j.id]} onRun=${() => run(j)}
+          storedB=${(hostB.data?.jobs || []).find((x) => x.id === j.id)?.stored}
           days=${days.data && days.data.jobs.find((x) => x.job_id === j.id)} cut=${(cuts.data || []).some((c) => c.fqdn === h.fqdn && c.job_id === j.id)} />`)}
       </div></div>
       <div class="legend"><span><i class="d-success"></i>backed up</span><span><i class="d-warning"></i>incomplete</span><span><i class="d-failed"></i>failed</span>

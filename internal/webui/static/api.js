@@ -105,6 +105,7 @@ export const api = {
   include: (f, job, body) => req('POST', `/api/v1/agents/${e(f)}/jobs/${e(job)}/include`, body),
   matchPrimary: (f, job, body) => req('POST', `/api/v1/agents/${e(f)}/jobs/${e(job)}/match-primary`, body),
   // The off-site copies' API from the server's own pages: a job's Off-site view and its off-site settings.
+  offsiteHost: (f) => req('GET', `/api/v1/offsite/agents/${e(f)}`),
   offsiteSnapshots: (f, opts) => req('GET', `/api/v1/offsite/agents/${e(f)}/snapshots${q(opts || {})}`),
   offsiteExclude: (f, job, body) => req('POST', `/api/v1/offsite/agents/${e(f)}/jobs/${e(job)}/exclude`, body),
   offsiteInclude: (f, job, body) => req('POST', `/api/v1/offsite/agents/${e(f)}/jobs/${e(job)}/include`, body),
