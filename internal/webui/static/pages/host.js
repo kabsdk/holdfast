@@ -1,4 +1,4 @@
-// An agent's page (decision 056): its jobs with what each backs up and its last 14 days, its PostgreSQL connections, its
+// An agent's page (decision 056): its jobs with what each backs up and its last backups, its PostgreSQL connections, its
 // recent runs and where its repository is. Every rule is the server's; this asks and shows.
 import { html, useState, useEffect, usePoll, useAction, link, offsiteLink, go, ago, until, fmtTime, fmtDay, dur, bytes, scheduleText, Pill, Snap, can, ErrorBox, Loading, EnrollLines, Menu, Problem, icons, fullDate, clock, localDay, browserZone, isPG, Kind, dbIcon, repoPath, storedTip, SiteTag } from '../lib.js';
 import { api } from '../api.js';
@@ -156,7 +156,26 @@ function Strip({ job, days }) {
     ${days.days.map((d) => html`<span class=${cls(d)} data-tip=${tip(d)}></span>`)}</div>`;
 }
 
-function JobRow({ host, job, days, cut, onRun, queued, vault, cols, storedB }) {
+// What became of a slot, as the server says (spec §5.1a), and its square's colour: a backup's own, or none.
+const SLOT_TEXT = { success: 'backed up', warning: 'incomplete: some files could not be read', failed: 'failed', missed: 'missed: no backup ran for it',
+  skipped: 'skipped: the job’s previous run was still going', due: 'not run yet', before: 'before the job’s first backup' };
+const SLOT_CLASS = { success: 'd-success', warning: 'd-warning', failed: 'd-failed', missed: 'd-none', skipped: 'd-skipped', due: 'd-later', before: 'd-before' };
+const isoDay = (t) => { const d = new Date(t); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+
+// Slots is a job's last backups: a square per backup its schedule called for, oldest first, so a missed one shows and
+// a weekly job's seven cover seven weeks. A square opens the job's page on its day.
+function Slots({ fqdn, job, slots }) {
+  if (!slots) return html`<div class="strip slots" aria-hidden="true">${Array.from({ length: 7 }, () => html`<span class="d-wait"></span>`)}</div>`;
+  const tip = (s) => {
+    const how = s.finished && s.state !== 'missed' ? `${SLOT_TEXT[s.state]} at ${clock(s.finished)}${s.runs > 1 ? `, after ${s.runs} tries` : ''}` : SLOT_TEXT[s.state];
+    return `${fullDate(s.at)} ${clock(s.at)}\n${how}${s.error ? ': ' + s.error : ''}`;
+  };
+  return html`<div class="strip slots" role="list" aria-label=${job + ', the last backups'}>${slots.map((s) => (s.state === 'before'
+    ? html`<span role="listitem" class=${SLOT_CLASS[s.state]} data-tip=${tip(s)} aria-label=${tip(s).replace('\n', ': ')}></span>`
+    : html`<a role="listitem" class=${SLOT_CLASS[s.state]} href=${link('agents', fqdn, 'jobs', job) + '?day=' + isoDay(s.finished || s.at)} data-tip=${tip(s)} aria-label=${tip(s).replace('\n', ': ')}></a>`))}</div>`;
+}
+
+function JobRow({ host, job, days, slots, cut, onRun, queued, vault, cols, storedB }) {
   const probs = (host.problems || []).filter((p) => p.job_id === job.id);
   const s = job.status || {};
   const off = !vault && host.offsite ? offState(host, job) : null;
@@ -169,7 +188,7 @@ function JobRow({ host, job, days, cut, onRun, queued, vault, cols, storedB }) {
       ${probs.map((p) => html`<${Problem} p=${{ ...p, job_id: '' }} />`)}
     </div>
     <div style="min-width:0"><${Kind} job=${job} more=${link('agents', host.fqdn, 'jobs', job.id)} /></div>
-    <${Strip} job=${job.id} days=${days} />
+    ${vault ? html`<${Strip} job=${job.id} days=${days} />` : html`<${Slots} fqdn=${host.fqdn} job=${job.id} slots=${slots} />`}
     <div><div class="num">${s.last_success_at ? ago(s.last_success_at) : '—'}</div>${s.last_success_at && html`<div class="sub">${fmtTime(s.last_success_at)}</div>`}</div>
     <span class="num muted">${job.next_runs?.[0] ? until(job.next_runs[0]) : '—'}</span>
     ${off && html`<div><div class=${'offstate ' + off.kind}>${off.text}</div>${off.sub && html`<div class="sub">${off.sub}</div>`}</div>`}
@@ -182,8 +201,9 @@ function JobRow({ host, job, days, cut, onRun, queued, vault, cols, storedB }) {
     </div>
   </div>`;
 }
-const JOB_COLS = 'minmax(0,1.5fr) minmax(0,1.5fr) 225px minmax(0,1fr) minmax(0,.8fr) minmax(0,.7fr) 210px';
-const JOB_COLS_OFFSITE = 'minmax(0,1.4fr) minmax(0,1.4fr) 225px minmax(0,1fr) minmax(0,.7fr) minmax(0,.9fr) minmax(0,.9fr) 210px';
+// The squares' column: seven last backups, or on the off-site pages fourteen days of copies.
+const jobCols = (off, vault) => (off ? `minmax(0,1.4fr) minmax(0,1.4fr) 130px minmax(0,1fr) minmax(0,.7fr) minmax(0,.9fr) minmax(0,.9fr) 210px`
+  : `minmax(0,1.5fr) minmax(0,1.5fr) ${vault ? '225px' : '130px'} minmax(0,1fr) minmax(0,.8fr) minmax(0,.7fr) 210px`);
 
 // Recent runs, folded: a job's backups on one day that ended the same way are one line, and so are a run and its
 // retries. Restores, checks and the rest are a line each.
@@ -393,7 +413,9 @@ function Connections({ host, reload }) {
 export function Host({ fqdn, reloadHosts, vault, settings }) {
   const host = usePoll(() => api.host(fqdn), [fqdn]);
   const events = usePoll(() => api.hostEvents(fqdn, 200), [fqdn]);
-  const days = usePoll(() => api.hostDays(fqdn, 14, browserZone()), [fqdn], 60000);
+  // The off-site pages draw their copies a day at a time; the server's pages each job's last backups (spec §5.1a).
+  const days = usePoll(() => (vault ? api.hostDays(fqdn, 14, browserZone()) : Promise.resolve(null)), [fqdn, vault], 60000);
+  const slots = usePoll(() => (vault ? Promise.resolve(null) : api.hostSlots(fqdn, 7)), [fqdn, vault], 60000);
   const cuts = usePoll(() => api.retentionCuts(), [fqdn], 60000);
   const withOff = !vault && !!host.data?.offsite;
   const siteB = usePoll(() => (withOff ? api.offsiteSettings() : Promise.resolve(null)), [withOff], 0);
@@ -404,12 +426,12 @@ export function Host({ fqdn, reloadHosts, vault, settings }) {
   if (host.error) return html`<${ErrorBox} error=${host.error} />`;
   if (!host.data) return html`<${Loading} what=${fqdn} />`;
   const h = host.data;
-  const refresh = () => { host.reload(); events.reload(); days.reload(); reloadHosts(); };
+  const refresh = () => { host.reload(); events.reload(); days.reload(); slots.reload(); reloadHosts(); };
   const probs = h.problems || [];
   const errors = probs.filter((p) => p.severity === 'error').length;
   const needy = new Set(probs.filter((p) => p.job_id).map((p) => p.job_id)).size;
   const run = (j) => act.run(() => api.runNow(h.fqdn, j.id)).then((r) => { if (r) setQueued({ ...queued, [j.id]: true }); });
-  const cols = withOff ? JOB_COLS_OFFSITE : JOB_COLS;
+  const cols = jobCols(withOff, vault);
   const a = h.agent;
   const withPG = !vault && (!!a?.postgresql?.client || (h.postgresql || []).length > 0);
   return html`
@@ -457,16 +479,19 @@ export function Host({ fqdn, reloadHosts, vault, settings }) {
 
     <section class="list" aria-labelledby="jobs-h">
       <div class="list-head"><h2 id="jobs-h">${vault ? 'Copied jobs' : 'Jobs'}</h2>
-        ${days.error && html`<span class="muted">The last 14 days could not be read: ${days.error.message}</span>`}</div>
+        ${(days.error || slots.error) && html`<span class="muted">The ${vault ? 'last 14 days' : 'last backups'} could not be read: ${(days.error || slots.error).message}</span>`}</div>
       ${h.jobs.length === 0 ? html`<p class="muted" style="padding:0 1rem 1rem">No job yet.${!vault && can(h, 'config.jobs') ? html` <a href=${link('agents', h.fqdn, 'configure')}>Add one</a>.` : ''}</p>` : html`
       <div class="scrollx"><div style=${'min-width:' + (withOff ? 1060 : 880) + 'px'}>
-        <div class="gt head" style=${'--cols:' + cols}><span>Job</span><span>Backs up</span><span>Last 14 days</span><span>Last backup</span><span>Next</span>${withOff && html`<span>Off-site</span>`}<span>Stored</span><span></span></div>
+        <div class="gt head" style=${'--cols:' + cols}><span>Job</span><span>Backs up</span><span>${vault ? 'Last 14 days' : 'Last 7 backups'}</span><span>Last backup</span><span>Next</span>${withOff && html`<span>Off-site</span>`}<span>Stored</span><span></span></div>
         ${h.jobs.map((j) => html`<${JobRow} key=${j.id} host=${h} job=${j} vault=${vault} cols=${cols} queued=${!!queued[j.id]} onRun=${() => run(j)}
           storedB=${(hostB.data?.jobs || []).find((x) => x.id === j.id)?.stored}
-          days=${days.data && days.data.jobs.find((x) => x.job_id === j.id)} cut=${(cuts.data || []).some((c) => c.fqdn === h.fqdn && c.job_id === j.id)} />`)}
+          days=${days.data && days.data.jobs.find((x) => x.job_id === j.id)} slots=${slots.data && slots.data.jobs.find((x) => x.job_id === j.id)?.slots} cut=${(cuts.data || []).some((c) => c.fqdn === h.fqdn && c.job_id === j.id)} />`)}
       </div></div>
-      <div class="legend"><span><i class="d-success"></i>backed up</span><span><i class="d-warning"></i>incomplete</span><span><i class="d-failed"></i>failed</span>
-        <span><i class="d-none"></i>no run</span><span><i class="d-later"></i>not yet today</span><span><i class="d-before"></i>before the first backup</span><span>One square a day; the worst run of the day sets its colour.</span></div>`}
+      ${vault ? html`<div class="legend"><span><i class="d-success"></i>backed up</span><span><i class="d-warning"></i>incomplete</span><span><i class="d-failed"></i>failed</span>
+        <span><i class="d-none"></i>no run</span><span><i class="d-later"></i>not yet today</span><span><i class="d-before"></i>before the first backup</span><span>One square a day; the worst run of the day sets its colour.</span></div>`
+      : html`<div class="legend"><span><i class="d-success"></i>backed up</span><span><i class="d-warning"></i>incomplete</span><span><i class="d-failed"></i>failed</span>
+        <span><i class="d-none"></i>missed</span><span><i class="d-skipped"></i>skipped</span><span><i class="d-later"></i>not run yet</span><span><i class="d-before"></i>before the first backup</span>
+        <span>A square per backup the schedule called for, the newest on the right; click one for its day on the job's page.</span></div>`}`}
     </section>
     ${withPG && html`<${Connections} host=${h} reload=${refresh} />`}
     ${events.data ? html`<${Runs} host=${h} events=${events.data} />` : html`<${Loading} what="runs" />`}

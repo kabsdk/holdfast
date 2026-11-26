@@ -154,12 +154,17 @@ button.icon { display: inline-flex; align-items: center; justify-content: center
 
 /* Squares: the agent page's days, and the job page's calendar of restore points. Hover any for its tooltip. */
 .strip { display: grid; grid-template-columns: repeat(14, 12px); gap: 3px; }
-.strip span { display: block; width: 12px; height: 22px; border-radius: 3px; }
+.strip span, .strip a { display: block; width: 12px; height: 22px; border-radius: 3px; }
+/* A job's last backups: seven squares, each a link to its day on the job's page. */
+.strip.slots { grid-template-columns: repeat(7, 14px); gap: 4px; }
+.strip.slots > * { width: 14px; }
+.strip a:hover, .strip a:focus-visible { outline: 2px solid var(--text); outline-offset: 1px; }
 .d-success { background: var(--sq-ok); }
 .d-warning { background: #d99a1e; }
 .d-failed { background: var(--err); }
 .d-none { background: var(--panel); border: 1px dashed #9aa3b2; }
 .d-later { background: #e4e7ec; }
+.d-skipped { background: repeating-linear-gradient(135deg, #d9dde5 0 3px, #f7f8fa 3px 6px); }
 .d-wait { background: #f0f2f5; }
 .d-before { background: #f7f8fa; border: 1px solid #d9dde5; }
 .legend { display: flex; flex-wrap: wrap; gap: .3rem 1rem; padding: .6rem 1rem; border-top: 1px solid var(--line); font-size: 12px; color: var(--muted); }

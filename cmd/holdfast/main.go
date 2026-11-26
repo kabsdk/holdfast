@@ -435,6 +435,7 @@ func hostCmd() *cobra.Command {
 		return w.Flush()
 	}})
 	c.AddCommand(hostDaysCmd())
+	c.AddCommand(hostSlotsCmd())
 	return c
 }
 
@@ -488,6 +489,57 @@ func hostDaysCmd() *cobra.Command {
 		}}
 	cmd.Flags().IntVar(&days, "days", 14, "how many days, today included, up to 92")
 	cmd.Flags().StringVar(&zone, "tz", "", "the time zone the days are in, such as Europe/Copenhagen (default: this machine's)")
+	return cmd
+}
+
+// hostSlotsCmd is the agent page's last backups: each job's last slots, as its schedule called for them, and how each
+// went.
+func hostSlotsCmd() *cobra.Command {
+	var n int
+	cmd := &cobra.Command{Use: "slots <agent>", Short: "Each job's last backups, a slot each as its schedule called for them (the agent page's squares)", Args: cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, a []string) error {
+			var hs struct {
+				Jobs []struct {
+					JobID string `json:"job_id"`
+					Slots []struct {
+						At         time.Time
+						State      string
+						SnapshotID string `json:"snapshot_id"`
+					}
+				}
+			}
+			raw, err := call("GET", "/api/v1/agents/"+url.PathEscape(a[0])+"/slots?count="+strconv.Itoa(n), nil, &hs)
+			if err != nil {
+				return err
+			}
+			if asJSON {
+				printJSON(raw)
+				return nil
+			}
+			fmt.Println("Oldest first: + backed up, ! incomplete, x failed, o missed, s skipped, . due, - before the job's first backup")
+			w := table()
+			fmt.Fprintln(w, "JOB\tSLOTS\tNEWEST\tSNAPSHOT")
+			mark := map[string]string{"success": "+", "warning": "!", "failed": "x", "missed": "o", "skipped": "s", "due": ".", "before": "-"}
+			for _, j := range hs.Jobs {
+				var line strings.Builder
+				for _, sl := range j.Slots {
+					line.WriteString(mark[sl.State])
+				}
+				newest, snap := "-", "-"
+				if k := len(j.Slots); k > 0 {
+					newest = j.Slots[k-1].At.Local().Format("2006-01-02 15:04") + " " + j.Slots[k-1].State
+					for i := k - 1; i >= 0; i-- {
+						if j.Slots[i].SnapshotID != "" {
+							snap = j.Slots[i].SnapshotID[:min(8, len(j.Slots[i].SnapshotID))]
+							break
+						}
+					}
+				}
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", j.JobID, line.String(), newest, snap)
+			}
+			return w.Flush()
+		}}
+	cmd.Flags().IntVar(&n, "count", 7, "how many slots per job, the newest last, up to 30")
 	return cmd
 }
 

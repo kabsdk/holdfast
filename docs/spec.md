@@ -825,7 +825,7 @@ Restore and inspection behave like restic does on the host.
 
 - Its name; under it a row for the agent, when it was last seen and the address it connected from ("10.0.4.17"), and
   one for its software: the Holdfast agent's, restic's and the operating system's versions.
-- One row per job: its state, what it backs up, its **last 14 days**, its last and next backup, what it takes in each
+- One row per job: its state, what it backs up, its **last 7 backups**, its last and next backup, what it takes in each
   site (**Stored**, §3.5), and **Back up now** and **Restore** (from the newest snapshot), the same size. What it backs
   up is at most three paths, a line each, a long one cut in its middle with the whole on hover; more say how many,
   and open the job's page. A PostgreSQL job shows its database and connection. Exclusions, schedule and retention are
@@ -834,10 +834,16 @@ Restore and inspection behave like restic does on the host.
   whether their passwords are set, the jobs that use it, and its last test: the server's version, TLS, pg_dump's
   version and the databases with their sizes and owners, or why it failed. **Test** tests it again; an admin can add,
   change and remove connections (§4.6). Passwords are typed into the form and never shown back.
-- The last 14 days are a square a day, coloured by the worst backup of the day: failed, incomplete, backed up, or no
-  run; a day before the job's first backup is drawn apart, as it had nothing to miss. The server puts each backup on
-  its day, in the time zone asked for: `GET /api/v1/agents/{agent}/days?days=14&tz=…`
-  and `holdfast agent days <agent>` (up to 92 days, in this machine's zone by default).
+- The last 7 backups are a square per backup the job's schedule called for, oldest first, so a missed one shows and a
+  weekly job's seven cover seven weeks: backed up, incomplete or failed, as the backup for that slot ended, its retries
+  included; missed, when none ran for it; skipped, when it came while the job's previous run was still going; not run
+  yet, for the newest; or before the job's first backup, which had nothing to miss. A backup run by hand is on no slot.
+  A square opens the job's page on its day (`?day=YYYY-MM-DD`). The server puts each backup on the slot it was for, by
+  the job's schedule as it is now: `GET /api/v1/agents/{agent}/slots?count=7` and `holdfast agent slots <agent>` (up to
+  30).
+- The off-site pages draw each job's copies a day at a time instead, the last 14 days, a square a day coloured by the
+  worst of the day: `GET /api/v1/agents/{agent}/days?days=14&tz=…` and `holdfast agent days <agent>` (up to 92 days,
+  in this machine's zone by default), which the job page's calendar also uses for the days a backup failed.
 - Recent runs fold: a job's backups on one day that ended the same way are one line.
 - The repository, once for all the agent's jobs, a row per subject: where it is and its size, with what S3 still keeps
   of the data deleted from it (what a rollback can bring back, §3.5b); the escrow file; Object Lock; a decommission.

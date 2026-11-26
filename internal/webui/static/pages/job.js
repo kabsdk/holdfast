@@ -155,7 +155,7 @@ function AddedPerBackup({ fqdn, job, pts, focus, onDay }) {
 }
 
 // RestorePoints is the calendar and the chosen day's restore points.
-function RestorePoints({ h, j, pts, off, vault, storedB, days, events, reload }) {
+function RestorePoints({ h, j, pts, off, vault, storedB, days, events, reload, day }) {
   const fqdn = h.fqdn;
   const pg = isPG(j);
   const mayDelete = can(h, 'snapshot.delete');
@@ -170,7 +170,9 @@ function RestorePoints({ h, j, pts, off, vault, storedB, days, events, reload })
   const failedRuns = new Map();
   (events || []).filter((e) => e.kind === 'backup' && e.job_id === j.id && e.status !== 'success' && e.status !== 'warning' && e.status !== 'skipped')
     .forEach((e) => { const d = dayOf(e.finished); if (!failedRuns.has(d)) failedRuns.set(d, []); failedRuns.get(d).push(e); });
-  const [focus, setFocus] = useState(pts[0] ? dayOf(pts[0].time) : today);
+  // A day asked for in the address (?day=YYYY-MM-DD, from the agent page's squares) is chosen; else the newest.
+  const asked = /^\d{4}-\d{2}-\d{2}$/.test(day || '') ? localDay(day).getTime() : null;
+  const [focus, setFocus] = useState(asked ?? (pts[0] ? dayOf(pts[0].time) : today));
   const [sel, setSel] = useState([]);
   const [anchor, setAnchor] = useState(null);
   const [rule, setRule] = useState(null);
@@ -198,6 +200,12 @@ function RestorePoints({ h, j, pts, off, vault, storedB, days, events, reload })
   for (let y = thisYear; y >= new Date(Math.min(oldest, today)).getFullYear(); y--) years.push(y);
   const [year, setYear] = useState(new Date(focus).getFullYear());
   const go = (t) => { setFocus(t); setYear(new Date(t).getFullYear()); };
+  // The page follows the address's day, also when only it changes, and shows its restore points.
+  useEffect(() => {
+    if (asked == null) return;
+    go(asked);
+    setTimeout(() => document.querySelector('.dayhead')?.scrollIntoView({ block: 'center' }), 0);
+  }, [asked]);
   const inYear = (y) => pts.filter((p) => new Date(p.time).getFullYear() === y && p.sa !== 'deleted').length;
   // The squares fill the box: their size follows its width, from 10 to 18 px; what is left goes between the months.
   const calRef = useRef(null);
@@ -386,5 +394,5 @@ export function Job({ fqdn, job: jid, vault, reloadHosts, settings }) {
     ${listA.error ? html`<${ErrorBox} error=${listA.error} />` : !ready ? html`<${Loading} what="the restore points (restic is asked what it keeps)" />`
       : html`<${RestorePoints} key=${off ? 'ab' : 'a'} h=${h} j=${j} pts=${restorePoints(listA.data, off ? listB.data : null, { off, excluded: !!oj?.excluded })} off=${off} vault=${vault}
           storedB=${(hostB.data?.jobs || []).find((x) => x.id === jid)?.stored}
-          days=${days.data?.jobs} events=${events.data} reload=${refresh} />`}`;
+          days=${days.data?.jobs} events=${events.data} reload=${refresh} day=${new URLSearchParams(location.hash.split('?')[1] || '').get('day')} />`}`;
 }
