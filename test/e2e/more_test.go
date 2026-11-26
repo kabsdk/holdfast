@@ -134,6 +134,40 @@ func TestEventsExactlyOnceAndScheduleSlots(t *testing.T) {
 	if slotted < 2 {
 		t.Fatalf("only %d scheduled runs seen", slotted)
 	}
+	// The agent page's last backups put each scheduled run on its slot (spec §5.1a).
+	var hs struct {
+		Jobs []struct {
+			JobID string `json:"job_id"`
+			Slots []struct {
+				At    time.Time
+				State string
+			}
+		}
+	}
+	must(t, json.Unmarshal(e.cli("agent", "slots", fqdn, "--count", "30"), &hs))
+	state := map[int64]string{}
+	for _, j := range hs.Jobs {
+		for _, s := range j.Slots {
+			if j.JobID == "etc" {
+				state[s.At.Unix()] = s.State
+			}
+		}
+	}
+	matched := 0
+	for _, ev := range evs {
+		if ev.ScheduledFor == nil || ev.Status != "success" {
+			continue
+		}
+		if s, ok := state[ev.ScheduledFor.Unix()]; ok {
+			matched++
+			if s != "success" {
+				t.Errorf("slot %v: %s, but it was backed up", ev.ScheduledFor, s)
+			}
+		}
+	}
+	if matched == 0 {
+		t.Fatalf("no scheduled run on the slots agent slots gives: %+v", hs)
+	}
 	t.Logf("%d answers dropped; %d snapshots, %d success events, each stored once; %d runs on their slots", proxy.dropped.Load(), total, countStatus(evs, "etc", "success"), slotted)
 }
 

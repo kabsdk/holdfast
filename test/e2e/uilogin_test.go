@@ -129,7 +129,7 @@ func TestScreenshots(t *testing.T) {
 		return h.Size != nil && len(h.Jobs) > 0 && h.Jobs[0].Stored != nil
 	})
 	open(t, ctx, "#/agents/"+web)
-	waitText(t, ctx, "Last 14 days")
+	waitText(t, ctx, "Last 7 backups")
 	shot("host")
 
 	open(t, ctx, "#/agents/"+web+"/configure/system")

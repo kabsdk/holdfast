@@ -126,6 +126,7 @@ func (s *Server) Routes() []Route {
 		r("DELETE", "/api/v1/agents/{fqdn}/jobs/{job}", access.HostRemove, s.apiRemoveJob),
 		r("GET", "/api/v1/agents/{fqdn}/events", access.View, s.apiHostEvents),
 		r("GET", "/api/v1/agents/{fqdn}/days", access.View, s.apiHostDays),
+		r("GET", "/api/v1/agents/{fqdn}/slots", access.View, s.apiHostSlots),
 		r("POST", "/api/v1/agents/{fqdn}/enrollment-code", access.ConfigStorage, s.apiEnrollmentCode),
 		r("POST", "/api/v1/agents/{fqdn}/rotate", access.ConfigStorage, s.apiRotate),
 		r("POST", "/api/v1/agents/{fqdn}/decommission", access.HostDecommission, s.apiDecommission),

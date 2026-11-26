@@ -305,7 +305,7 @@ func TestOffsite(t *testing.T) {
 		t.Fatal("with an off-site bucket, nothing may say site B is not set up")
 	}
 	open(t, ctx, "#/agents/"+fqdn)
-	waitText(t, ctx, "Last 14 days")
+	waitText(t, ctx, "Last 7 backups")
 	waitText(t, ctx, "Off-site")
 	// With two sites, the repository box has a row for each, under the sites' labels.
 	waitText(t, ctx, "Escrow")

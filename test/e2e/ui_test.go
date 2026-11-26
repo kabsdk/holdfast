@@ -118,9 +118,9 @@ func TestUIPages(t *testing.T) {
 	clickText(t, ctx, "button", "Show all agents")
 	waitText(t, ctx, web)
 
-	// Agent: a row per job with what it backs up and its last 14 days, and Back up now. The old #/hosts/ address opens it.
+	// Agent: a row per job with what it backs up and its last 7 backups, and Back up now. The old #/hosts/ address opens it.
 	open(t, ctx, "#/hosts/"+web)
-	waitText(t, ctx, "Last 14 days")
+	waitText(t, ctx, "Last 7 backups")
 	open(t, ctx, "#/agents/"+web)
 	waitText(t, ctx, "Backs up")
 	waitText(t, ctx, "Stored") // what each job takes in the repository
@@ -175,6 +175,23 @@ func TestUIPages(t *testing.T) {
 	if today := hd.Jobs[0].Days[13]; today.Runs < 2 || today.Worst != "success" {
 		t.Fatalf("today's backups, as host days gives them: %+v", today)
 	}
+	// The last 7 backups the schedule called for, as the API and the CLI give them and the agent page draws them: the
+	// job's first backup ran at enrollment and the second by hand, on no slot, so its daily slots came before it.
+	var hs struct {
+		Jobs []struct {
+			JobID string `json:"job_id"`
+			Slots []struct{ State string }
+		}
+	}
+	must(t, json.Unmarshal(e.cli("agent", "slots", web), &hs))
+	if len(hs.Jobs) != 1 || len(hs.Jobs[0].Slots) != 7 || hs.Jobs[0].Slots[6].State != "before" {
+		t.Fatalf("agent slots: %+v", hs)
+	}
+	var squares, links int
+	run(t, ctx, "the job's squares", chromedp.Evaluate(`document.querySelectorAll('.strip.slots > *').length`, &squares), chromedp.Evaluate(`document.querySelectorAll('.strip.slots a').length`, &links))
+	if squares != 7 || links != 0 {
+		t.Fatalf("the agent page draws %d squares, %d of them links; want 7, none before the first backup", squares, links)
+	}
 
 	// Configure: the checks come from the server as you type, and the save makes a revision.
 	open(t, ctx, "#/agents/"+web+"/configure/system")
@@ -189,7 +206,7 @@ func TestUIPages(t *testing.T) {
 	clickText(t, ctx, "label", "I accept")
 	waitText(t, ctx, "Ready to save")
 	clickText(t, ctx, "button", "Save")
-	waitText(t, ctx, "Last 14 days") // back on the agent page
+	waitText(t, ctx, "Last 7 backups") // back on the agent page
 	var revs []struct{ Message string }
 	must(t, json.Unmarshal(e.cli("revision", "list"), &revs))
 	if revs[0].Message != "exclude temporary files, from the UI" {
@@ -216,6 +233,9 @@ func TestUIPages(t *testing.T) {
 	if days < 1 || points < 2 {
 		t.Fatalf("the calendar shows %d days with restore points and %d restore points today, want at least 1 and 2", days, points)
 	}
+	// A square on the agent page opens the job's page on its day: ?day= chooses it.
+	open(t, ctx, "#/agents/"+web+"/jobs/system?day="+time.Now().AddDate(0, 0, -1).Format(time.DateOnly))
+	waitText(t, ctx, "Before the oldest restore point.")
 	open(t, ctx, "#/agents/"+web+"/jobs/system/calendar")
 	waitText(t, ctx, "Restore points")
 	// Find a file in all snapshots is at the top of the job page, above the restore points, so the calendar loading

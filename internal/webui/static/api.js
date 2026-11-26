@@ -56,6 +56,7 @@ export const api = {
   removeHost: (f, body) => req('DELETE', `/api/v1/agents/${e(f)}`, body),
   hostEvents: (f, limit) => req('GET', `/api/v1/agents/${e(f)}/events${q({ limit })}`),
   hostDays: (f, days, tz) => req('GET', `/api/v1/agents/${e(f)}/days${q({ days, tz })}`),
+  hostSlots: (f, count) => req('GET', `/api/v1/agents/${e(f)}/slots${q({ count })}`),
   enrollmentCode: (f) => req('POST', `/api/v1/agents/${e(f)}/enrollment-code`),
   rotate: (f, body) => req('POST', `/api/v1/agents/${e(f)}/rotate`, body),
   decommission: (f, body) => req('POST', `/api/v1/agents/${e(f)}/decommission`, body),

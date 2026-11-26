@@ -863,6 +863,36 @@ func (q *Q) BackupOutcomes(ctx context.Context, fqdn string, since time.Time) ([
 	return out, rows.Err()
 }
 
+// SlotRun is a scheduled backup and the slot it was for, for the agent page's last backups.
+type SlotRun struct {
+	ScheduledFor time.Time
+	Status       string
+	Finished     time.Time
+	SnapshotID   string
+	Error        string
+}
+
+// SlotRuns returns a host's scheduled backups for slots since a time, by job, each job's in the order they finished.
+// Backups run by hand are for no slot, and are left out.
+func (q *Q) SlotRuns(ctx context.Context, fqdn string, since time.Time) (map[string][]SlotRun, error) {
+	rows, err := q.db.Query(ctx, `SELECT job_id, scheduled_for, status, finished_at, coalesce(snapshot_id, ''), coalesce(error, '') FROM events
+		WHERE fqdn = $1 AND kind = 'backup' AND scheduled_for >= $2 ORDER BY finished_at`, fqdn, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string][]SlotRun{}
+	for rows.Next() {
+		var job string
+		var r SlotRun
+		if err := rows.Scan(&job, &r.ScheduledFor, &r.Status, &r.Finished, &r.SnapshotID, &r.Error); err != nil {
+			return nil, err
+		}
+		out[job] = append(out[job], r)
+	}
+	return out, rows.Err()
+}
+
 // FirstBackups returns when each of a host's jobs first finished a backup, of any result.
 func (q *Q) FirstBackups(ctx context.Context, fqdn string) (map[string]time.Time, error) {
 	rows, err := q.db.Query(ctx, `SELECT job_id, min(finished_at) FROM events WHERE fqdn = $1 AND kind = 'backup' GROUP BY job_id`, fqdn)

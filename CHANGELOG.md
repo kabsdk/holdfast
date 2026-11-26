@@ -34,7 +34,7 @@ replaces it under the same name and tag, `v0.1-dev`, and installs as an upgrade 
   a PostgreSQL server in Kubernetes from a pod.
 - **holdfast**: the CLI, with every action the web UI has.
 - **The web UI**: an **Overview** of every agent, worst first, whose tiles count stale, failed and incomplete jobs and
-  filter the agents by them; an **agent page** with a row per job, what it backs up and its last 14 days as squares,
+  filter the agents by them; an **agent page** with a row per job, what it backs up and its last 7 backups as squares,
   and its PostgreSQL connections, and what each job takes in each site (**Stored**, from `restic stats --mode
   raw-data`, measured daily), with one subject per line and a site named only where there are two; a **job page**, its
   paths and exclusions folded into one line when there are many, that is one **calendar** of the job's restore points,
