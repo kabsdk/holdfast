@@ -123,6 +123,11 @@ func TestScreenshots(t *testing.T) {
 	waitText(t, ctx, "the last backup failed") // files01's failed job, under its host
 	shot("overview")
 
+	// The pictures show the repository's and the job's sizes, measured once the first backup is there.
+	waitFor(t, "web01 measured", 3*time.Minute, func() bool {
+		h := e.host(web)
+		return h.Size != nil && len(h.Jobs) > 0 && h.Jobs[0].Stored != nil
+	})
 	open(t, ctx, "#/agents/"+web)
 	waitText(t, ctx, "Last 14 days")
 	shot("host")
