@@ -1056,7 +1056,8 @@ escrow file is in the bucket (§2.3), so an import is needed only for a file fro
 
 - **Through OIDC**, optional (decision 034): Authelia, Dex, Keycloak or any provider with the code flow and the
   device flow. The server is the only OIDC client:
-  - a browser logs in with the code flow and gets a session cookie;
+  - a browser logs in with the code flow and gets a session cookie. A page opened without a session goes straight to
+    the login, showing nothing but “Loading Holdfast…” on the way;
   - `holdfast login --server <url>` shows a device code to enter at the provider, and gets a session token.
 
   Groups come from the groups claim, read at login. An LDAP or Active Directory goes behind the provider; Holdfast

@@ -3,6 +3,7 @@ package e2e
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -12,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	cdppage "github.com/chromedp/cdproto/page"
 	"github.com/chromedp/chromedp"
 )
 
@@ -67,6 +69,28 @@ func uiLogin(t *testing.T, ctx context.Context, user string) {
 	run(t, ctx, "open the UI", chromedp.Navigate(uiURL+"/"))
 	authelia(t, ctx, user)
 	run(t, ctx, "back in the UI after the login", chromedp.WaitVisible(`nav.side`, chromedp.ByQuery))
+}
+
+// watchFor makes every page the browser opens from now on note, in its origin's localStorage under key, whether it
+// ever showed text containing needle (in any case), from before the page's own scripts run. sawText reads the note.
+// It catches what a page shows only for a moment, such as an error on its way to another page.
+func watchFor(t *testing.T, ctx context.Context, key, needle string) {
+	t.Helper()
+	js := fmt.Sprintf(`new MutationObserver(() => {
+		if (document.body && document.body.innerText.toLowerCase().includes(%q)) localStorage.setItem(%q, '1');
+	}).observe(document, { subtree: true, childList: true, characterData: true });`, strings.ToLower(needle), key)
+	run(t, ctx, "watch every page for "+needle, chromedp.ActionFunc(func(c context.Context) error {
+		_, err := cdppage.AddScriptToEvaluateOnNewDocument(js).Do(c)
+		return err
+	}))
+}
+
+// sawText says whether a page of the current origin noted its text under key (watchFor).
+func sawText(t *testing.T, ctx context.Context, key string) bool {
+	t.Helper()
+	var v string
+	run(t, ctx, "read the note "+key, chromedp.Evaluate(fmt.Sprintf(`localStorage.getItem(%q) || ''`, key), &v))
+	return v != ""
 }
 
 // textOf waits for a selector and returns its text.

@@ -24,8 +24,10 @@ async function req(method, path, body) {
   }
   const r = await fetch(path, opts);
   if (r.status === 401) {
+    // Not logged in: off to the login, and the call never settles, so the page goes on showing what it showed
+    // ("Loading Holdfast…") until the browser has left, never a "not logged in" error on the way.
     location.href = '/auth/login?next=' + encodeURIComponent('/' + location.hash);
-    throw new APIError(401, { error: 'not logged in' });
+    return new Promise(() => {});
   }
   const text = await r.text();
   let data = null;

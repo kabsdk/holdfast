@@ -31,8 +31,13 @@ func TestLoginAndRoles(t *testing.T) {
 	e.cli("access", "set", "--file", bindings, "-m", "web-team sees web01")
 
 	// The browser: an admin sees both hosts on the Overview, which lists all of them; wes, in a fresh browser, only web01.
+	// On its way to the provider, the UI never shows "not logged in": it only goes there.
 	ada := newBrowser(t)
+	watchFor(t, ada, "holdfast-e2e-not-logged-in", "not logged in")
 	uiLogin(t, ada, "ada")
+	if sawText(t, ada, "holdfast-e2e-not-logged-in") {
+		t.Fatal("the UI showed \"not logged in\" before it sent the browser to the login")
+	}
 	run(t, ada, "the overview", chromedp.WaitVisible(`section.list .hostrow`, chromedp.ByQuery))
 	if fleet := textOf(t, ada, "section.list"); !strings.Contains(fleet, web) || !strings.Contains(fleet, db) {
 		t.Fatalf("ada must see both hosts:\n%s", fleet)
