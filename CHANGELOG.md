@@ -38,7 +38,9 @@ replaces it under the same name and tag, `v0.1-dev`, and installs as an upgrade 
   PostgreSQL connections, and what each job takes in each site (**Stored**, from `restic stats --mode raw-data`,
   measured daily); a **job page** that is one **calendar** of the job's restore points, a square a day, a
   year in one row with the year chosen above it, primary and off-site in its two halves, where a day opens its
-  restore points with Restore and Delete, and **Find a file in all snapshots** at its top; a snapshot's **Files** as one tree with what changed against an older
+  restore points with Restore and Delete, **Find a file in all snapshots** at its top, and **Added per backup** above
+  the calendar, a bar per restore point of what its backup added as stored (restic's `data_added_packed`), with
+  **Largest first** (`--sort added`); a snapshot's **Files** as one tree with what changed against an older
   snapshot (`holdfast find --snapshot` finds a name in one snapshot); and a snapshot's
   **Restore** as a tree of ticks, restic's `--exclude` or `--include`, in one column.
 - Retention by time windows, decided by restic's `forget --dry-run`; checks with stable codes; deleting snapshots,
