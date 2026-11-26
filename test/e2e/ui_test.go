@@ -89,7 +89,7 @@ func TestUIPages(t *testing.T) {
 
 	// Overview, Settings, Audit log, Access, Config history, Restores render; the old Problems page opens the Overview.
 	for _, p := range []struct{ hash, text string }{
-		{"#/", "1 of 1 jobs OK"}, {"#/problems", "All agents"}, {"#/settings", "0.19.1, which the packages ship"}, {"#/audit", "host.add"},
+		{"#/", "1 of 1 jobs OK"}, {"#/problems", "All agents"}, {"#/settings", "0.19.1, which the packages ship"}, {"#/settings", "has no offsite: section"}, {"#/audit", "host.add"},
 		{"#/access", "holdfast-admins"}, {"#/history", "Revisions"}, {"#/restores", "Choose a snapshot"},
 	} {
 		open(t, ctx, p.hash)
@@ -104,6 +104,14 @@ func TestUIPages(t *testing.T) {
 	run(t, ctx, "the line under the agent's name", chromedp.Text(`.hostrow .sub`, &sub, chromedp.ByQuery))
 	if !strings.HasPrefix(sub, "from ") {
 		t.Fatalf("under the agent's name: %q, want the address it connects from", sub)
+	}
+	// Without an off-site bucket, a tile says site B is not set up, and links to how to set it up (decision 057);
+	// Settings says it too.
+	var siteB string
+	run(t, ctx, "the site B tile", chromedp.Evaluate(`(() => { const t = [...document.querySelectorAll('.tile')].find((x) => x.textContent.includes('not set up'));
+		return t ? [t.querySelector('.l').textContent, t.querySelector('.n').textContent, t.querySelector('a').getAttribute('href')].join('|') : ''; })()`, &siteB))
+	if siteB != "SITE B off-site|not set up|https://kabsdk.github.io/holdfast/#install-offsite" {
+		t.Fatalf("the Overview's site B tile without an off-site bucket: %q", siteB)
 	}
 	clickText(t, ctx, "button", "last run failed")
 	waitText(t, ctx, "No agent matches.")

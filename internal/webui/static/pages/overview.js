@@ -1,6 +1,6 @@
 // Overview, the start page: every agent you may see, worst first, with tiles that count what is wrong and filter the
 // list by it. Each problem shows once, under its agent (spec §5.5a); the server works them out (problems.go).
-import { html, useState, link, ago, until, useAction, ErrorBox, Problem, isPG, backsUp, dbIcon } from '../lib.js';
+import { html, useState, link, ago, until, useAction, ErrorBox, Problem, isPG, backsUp, dbIcon, SiteTag, OFFSITE_DOCS } from '../lib.js';
 import { api } from '../api.js';
 
 // jobState is how a job's pill reads: the server's problem for it, or OK.
@@ -62,7 +62,8 @@ export function Overview({ me, hosts, vault, settings }) {
     ['stale', 'Stale', count('stale'), 'no backup in time', 'error'],
     ['failed', 'Failed', count('failed'), 'last run failed', 'error'],
     ['incomplete', 'Incomplete', count('incomplete'), 'files not read', 'warning'],
-    !vault && settings.offsite && ['offsite', 'Off-site', hosts.filter(offsite).length, 'copies failing or behind', 'error'],
+    // Site B: its copies' problems with an off-site bucket; without one, that it is not set up (decision 057).
+    !vault && (settings.offsite ? ['offsite', html`<${SiteTag} b /> off-site`, hosts.filter(offsite).length, 'copies failing or behind', 'error'] : ['siteb', null]),
     ['other', 'Other problems', hosts.filter(other).length, 'offline, drift, PostgreSQL…', 'warning'],
   ].filter(Boolean);
   const keep = (h) => filter === 'all' || (filter === 'other' ? other(h) : filter === 'offsite' ? offsite(h) : (h.problems || []).some((p) => p.code === filter));
@@ -81,9 +82,11 @@ export function Overview({ me, hosts, vault, settings }) {
     <${ErrorBox} error=${check.error} />
     ${check.done && html`<div class="banner ok">Checks asked for on ${check.done.length} agents. Each agent runs restic check on its next poll; its result is in the agent's runs.</div>`}
     <section class="tiles" aria-label="Status: choose one to filter the agents">
-      ${tiles.map(([id, label, n, sub, kind]) => html`<button type="button" class=${'tile' + (filter === id ? ' on' : '')} aria-pressed=${filter === id ? 'true' : 'false'}
+      ${tiles.map(([id, label, n, sub, kind]) => (id === 'siteb' ? html`<div class="tile" aria-label="Site B, off-site copies: not set up">
+          <span class="l"><${SiteTag} b /> off-site</span><span class="n notset">not set up</span><span class="s"><a href=${OFFSITE_DOCS} target="_blank" rel="noopener">how to set it up</a></span></div>`
+        : html`<button type="button" class=${'tile' + (filter === id ? ' on' : '')} aria-pressed=${filter === id ? 'true' : 'false'}
           onClick=${() => setFilter(filter === id ? 'all' : id)}>
-        <span class="l">${label}</span><span class=${'n ' + (id === 'all' ? '' : n === 0 ? 'zero' : kind)}>${n}</span><span class="s">${sub}</span></button>`)}
+        <span class="l">${label}</span><span class=${'n ' + (id === 'all' ? '' : n === 0 ? 'zero' : kind)}>${n}</span><span class="s">${sub}</span></button>`))}
     </section>
     <section class="list" aria-label="Agents">
       <div class="list-head">
