@@ -46,7 +46,8 @@ replaces it under the same name and tag, `v0.1-dev`, and installs as an upgrade 
 - Optional off-site copies, on the same pages as primary: a job's off-site retention follows its primary retention
   until one is saved off-site, and Match primary makes it follow again (decision 053). The problems `offsite_copy`
   and `offsite_lag` show under the host and are alerted.
-- Logins through OIDC with three roles, or `holdfast ui-login` for root without an identity provider.
+- Logins through OIDC with three roles, or `holdfast ui-login` for root without an identity provider. A page opened
+  without a session goes straight to the login, without flashing a “not logged in” error on the way.
 - Recovery of the server itself from one recovery file and the bucket.
 - Packages for Ubuntu, Debian and the Red Hat family on x86_64, the one-line installer `install.sh`, and the
   Ansible collection `kabsdk.holdfast`, whose agent role sets the PostgreSQL client in `agent.yaml`.
