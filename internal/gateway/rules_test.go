@@ -109,6 +109,13 @@ func TestCheck(t *testing.T) {
 		{req(OpWrite, KindLocks), ReadOnly, ReasonReadOnly},
 		{req(OpDelete, KindLocks), ReadOnly, ReasonReadOnly},
 		{req(OpWrite, KindSnapshots), ReadOnly, ReasonReadOnly},
+		// Its own, while the server rolls it back: read only, not even a lock, until it is done (decision 058).
+		{req(OpRead, KindData), Frozen, ""},
+		{req(OpList, KindSnapshots), Frozen, ""},
+		{req(OpWrite, KindData), Frozen, ReasonRollback},
+		{req(OpWrite, KindSnapshots), Frozen, ReasonRollback},
+		{req(OpWrite, KindLocks), Frozen, ReasonRollback},
+		{req(OpDelete, KindLocks), Frozen, ReasonRollback},
 		// Another host's repository: nothing.
 		{req(OpRead, KindConfig), NoAccess, ReasonOtherRepository},
 		{req(OpList, KindSnapshots), NoAccess, ReasonOtherRepository},

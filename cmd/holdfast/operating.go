@@ -89,13 +89,95 @@ func hostOperatingCmds() []*cobra.Command {
 	return []*cobra.Command{rotate, decommission, rollbackCmd(), rollbacksCmd()}
 }
 
-// rollbackCmd shows what rolling a repository back to a time would change, and with --confirm does it
-// (decision 038).
+// rollbackPoints lists what was deleted or overwritten in a host's repository, newest first, each with the --to that
+// brings it back: the moment just before it.
+func rollbackPoints(agent string) error {
+	var ps struct {
+		Oldest  time.Time `json:"oldest"`
+		Refused string    `json:"refused"`
+		Points  []struct {
+			At          time.Time      `json:"at"`
+			To          time.Time      `json:"to"`
+			By          string         `json:"by"`
+			Actor       string         `json:"actor"`
+			Deleted     map[string]int `json:"deleted"`
+			Overwritten map[string]int `json:"overwritten"`
+			Jobs        []string       `json:"jobs"`
+		} `json:"points"`
+	}
+	raw, err := call("GET", "/api/v1/agents/"+url.PathEscape(agent)+"/rollback", nil, &ps)
+	if err != nil {
+		return err
+	}
+	if asJSON {
+		printJSON(raw)
+		return nil
+	}
+	if ps.Refused != "" {
+		fmt.Println("refused:", ps.Refused)
+		return nil
+	}
+	if len(ps.Points) == 0 {
+		fmt.Printf("Nothing was deleted or overwritten since %s, so there is nothing to bring back.\n", ps.Oldest.Local().Format("2006-01-02 15:04"))
+		return nil
+	}
+	w := table()
+	fmt.Fprintln(w, "WHEN\tWHAT\tBY\tBRING BACK WITH")
+	for _, p := range ps.Points {
+		what := rollbackWhat(p.Deleted, "deleted")
+		if o := rollbackWhat(p.Overwritten, "overwritten"); o != "" {
+			what = strings.TrimPrefix(what+"; "+o, "; ")
+		}
+		if len(p.Jobs) > 0 {
+			what += " (" + strings.Join(p.Jobs, ", ") + ")"
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t--to %s\n", p.At.Local().Format("2006-01-02 15:04:05"), what, rollbackBy(p.By, p.Actor, len(p.Overwritten) > 0), p.To.UTC().Format(time.RFC3339))
+	}
+	return w.Flush()
+}
+
+// rollbackWhat words what one moment deleted or overwrote: its snapshot files, then the rest by kind.
+func rollbackWhat(m map[string]int, verb string) string {
+	names := map[string]string{"snapshots": "snapshot files", "index": "index files", "data": "data files", "keys": "key files", "config": "config", "other": "other files"}
+	var parts []string
+	for _, k := range []string{"snapshots", "index", "data", "keys", "config", "other"} {
+		if n := m[k]; n > 0 {
+			parts = append(parts, fmt.Sprintf("%d %s", n, names[k]))
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, ", ") + " " + verb
+}
+
+// rollbackBy names who made one moment's changes: one of Holdfast's runs, or not Holdfast.
+func rollbackBy(by, actor string, overwritten bool) string {
+	name := map[string]string{"scheduled": "the daily run's retention", "run_now": "Run retention now", "prune_now": "Prune now", "delete_now": "Delete now", "rollback": "a rollback"}[by]
+	switch {
+	case name == "" && overwritten:
+		return "not Holdfast: changed in the bucket"
+	case name == "":
+		return "not Holdfast: deleted in the bucket"
+	case by == "scheduled":
+		return name
+	}
+	return name + ", by " + actor
+}
+
+// rollbackCmd lists what a rollback can undo, shows what rolling a repository back to a time would change, and with
+// --confirm does it (decisions 038 and 058).
 func rollbackCmd() *cobra.Command {
 	var to, confirm, msg string
-	var agentDown, wait bool
-	c := &cobra.Command{Use: "rollback <agent> --to <time>", Short: "Admin: roll the host's repository back to a time, from S3's old versions; without --confirm it only shows what would change",
+	var wait bool
+	c := &cobra.Command{Use: "rollback <agent> [--to <time>]", Short: "Admin: roll the host's repository back from S3's old versions; without --to it lists what was deleted or overwritten, without --confirm it only shows what would change",
 		Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, a []string) error {
+			if to == "" {
+				if confirm != "" {
+					return errors.New("--confirm needs --to: the time to roll back to, such as one this command lists without it")
+				}
+				return rollbackPoints(a[0])
+			}
 			t, err := parseTime(to)
 			if err != nil {
 				return err
@@ -152,7 +234,7 @@ func rollbackCmd() *cobra.Command {
 				return nil
 			}
 			var r rollbackRow
-			raw, err := call("POST", "/api/v1/agents/"+url.PathEscape(a[0])+"/rollback", map[string]any{"to": t, "confirm": confirm, "agent_down": agentDown, "message": msg}, &r)
+			raw, err := call("POST", "/api/v1/agents/"+url.PathEscape(a[0])+"/rollback", map[string]any{"to": t, "confirm": confirm, "message": msg}, &r)
 			if err != nil {
 				return err
 			}
@@ -185,10 +267,8 @@ func rollbackCmd() *cobra.Command {
 		}}
 	c.Flags().StringVar(&to, "to", "", "the time to roll back to, such as 2026-11-20T03:00:00Z or \"2026-11-20 03:00\" (local)")
 	c.Flags().StringVar(&confirm, "confirm", "", "the host's FQDN, typed to go ahead")
-	c.Flags().BoolVar(&agentDown, "agent-down", false, "the host is down, so its agent cannot be paused (only for an agent that is offline)")
 	c.Flags().BoolVar(&wait, "wait", false, "with --confirm: wait until it is done")
 	c.Flags().StringVarP(&msg, "message", "m", "", "why, for the audit log")
-	_ = c.MarkFlagRequired("to")
 	return c
 }
 

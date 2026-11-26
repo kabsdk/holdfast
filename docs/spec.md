@@ -433,19 +433,28 @@ disappeared (§3.6).
 ### 3.5b Rolling a repository back
 
 For a repository damaged or emptied behind Holdfast's back (decision 032), or after a mistaken Prune now
-(decision 038):
-- `holdfast agent rollback <agent> --to <time>` (`GET /api/v1/agents/{agent}/rollback?to=…`) shows what rolling the
-  host's prefix back to that time changes: objects brought back and set aside, by kind, the snapshots that come
-  back and those set aside, and when snapshot files were deleted. `--confirm <agent>` does it; admin only
-  (`repository.rollback`). The UI's host page has the same, and the "disappeared" alert links to it.
+(decisions 038 and 058):
+- `holdfast agent rollback <agent>` (`GET /api/v1/agents/{agent}/rollback`) lists what a rollback can undo: each
+  moment something in the repository was deleted or overwritten, from S3's versions, newest first, back to the
+  earliest a rollback reaches. Each says what went, its snapshots with their jobs and the other files by kind, and who
+  did it: one of Holdfast's runs (the daily retention, Run retention now, Prune now, Delete now, a rollback) with its
+  actor, or not Holdfast. Changes no run explains are one moment until they are quiet for 10 minutes; an overwrite is
+  never Holdfast's, as restic never overwrites a file. Each moment has the time just before it, `to`.
+- `--to <time>` (`?to=…`) shows what rolling the host's prefix back to that time changes: objects brought back and set
+  aside, by kind, the snapshots that come back and those set aside, and when snapshot files were deleted.
+  `--confirm <agent>` does it; admin only (`repository.rollback`). The UI's rollback page lists the moments, and
+  **Bring back…** shows one's preview and asks for the agent's name; it has no time field. The "disappeared" alert
+  links to it.
 - It copies each object's version of then over today's, and puts a delete marker in front of each object that was
   not there then. **No version is deleted**, so a rollback can itself be rolled back, to a time just before it.
   That makes it the third exception to the 7-day protection, beside Prune now and Delete now.
 - `locks/` is left alone; `keys/` and `config` are rolled back with the rest.
 - It is refused for a time before the host's last password rotation, or older than the lifecycle rule's days
   (B011), and when the maintenance key may not read old versions (`s3:GetObjectVersion`).
-- The host's agent is paused and idle while it runs (`agent_down` when the host is down instead); then `restic
-  check` runs, the snapshot list is read again, and the agent resumes and catches up on slots it missed.
+- While it runs, the gateway refuses the agent's writes to its repository, online or not: 503, and restic retries,
+  or the backup fails and is retried later. An online agent is paused and idle too, so it logs no failed backup; an
+  offline one, or one too old to pause, is not waited for. Then `restic check` runs, the snapshot list is read again,
+  and the agent resumes and catches up on slots it missed.
   Snapshots set aside get tombstones marked deleted by Holdfast; snapshots that come back are no longer
   disappeared. `holdfast agent rollbacks <agent>` lists each rollback and how it went.
 - A rollback past a prune brings back what the prune removed; the daily run forgets it again if no retention in

@@ -45,8 +45,9 @@ replaces it under the same name and tag, `v0.1-dev`, and installs as an upgrade 
   with what changed against an older snapshot (`holdfast find --snapshot` finds a name in one snapshot); and a
   snapshot's **Restore** as a tree of ticks, restic's `--exclude` or `--include`, in one column.
 - Retention by time windows, decided by restic's `forget --dry-run`; checks with stable codes; deleting snapshots,
-  always with a reason, in primary, off-site or both; Prune now; rolling a repository back from S3 versions;
-  restoring onto another host.
+  always with a reason, in primary, off-site or both; Prune now; rolling a repository back from S3 versions, picking
+  what was deleted or overwritten to bring back, while the gateway holds the agent's writes; restoring onto another
+  host.
 - Optional off-site copies, on the same pages as primary: a job's off-site retention follows its primary retention
   until one is saved off-site, and Match primary makes it follow again (decision 053). The problems `offsite_copy`
   and `offsite_lag` show under the host and are alerted. Without them, the Overview and Settings say that site B is

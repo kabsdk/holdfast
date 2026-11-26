@@ -150,6 +150,7 @@ const (
 	NoAccess Access = iota
 	ReadOnly        // a grant: another host's repository, for a restore onto this host
 	Own             // the host's own repository
+	Frozen          // the host's own repository while the server rolls it back: read only until it is done
 )
 
 // Refusal is a request the gateway refuses. Reason is stable: it labels the metric and the audit entry.
@@ -167,6 +168,7 @@ const (
 	ReasonDelete          = "delete"
 	ReasonServerOwned     = "server_owned"
 	ReasonMalformed       = "malformed"
+	ReasonRollback        = "rollback"
 )
 
 // Check says whether a host with this access to the request's repository may make the request.
@@ -177,6 +179,8 @@ func Check(r Request, a Access) error {
 		return &Refusal{ReasonOtherRepository, fmt.Sprintf("this host may not use the repository of %s", r.Repo)}
 	case a == ReadOnly && !read:
 		return &Refusal{ReasonReadOnly, fmt.Sprintf("this host may only read the repository of %s, for a restore", r.Repo)}
+	case a == Frozen && !read:
+		return &Refusal{ReasonRollback, "the server is rolling this repository back: writes wait until it is done"}
 	case read:
 		return nil
 	case r.Op == OpDelete && r.Kind != KindLocks:

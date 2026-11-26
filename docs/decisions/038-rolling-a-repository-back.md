@@ -1,6 +1,8 @@
 # 038: Rolling a repository back from S3's versions
 
-Status: accepted, 2026-11-22.
+Status: accepted, 2026-11-22. **Amended by [decision 058](058-rollback-picks-a-deletion.md) (2026-11-26):** the
+rollback lists what was deleted or overwritten, to bring one back, and the gateway holds the agent's writes while it
+runs, so there is no `agent_down`.
 
 ## Decision
 

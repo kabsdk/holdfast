@@ -81,7 +81,13 @@ func (g *Gateway) Serve(w http.ResponseWriter, r *http.Request, host string) {
 		return
 	}
 	if err := Check(req, g.o.Access(ctx, host, req.Repo)); err != nil {
-		g.refuse(ctx, w, host, req, err.(*Refusal), http.StatusForbidden)
+		ref, status := err.(*Refusal), http.StatusForbidden
+		if ref.Reason == ReasonRollback {
+			// For a while only: restic retries, and a backup that still meets it fails, and is retried later.
+			status = http.StatusServiceUnavailable
+			w.Header().Set("Retry-After", "60")
+		}
+		g.refuse(ctx, w, host, req, ref, status)
 		return
 	}
 	g.count(host, func(c *counters) { c.requests[req.Op]++ })

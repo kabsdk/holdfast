@@ -246,7 +246,7 @@ func (p S3Prober) Probe(ctx context.Context, fqdn string, gateway Key) Report {
 	}
 	b := p.Location.Bucket
 	prefix := Prefix(fqdn) + "/"
-	tag := "holdfast-probe-" + randHex(6)
+	tag := ProbePrefix + randHex(6)
 	own, lock := prefix+tag, prefix+"locks/"+tag
 	other := "repos/holdfast-probe.invalid/" + tag // a reserved name that is no host's prefix
 

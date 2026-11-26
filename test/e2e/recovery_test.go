@@ -172,6 +172,29 @@ func (e *env) rollback(fqdn string, to time.Time) rollbackOut {
 	return r
 }
 
+type rollbackPoint struct {
+	At      time.Time      `json:"at"`
+	To      time.Time      `json:"to"`
+	By      string         `json:"by"`
+	Actor   string         `json:"actor"`
+	Deleted map[string]int `json:"deleted"`
+	Jobs    []string       `json:"jobs"`
+}
+
+// rollbackPoints is what holdfast agent rollback lists without --to, newest first.
+func rollbackPoints(t *testing.T, e *env, fqdn string) []rollbackPoint {
+	t.Helper()
+	var out struct {
+		Refused string          `json:"refused"`
+		Points  []rollbackPoint `json:"points"`
+	}
+	must(t, json.Unmarshal(e.cli("agent", "rollback", fqdn), &out))
+	if out.Refused != "" {
+		t.Fatalf("rollback points refused: %s", out.Refused)
+	}
+	return out.Points
+}
+
 func TestRollback(t *testing.T) {
 	src := smallSource(t)
 	e := newEnv(t)
@@ -196,18 +219,25 @@ func TestRollback(t *testing.T) {
 	for _, id := range ids[:2] {
 		must(t, c.RemoveObject(context.Background(), e.bucket, "repos/"+fqdn+"/snapshots/"+id, minio.RemoveObjectOptions{}))
 	}
-	e.snapshotIDs(fqdn) // refresh
+	e.snapshotIDs(fqdn)         // refresh
+	time.Sleep(3 * time.Second) // a rollback is asked for well after the damage
 	if d, _ := e.hostRaw(fqdn)["disappeared"].(float64); d != 2 {
 		t.Fatalf("disappeared: %v", d)
 	}
 
+	// Without a time, the rollback lists what was deleted or overwritten: the two deletions are one moment, not
+	// Holdfast's, and bringing it back rolls back to just before it.
+	pts := rollbackPoints(t, e, fqdn)
+	if len(pts) == 0 || pts[0].By != "" || pts[0].Deleted["snapshots"] != 2 || !pts[0].To.After(good) || !slices.Equal(pts[0].Jobs, []string{"data"}) {
+		t.Fatalf("what can be rolled back to: %+v", pts)
+	}
 	// The preview brings them back and sets nothing aside.
 	var p struct {
 		Refused           string   `json:"refused"`
 		SnapshotsBack     []string `json:"snapshots_back"`
 		SnapshotsSetAside []string `json:"snapshots_set_aside"`
 	}
-	must(t, json.Unmarshal(e.cli("agent", "rollback", fqdn, "--to", good.UTC().Format(time.RFC3339)), &p))
+	must(t, json.Unmarshal(e.cli("agent", "rollback", fqdn, "--to", pts[0].To.UTC().Format(time.RFC3339)), &p))
 	want := append([]string(nil), ids[:2]...)
 	slices.Sort(want)
 	if p.Refused != "" || !slices.Equal(p.SnapshotsBack, want) || len(p.SnapshotsSetAside) != 0 {
@@ -217,7 +247,7 @@ func TestRollback(t *testing.T) {
 	// Rolled back: the agent paused and resumed, restic check passed, and the alert is gone.
 	before := time.Now()
 	time.Sleep(time.Second)
-	r := e.rollback(fqdn, good)
+	r := e.rollback(fqdn, pts[0].To)
 	if r.Status != "success" || r.CheckPassed == nil || !*r.CheckPassed || !slices.Equal(r.SnapshotsBack, want) {
 		t.Fatalf("rollback: %+v", r)
 	}
@@ -237,6 +267,10 @@ func TestRollback(t *testing.T) {
 	}
 	if d, _ := e.hostRaw(fqdn)["disappeared"].(float64); d != 0 || len(e.snapshotIDs(fqdn)) != 1 {
 		t.Fatalf("after rolling back the rollback: disappeared %v, snapshots %v", d, e.snapshotIDs(fqdn))
+	}
+	// That rollback's set-asides are the newest moment, its own, by whoever asked.
+	if pts := rollbackPoints(t, e, fqdn); len(pts) < 2 || pts[0].By != "rollback" || pts[0].Actor == "" || pts[0].Deleted["snapshots"] != 2 {
+		t.Fatalf("after rolling back the rollback, what can be rolled back to: %+v", pts)
 	}
 
 	// The agent backs up again.
