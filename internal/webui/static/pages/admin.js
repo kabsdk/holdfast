@@ -12,7 +12,7 @@ export function Audit({ hosts }) {
   return html`<h1>Audit log</h1>
     <p class="muted">Every action, with who did it, when, and the warnings they accepted. It is append-only. You see the entries of your agents.</p>
     <div class="row panel">
-      <label>Agent <select value=${host} onChange=${(e) => setHost(e.target.value)}><option value="">all you can see</option>${hosts.map((h) => html`<option>${h.fqdn}</option>`)}</select></label>
+      <label>Agent <select value=${host} onChange=${(e) => setHost(e.target.value)}><option value="">all you can see</option>${hosts.map((h) => html`<option value=${h.fqdn}>${h.fqdn}</option>`)}</select></label>
       <label>Action <input placeholder="such as restore.requested" value=${action} onInput=${(e) => setAction(e.target.value.trim())} /></label>
     </div>
     <${ErrorBox} error=${first.error || older.error} />
@@ -46,7 +46,7 @@ export function Access({ me }) {
       <thead><tr><th>Group</th><th>Role</th><th>Agents</th><th></th></tr></thead>
       <tbody>${rows.map((r, i) => html`<tr>
         <td><input value=${r.group} onInput=${(e) => set(i, 'group', e.target.value)} /></td>
-        <td><select value=${r.role} onChange=${(e) => set(i, 'role', e.target.value)}>${Object.keys(acc.data.roles).map((x) => html`<option>${x}</option>`)}</select></td>
+        <td><select value=${r.role} onChange=${(e) => set(i, 'role', e.target.value)}>${Object.keys(acc.data.roles).map((x) => html`<option value=${x}>${x}</option>`)}</select></td>
         <td><input style="width:100%" value=${r.hosts} onInput=${(e) => set(i, 'hosts', e.target.value)} placeholder="* or web*.example.com db01.example.com" /></td>
         <td><button class="small" onClick=${() => setRows(rows.filter((_, j) => j !== i))}>Remove</button></td></tr>`)}</tbody>
     </table>

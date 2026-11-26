@@ -318,6 +318,8 @@ retention. See [decision 013](decisions/013-no-rollback.md).
     `#/offsite/`, the API under `/api/v1/offsite/`, the CLI with `--offsite`. UI = API = CLI holds there too.
   - **Restoring an export** is `holdfast-server restore-export`, as root on a rebuilt server, before it starts
 : there is no server to ask yet. Writing and listing exports is UI, API and CLI as usual (§2.3).
+  - **A job's restore points by what they added**, most first (`sort=added`, `--sort added`), are in the API and the
+    CLI; the UI shows what each added in a day's list.
   - **What only root on an agent sets** is in its `agent.yaml`, never in the UI, the API or the CLI, which only show
     it: the restore limits (§5.4) and the PostgreSQL client with `postgresql.allow_in_place_restore` (§4.6). A
     compromised server or admin login is then not root on every agent (decision 030).
@@ -421,14 +423,15 @@ disappeared (§3.6).
     gives the date the data is really gone: the decommission's date plus the rule's days (B011). Its
     snapshots keep tombstones marked **Deleted by Holdfast**;
   - a decommissioned host added again starts over, with a new repository and a new password.
-- The repository's size is measured once a day: one listing of the prefix with its versions gives the
-  current bytes and objects, and the bytes of the old versions S3 keeps. The host's page and the metrics
-  `holdfast_repository_bytes{versions="current"|"noncurrent"}` and `holdfast_repository_objects` show it.
+- The repository's size is measured after each new snapshot, and once a day: one listing of the prefix with its
+  versions gives the current bytes and objects, and the bytes of the old versions S3 keeps. The host's page and the
+  metrics `holdfast_repository_bytes{versions="current"|"noncurrent"}` and `holdfast_repository_objects` show it.
 - Each job's **Stored** is measured with it: what the job's snapshots take in the repository, each piece of data once,
   as stored (`restic stats --mode raw-data --tag job=<job>`, run by the server). Jobs share data, so together they can
   take more than the repository. A job without snapshots has none, and one restic could not measure keeps its last.
   The job's `stored` in the API (`{bytes, measured_at}`) and `holdfast agent show` show it; off-site measures its own
-  copies the same way. A host is measured once more as soon as its first backup is there.
+  copies the same way. It is measured with the repository's size, after each new snapshot and once a day, so it is never
+  a day old. The UI calls it **in S3**, and says so on its ?.
 
 ### 3.5b Rolling a repository back
 
@@ -608,6 +611,9 @@ Retention is expressed only as time windows, which map to restic as follows.
 - Count-based flags are never used. It has been verified that `--keep-daily 14` on a weekly schedule keeps
   14 **weeks** of backups.
 - `--keep-last` is the only count, and it acts only as a floor.
+- The UI gives each tier its own unit: one per hour for hours, one per day for days, one per week for weeks, one per
+  month for months, one per year for years, and every backup for days; a window saved in another unit shows in this
+  one where that is exact (2 weeks are 14 days), and as it is where it is not. The API and the CLI take any unit.
 - It has also been verified that restic keeps the oldest snapshot when a tier cannot be filled.
 
 ### 4.3 Protection item
@@ -831,15 +837,20 @@ Restore and inspection behave like restic does on the host.
 - A line holds one subject: facts about different things, such as two sites, are rows of their own.
 - Where there are two sites, a site is named by one label everywhere: **SITE A**, blue, and **SITE B**, red. With one
   site, none is named.
+- The top bar's breadcrumbs are the way to the page, in the side menu's names, each a link but the page itself:
+  Overview / the agent / the job, or a side menu's page by its name alone.
+- A list's rows share their columns: each column is as wide as its widest value, and the width left over is shared
+  evenly among them. Every value starts at the top of its row, and none runs into the next column.
 
 ### 5.1a Agent page
 
 - Its name; under it a row for the agent, when it was last seen and the address it connected from ("10.0.4.17"), and
   one for its software: the Holdfast agent's, restic's and the operating system's versions.
 - One row per job: its state, what it backs up, its **last 7 backups**, its last and next backup, what it takes in each
-  site (**Stored**, §3.5), and **Back up now** and **Restore** (from the newest snapshot), the same size. What it backs
-  up is at most three paths, a line each, a long one cut in its middle with the whole on hover; more say how many,
-  and open the job's page. A PostgreSQL job shows its database and connection. Exclusions, schedule and retention are
+  site (**Stored**, §3.5, with a ?; with off-site copies, site B's line says how its copies are, such as up to date),
+  and **Back up now** and **Restore** (from the newest snapshot), the same size. What it backs up is at most three
+  paths, a line each, one longer than 50 characters cut in its middle, keeping its start and its file name, with the
+  whole on hover; more say how many, and open the job's page. A PostgreSQL job shows its database and connection. Exclusions, schedule and retention are
   on the job's page.
 - **PostgreSQL connections**, when the agent has any or has a PostgreSQL client: each with its URL, its users,
   whether their passwords are set, the jobs that use it, and its last test: the server's version, TLS, pg_dump's
@@ -885,15 +896,16 @@ Restore and inspection behave like restic does on the host.
 - **Several days** are chosen with shift-click, or a whole month by its name; Delete then deletes all their restore
   points, with one reason (§3.4).
 - The job's retention rules are chips; choosing one highlights the days it keeps.
-- **Added per backup**, above the calendar: what each backup added to the repository, as stored (restic's
-  `data_added_packed`, from the snapshot's summary), a bar per restore point for the newest 60, oldest on the left; a bar
-  opens its day. When one bar is over three times the next, as a job's first backup is, the scale stops above the next
-  and that bar says its size. **Largest first** lists them by what they added: `GET …/snapshots?job=<job>&sort=added`,
-  `holdfast snapshot list <agent> --job <job> --sort added`. A day's restore points show it as **Added**. It is what
-  the backup added when it ran, not what deleting it would free: later backups may use the same data.
+- A day's restore points show each one's **Size on host**, what its files take where the agent runs, which a restore
+  of all of it writes there, and **Added to S3**, what its backup wrote to S3 when it ran, as stored (restic's
+  `data_added_packed`, from the snapshot's summary), each with a ? that says so. Added to S3 is what the backup added
+  when it ran, not what deleting it would free: later backups may use the same data. The API and the CLI list a job's
+  restore points by it, most first: `GET …/snapshots?job=<job>&sort=added`, `holdfast snapshot list <agent> --job
+  <job> --sort added`.
 - Under the job's name, what it backs up, a path a line, and then its schedule. More than three paths, or any
   exclusion, fold into one line, such as "2 paths, 3 excluded", that opens them all.
-- The restore points' line has how many there are, the newest and the oldest, and what they take (**Stored**, §3.5).
+- The restore points' line has how many there are, the newest and the oldest, and what they take in S3 (**in S3**,
+  §3.5, with a ?).
   The repository is the agent's, on its page. With off-site copies, a line per site has what the job takes there, and
   site B's the job's off-site settings.
 - A PostgreSQL job's page names its connection and database; each restore point is a dump.

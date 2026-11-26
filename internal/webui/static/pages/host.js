@@ -1,6 +1,6 @@
 // An agent's page (decision 056): its jobs with what each backs up and its last backups, its PostgreSQL connections, its
 // recent runs and where its repository is. Every rule is the server's; this asks and shows.
-import { html, useState, useEffect, usePoll, useAction, link, offsiteLink, go, ago, until, fmtTime, fmtDay, dur, bytes, scheduleText, Pill, Snap, can, ErrorBox, Loading, EnrollLines, Menu, Problem, icons, fullDate, clock, localDay, browserZone, isPG, Kind, dbIcon, repoPath, storedTip, SiteTag } from '../lib.js';
+import { html, useState, useEffect, usePoll, useAction, link, offsiteLink, go, ago, until, fmtTime, fmtDay, dur, bytes, scheduleText, Pill, Snap, can, ErrorBox, Loading, EnrollLines, Menu, Problem, icons, fullDate, clock, localDay, browserZone, isPG, Kind, dbIcon, repoPath, storedTip, SiteTag, Q } from '../lib.js';
 import { api } from '../api.js';
 import { jobState, agentSub } from './overview.js';
 
@@ -189,11 +189,10 @@ function JobRow({ host, job, days, slots, cut, onRun, queued, vault, cols, store
     </div>
     <div style="min-width:0"><${Kind} job=${job} more=${link('agents', host.fqdn, 'jobs', job.id)} /></div>
     ${vault ? html`<${Strip} job=${job.id} days=${days} />` : html`<${Slots} fqdn=${host.fqdn} job=${job.id} slots=${slots} />`}
-    <div><div class="num">${s.last_success_at ? ago(s.last_success_at) : '—'}</div>${s.last_success_at && html`<div class="sub">${fmtTime(s.last_success_at)}</div>`}</div>
+    <div><div class="num">${s.last_success_at ? ago(s.last_success_at) : '—'}</div>${s.last_success_at && html`<div class="sub nowrap">${fmtTime(s.last_success_at)}</div>`}</div>
     <span class="num muted">${job.next_runs?.[0] ? until(job.next_runs[0]) : '—'}</span>
-    ${off && html`<div><div class=${'offstate ' + off.kind}>${off.text}</div>${off.sub && html`<div class="sub">${off.sub}</div>`}</div>`}
     <div class="stored"><div class="num nowrap" data-tip=${storedTip(job.stored, off ? 'site A' : '')}>${off ? html`<${SiteTag} /> ` : ''}${job.stored ? bytes(job.stored.bytes) : '—'}</div>
-      ${off && html`<div class="num nowrap" data-tip=${storedTip(storedB, 'site B')}><${SiteTag} b /> ${storedB ? bytes(storedB.bytes) : '—'}</div>`}</div>
+      ${off && html`<div class="nowrap"><span class="num" data-tip=${storedTip(storedB, 'site B')}><${SiteTag} b /> ${storedB ? bytes(storedB.bytes) : '—'}</span> · <span class=${'offstate ' + off.kind}>${off.text}</span>${off.sub ? html` <span class="sub">${off.sub}</span>` : ''}</div>`}</div>
     <div class="row" style="justify-content:flex-end;gap:.4rem;flex-wrap:nowrap;white-space:nowrap">
       ${queued && html`<span class="ok" style="font-size:12.5px">Queued</span>`}
       ${!vault && can(host, 'backup.run') && html`<button class="small" disabled=${queued} onClick=${onRun}>Back up now</button>`}
@@ -201,9 +200,10 @@ function JobRow({ host, job, days, slots, cut, onRun, queued, vault, cols, store
     </div>
   </div>`;
 }
-// The squares' column: seven last backups, or on the off-site pages fourteen days of copies.
-const jobCols = (off, vault) => (off ? `minmax(0,1.4fr) minmax(0,1.4fr) 130px minmax(0,1fr) minmax(0,.7fr) minmax(0,.9fr) minmax(0,.9fr) 210px`
-  : `minmax(0,1.5fr) minmax(0,1.5fr) ${vault ? '225px' : '130px'} minmax(0,1fr) minmax(0,.8fr) minmax(0,.7fr) 210px`);
+// The jobs' columns: each as wide as its widest value, the rest of the width shared evenly. A job's name and what it
+// backs up may give way, the name wrapping and a path cut in its middle; the squares are seven last backups, or on the
+// off-site pages fourteen days of copies.
+const jobCols = () => 'auto auto auto auto auto auto auto';
 
 // Recent runs, folded: a job's backups on one day that ended the same way are one line, and so are a run and its
 // retries. Restores, checks and the rest are a line each.
@@ -233,11 +233,11 @@ function checked(e, cycle) {
 
 function Runs({ host, events, cycle }) {
   const groups = fold(events).slice(0, 8);
-  const cols = '170px 110px minmax(0,3fr) 100px 110px';
+  const cols = 'auto auto minmax(12rem,auto) auto auto';
   const pill = (st) => (st === 'success' ? 'ok' : st === 'warning' ? 'warning' : st === 'skipped' ? '' : 'error');
   return html`<section class="list" aria-labelledby="runs-h">
     <div class="list-head"><h2 id="runs-h">Recent runs</h2></div>
-    ${groups.length === 0 ? html`<p class="muted" style="padding:0 1rem 1rem">No run yet.</p>` : html`<div class="scrollx"><div style="min-width:760px">
+    ${groups.length === 0 ? html`<p class="muted" style="padding:0 1rem 1rem">No run yet.</p>` : html`<div class="scrollx"><div class="gtable" style=${'--cols:' + cols + ';min-width:760px'}>
       <div class="gt head" style=${'--cols:' + cols}><span>When</span><span>Job</span><span>Result</span><span>Snapshot</span><span>By</span></div>
       ${groups.map((g) => {
         const e = g.e;
@@ -302,7 +302,7 @@ function ConnCard({ host, c, testing, onTest, onEdit }) {
   const nojob = rows.filter((r) => !jobFor(r.name));
   const add = (names) => link('agents', host.fqdn, 'configure') + '?' + new URLSearchParams({ connection: c.name, databases: names.join(',') }).toString();
   const mayAdd = can(host, 'config.jobs');
-  const cols = 'minmax(170px,1fr) 90px minmax(110px,.8fr) minmax(150px,1fr) 110px';
+  const cols = 'minmax(10rem,auto) auto auto auto auto';
   return html`<div class="conn">
     <div class="conn-head">
       <div style="min-width:0;flex:1 1 420px;display:flex;flex-direction:column;gap:.25rem">
@@ -316,7 +316,7 @@ function ConnCard({ host, c, testing, onTest, onEdit }) {
         ${can(host, 'config.storage') && html`<button class="small" onClick=${onEdit}>Edit…</button>`}
       </div>
     </div>
-    ${dbs && html`<div class="scrollx"><div style="min-width:640px">
+    ${dbs && html`<div class="scrollx"><div class="gtable" style=${'--cols:' + cols + ';min-width:640px'}>
       <div class="gt head" style=${'--cols:' + cols}><span>Database, at the last test</span><span>Size</span><span>Owner</span><span>Job</span><span></span></div>
       ${rows.map((r) => {
         const j = jobFor(r.name);
@@ -440,7 +440,7 @@ export function Host({ fqdn, reloadHosts, vault, settings }) {
   const errors = probs.filter((p) => p.severity === 'error').length;
   const needy = new Set(probs.filter((p) => p.job_id).map((p) => p.job_id)).size;
   const run = (j) => act.run(() => api.runNow(h.fqdn, j.id)).then((r) => { if (r) setQueued({ ...queued, [j.id]: true }); });
-  const cols = jobCols(withOff, vault);
+  const cols = jobCols(vault);
   const a = h.agent;
   const withPG = !vault && (!!a?.postgresql?.client || (h.postgresql || []).length > 0);
   return html`
@@ -490,8 +490,8 @@ export function Host({ fqdn, reloadHosts, vault, settings }) {
       <div class="list-head"><h2 id="jobs-h">${vault ? 'Copied jobs' : 'Jobs'}</h2>
         ${(days.error || slots.error) && html`<span class="muted">The ${vault ? 'last 14 days' : 'last backups'} could not be read: ${(days.error || slots.error).message}</span>`}</div>
       ${h.jobs.length === 0 ? html`<p class="muted" style="padding:0 1rem 1rem">No job yet.${!vault && can(h, 'config.jobs') ? html` <a href=${link('agents', h.fqdn, 'configure')}>Add one</a>.` : ''}</p>` : html`
-      <div class="scrollx"><div style=${'min-width:' + (withOff ? 1060 : 880) + 'px'}>
-        <div class="gt head" style=${'--cols:' + cols}><span>Job</span><span>Backs up</span><span>${vault ? 'Last 14 days' : 'Last 7 backups'}</span><span>Last backup</span><span>Next</span>${withOff && html`<span>Off-site</span>`}<span>Stored</span><span></span></div>
+      <div class="scrollx"><div class="gtable" style=${'--cols:' + cols + ';min-width:' + (withOff ? 960 : 880) + 'px'}>
+        <div class="gt head" style=${'--cols:' + cols}><span>Job</span><span>Backs up</span><span>${vault ? 'Last 14 days' : 'Last 7 backups'}</span><span>Last backup</span><span>Next</span><span>Stored <${Q} tip=${storedTip(null, '').replace(/ Measured.*$/, ' Measured after each backup.')} /></span><span></span></div>
         ${h.jobs.map((j) => html`<${JobRow} key=${j.id} host=${h} job=${j} vault=${vault} cols=${cols} queued=${!!queued[j.id]} onRun=${() => run(j)}
           storedB=${(hostB.data?.jobs || []).find((x) => x.id === j.id)?.stored}
           days=${days.data && days.data.jobs.find((x) => x.job_id === j.id)} slots=${slots.data && slots.data.jobs.find((x) => x.job_id === j.id)?.slots} cut=${(cuts.data || []).some((c) => c.fqdn === h.fqdn && c.job_id === j.id)} />`)}

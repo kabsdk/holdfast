@@ -17,7 +17,7 @@ const OFFSITE_CODES = ['offsite_copy', 'offsite_lag'];
 const worst = (h) => ((h.problems || []).some((p) => p.severity === 'error') ? 2 : (h.problems || []).length ? 1 : 0);
 const other = (h) => (h.problems || []).some((p) => !JOB_CODES.includes(p.code) && !OFFSITE_CODES.includes(p.code));
 const offsite = (h) => (h.problems || []).some((p) => OFFSITE_CODES.includes(p.code));
-const COLS = 'minmax(0,2fr) minmax(0,3fr) minmax(0,1fr) minmax(0,1fr) minmax(0,1.1fr)';
+const COLS = 'minmax(12rem,auto) minmax(12rem,auto) auto auto auto';
 
 // agentSub is the line under an agent's name: the address it last connected from, which is all the server knows of
 // where it runs (decision 056), and its system.
@@ -97,7 +97,7 @@ export function Overview({ me, hosts, vault, settings }) {
         </div>
         <input id="host-filter" type="search" aria-label="Filter agents by name" placeholder="Filter by name" value=${q} onInput=${(e) => setQ(e.target.value)} />
       </div>
-      <div class="scrollx"><div style="min-width:860px">
+      <div class="scrollx"><div class="gtable" style=${'--cols:' + COLS + ';min-width:860px'}>
         <div class="gt head" style=${'--cols:' + COLS}><span>Agent</span><span>Jobs</span><span>Last backup</span><span>Next backup</span><span>Agent seen</span></div>
         ${shown.map((h) => html`<${AgentRow} key=${h.fqdn} h=${h} />`)}
         ${shown.length === 0 && html`<p class="muted" style="padding:1rem">${hosts.length === 0 ? 'No agents yet.' : 'No agent matches.'}</p>`}

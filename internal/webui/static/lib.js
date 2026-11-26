@@ -157,9 +157,13 @@ export function bytes(n) {
 
 // storedTip says what a job's Stored is: what its restore points take in a site's repository, each piece of data once.
 export function storedTip(s, site) {
-  return s ? `What the job's restore points take in ${site || 'this site'}'s repository, each piece of data once (restic stats --mode raw-data). Measured ${fmtTime(s.measured_at)}.`
-    : 'Not measured yet: the server measures each job once a day.';
+  return (site ? `In ${site}'s S3. ` : '') + `What the job's restore points take in S3 now, each piece of data once (restic stats --mode raw-data). Measured after each backup${s ? `, last ${fmtTime(s.measured_at)}` : ': not yet'}.`;
 }
+
+// Q is a small ? that says what a figure is, on hover: Size on host, Added to S3, in S3.
+export const Q = ({ tip }) => html`<span class="qmark" tabindex="0" data-tip=${tip} aria-label=${tip}>?</span>`;
+export const TIP_HOST = 'What the snapshot\'s files take where the agent runs, before restic compresses and deduplicates them. Restoring all of it writes this much there.';
+export const TIP_ADDED = 'What this backup wrote to S3 when it ran, compressed, each piece of data once. Later backups may reuse it, so deleting this one alone frees less. It counts a little overhead, such as pack headers, that in S3 does not.';
 
 // Durations come from Go as "24h0m0s"; this makes them read like "1 d".
 export function dur(s) {
@@ -329,11 +333,23 @@ export const dumpFile = (job) => (job.postgresql.globals ? 'globals.sql' : job.p
 export const dbIcon = (size = 14) => html`<svg class="kind" width=${size} height=${size} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="PostgreSQL"><ellipse cx="12" cy="5" rx="8" ry="3"></ellipse><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5"></path><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"></path></svg>`;
 export const folderIcon = (size = 14) => html`<svg class="kind" width=${size} height=${size} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="Files"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"></path></svg>`;
 
-// CutPath is a path that fits its column: cut in its middle where the column is narrow, keeping its start and its
-// file name, the folders between giving way first. The whole is on hover.
+// midcut cuts a path longer than max characters in its middle, keeping its start and its file name: whole names, as
+// many as fit, the first ones up to half of it, then the last ones.
+export function midcut(p, max = 50) {
+  if (p.length <= max) return p;
+  const parts = p.split('/');
+  let i = 0, j = parts.length - 1, head = parts[0], tail = parts[j];
+  const len = () => head.length + 3 + tail.length; // head/…/tail
+  if (len() > max) return '…' + p.slice(p.length - (max - 1));
+  while (i + 1 < j && len() + parts[i + 1].length + 1 <= max / 2) head += '/' + parts[++i];
+  while (j - 1 > i && len() + parts[j - 1].length + 1 <= max) tail = parts[--j] + '/' + tail;
+  while (i + 1 < j && len() + parts[i + 1].length + 1 <= max) head += '/' + parts[++i];
+  return i + 1 < j ? head + '/…/' + tail : p;
+}
+
+// CutPath is a path of at most 50 characters, cut in its middle; the whole is on hover.
 export function CutPath({ path }) {
-  const i = path.lastIndexOf('/');
-  return html`<span class="cutpath mono" data-tip=${path}><span class="head">${path.slice(0, i + 1)}</span><span class="tail">${path.slice(i + 1)}</span></span>`;
+  return html`<span class="cut mono" data-tip=${path}>${midcut(path)}</span>`;
 }
 
 // Kind is a job's "Backs up" cell: a database with its connection, or its paths, a line each, at most three; more
