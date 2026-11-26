@@ -848,7 +848,8 @@ Restore and inspection behave like restic does on the host.
 - The last 7 backups are a square per backup the job's schedule called for, oldest first, so a missed one shows and a
   weekly job's seven cover seven weeks: backed up, incomplete or failed, as the backup for that slot ended, its retries
   included; missed, when none ran for it; skipped, when it came while the job's previous run was still going; not run
-  yet, for the newest; or before the job's first backup, which had nothing to miss. A backup run by hand is on no slot.
+  yet, for the newest; or before the job's first backup, which had nothing to miss. A backup run outside the schedule,
+  a job's first or one run by hand, stands in for the slot it ran in when that slot has none of its own.
   A square opens the job's page on its day (`?day=YYYY-MM-DD`). The server puts each backup on the slot it was for, by
   the job's schedule as it is now: `GET /api/v1/agents/{agent}/slots?count=7` and `holdfast agent slots <agent>` (up to
   30).

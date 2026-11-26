@@ -863,20 +863,21 @@ func (q *Q) BackupOutcomes(ctx context.Context, fqdn string, since time.Time) ([
 	return out, rows.Err()
 }
 
-// SlotRun is a scheduled backup and the slot it was for, for the agent page's last backups.
+// SlotRun is a backup, and the slot it was for, for the agent page's last backups. ScheduledFor is zero for one run
+// outside the schedule: a job's first backup, or one run by hand.
 type SlotRun struct {
 	ScheduledFor time.Time
 	Status       string
+	Started      time.Time
 	Finished     time.Time
 	SnapshotID   string
 	Error        string
 }
 
-// SlotRuns returns a host's scheduled backups for slots since a time, by job, each job's in the order they finished.
-// Backups run by hand are for no slot, and are left out.
+// SlotRuns returns a host's backups since a time, by job, each job's in the order they finished.
 func (q *Q) SlotRuns(ctx context.Context, fqdn string, since time.Time) (map[string][]SlotRun, error) {
-	rows, err := q.db.Query(ctx, `SELECT job_id, scheduled_for, status, finished_at, coalesce(snapshot_id, ''), coalesce(error, '') FROM events
-		WHERE fqdn = $1 AND kind = 'backup' AND scheduled_for >= $2 ORDER BY finished_at`, fqdn, since)
+	rows, err := q.db.Query(ctx, `SELECT job_id, scheduled_for, status, started_at, finished_at, coalesce(snapshot_id, ''), coalesce(error, '') FROM events
+		WHERE fqdn = $1 AND kind = 'backup' AND (scheduled_for >= $2 OR (scheduled_for IS NULL AND started_at >= $2)) ORDER BY finished_at`, fqdn, since)
 	if err != nil {
 		return nil, err
 	}
@@ -885,8 +886,12 @@ func (q *Q) SlotRuns(ctx context.Context, fqdn string, since time.Time) (map[str
 	for rows.Next() {
 		var job string
 		var r SlotRun
-		if err := rows.Scan(&job, &r.ScheduledFor, &r.Status, &r.Finished, &r.SnapshotID, &r.Error); err != nil {
+		var slot *time.Time
+		if err := rows.Scan(&job, &slot, &r.Status, &r.Started, &r.Finished, &r.SnapshotID, &r.Error); err != nil {
 			return nil, err
+		}
+		if slot != nil {
+			r.ScheduledFor = *slot
 		}
 		out[job] = append(out[job], r)
 	}

@@ -46,6 +46,18 @@ func TestJobSlots(t *testing.T) {
 	if got := jobSlots(daily, time.UTC, nil, time.Time{}, false, now, 3); got[0].State != SlotBefore || got[2].State != SlotBefore {
 		t.Fatalf("a job with no backup yet: %+v", got)
 	}
+	// A backup run outside the schedule stands in for the slot it ran in, when that slot has none of its own: one run
+	// by hand on the 22nd fills the 22nd's, and a job's first backup, today after the 02:00 slot, fills today's.
+	byHand := store.SlotRun{Status: "success", Started: at(22, 15), Finished: at(22, 16), SnapshotID: "manual"}
+	got = jobSlots(daily, time.UTC, append(append([]store.SlotRun{}, runs...), byHand), at(19, 3), true, now, 7)
+	if got[2].State != "success" || !got[2].Unscheduled || got[2].SnapshotID != "manual" || got[1].Unscheduled {
+		t.Fatalf("a backup by hand in a missed slot: %+v", got[2])
+	}
+	first := store.SlotRun{Status: "success", Started: at(26, 7), Finished: at(26, 8), SnapshotID: "first"}
+	got = jobSlots(daily, time.UTC, []store.SlotRun{first}, at(26, 8), true, now, 7)
+	if got[6].State != "success" || !got[6].Unscheduled || got[5].State != SlotBefore {
+		t.Fatalf("a job whose first backup came after the newest slot: %+v", got)
+	}
 	// A weekly job's 7 slots cover 7 weeks.
 	weekly := schedule.Schedule{Weekly: &schedule.Weekly{Days: []string{"sun"}, At: "03:00"}}
 	if got := jobSlots(weekly, time.UTC, nil, at(1, 0).AddDate(0, -3, 0), true, now, 7); len(got) != 7 || now.Sub(got[0].At) < 6*7*24*time.Hour {

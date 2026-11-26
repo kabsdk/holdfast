@@ -329,18 +329,11 @@ export const dumpFile = (job) => (job.postgresql.globals ? 'globals.sql' : job.p
 export const dbIcon = (size = 14) => html`<svg class="kind" width=${size} height=${size} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="PostgreSQL"><ellipse cx="12" cy="5" rx="8" ry="3"></ellipse><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5"></path><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"></path></svg>`;
 export const folderIcon = (size = 14) => html`<svg class="kind" width=${size} height=${size} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="Files"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"></path></svg>`;
 
-// midcut cuts a long path in its middle, keeping its start and its file name: whole names, as many as fit in max
-// characters, the first ones up to half of it, then the last ones. The full path goes on hover.
-export function midcut(p, max = 48) {
-  if (p.length <= max) return p;
-  const parts = p.split('/');
-  let i = 0, j = parts.length - 1, head = parts[0], tail = parts[j];
-  const len = () => head.length + 3 + tail.length; // head/…/tail
-  if (len() > max) return '…' + p.slice(p.length - (max - 1));
-  while (i + 1 < j && len() + parts[i + 1].length + 1 <= max / 2) head += '/' + parts[++i];
-  while (j - 1 > i && len() + parts[j - 1].length + 1 <= max) tail = parts[--j] + '/' + tail;
-  while (i + 1 < j && len() + parts[i + 1].length + 1 <= max) head += '/' + parts[++i];
-  return i + 1 < j ? head + '/…/' + tail : p;
+// CutPath is a path that fits its column: cut in its middle where the column is narrow, keeping its start and its
+// file name, the folders between giving way first. The whole is on hover.
+export function CutPath({ path }) {
+  const i = path.lastIndexOf('/');
+  return html`<span class="cutpath mono" data-tip=${path}><span class="head">${path.slice(0, i + 1)}</span><span class="tail">${path.slice(i + 1)}</span></span>`;
 }
 
 // Kind is a job's "Backs up" cell: a database with its connection, or its paths, a line each, at most three; more
@@ -351,7 +344,7 @@ export function Kind({ job, more }) {
   if (!paths.length) return html`<span class="kindline">${folderIcon()}<span>—</span></span>`;
   const shown = more ? paths.slice(0, 3) : paths;
   return html`<span class="kindline">${folderIcon()}<span class="paths">
-    ${shown.map((x) => html`<span class="mono" data-tip=${x}>${midcut(x)}</span>`)}
+    ${shown.map((x) => html`<${CutPath} path=${x} />`)}
     ${more && paths.length > 3 && html`<a class="more" href=${more}>+${paths.length - 3} more</a>`}</span></span>`;
 }
 
