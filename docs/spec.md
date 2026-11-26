@@ -102,7 +102,9 @@ unprivileged user (decision 055)
 - The maintenance leader: it runs forget, prune and check.
   - `restic check` takes an exclusive lock, and a backup that meets it waits or fails. So each agent
     checks its own repository: once a day, right after a backup, inside its one-restic-at-a-time loop,
-    reading a rotating 1/30 of the data (decision 030). `holdfast check` asks every agent to check now.
+    reading a rotating 1/30 of the data (decision 030). `holdfast check` asks every agent to check now. Its report
+    names the part it read, `read_data_subset` such as `25/30`; the agent's recent runs say so, as a check of the
+    repository: "its structure, and data part 25 of 30", and so does `holdfast agent events`.
   - The server tests each host's storage contract once a day. It checks a repository itself only before
     it prunes it.
   - A backup or a check that runs past its timeout is stopped and reported as failed, so the host's other
@@ -844,7 +846,9 @@ Restore and inspection behave like restic does on the host.
 - The off-site pages draw each job's copies a day at a time instead, the last 14 days, a square a day coloured by the
   worst of the day: `GET /api/v1/agents/{agent}/days?days=14&tz=…` and `holdfast agent days <agent>` (up to 92 days,
   in this machine's zone by default), which the job page's calendar also uses for the days a backup failed.
-- Recent runs fold: a job's backups on one day that ended the same way are one line.
+- Recent runs fold: a job's backups on one day that ended the same way are one line. A check is of the repository, and
+  says what it read: its structure, and which part of the data (§2.1). An agent too old to say reads one part of the
+  cycle's, "a 30th of the data".
 - The repository, once for all the agent's jobs, a row per subject: where it is and its size, with what S3 still keeps
   of the data deleted from it (what a rollback can bring back, §3.5b); the escrow file; Object Lock; a decommission.
   With off-site copies, a row per site.

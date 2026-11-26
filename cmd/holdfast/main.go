@@ -412,8 +412,13 @@ func hostCmd() *cobra.Command {
 	}})
 	c.AddCommand(&cobra.Command{Use: "events <agent>", Short: "Recent runs on a host", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, a []string) error {
 		var evs []struct {
-			Kind, JobID, Status, SnapshotID, Error string
-			Finished                               time.Time
+			Kind       string            `json:"kind"`
+			JobID      string            `json:"job_id"`
+			Status     string            `json:"status"`
+			SnapshotID string            `json:"snapshot_id"`
+			Error      string            `json:"error"`
+			Finished   time.Time         `json:"finished"`
+			Detail     map[string]string `json:"detail"`
 		}
 		raw, err := call("GET", "/api/v1/agents/"+url.PathEscape(a[0])+"/events", nil, &evs)
 		if err != nil {
@@ -424,13 +429,21 @@ func hostCmd() *cobra.Command {
 			return nil
 		}
 		w := table()
-		fmt.Fprintln(w, "FINISHED\tKIND\tJOB\tSTATUS\tSNAPSHOT\tERROR")
+		fmt.Fprintln(w, "FINISHED\tKIND\tJOB\tSTATUS\tSNAPSHOT\tDETAIL")
 		for _, e := range evs {
 			id := e.SnapshotID
 			if len(id) > 8 {
 				id = id[:8]
 			}
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", e.Finished.Local().Format("2006-01-02 15:04:05"), e.Kind, e.JobID, e.Status, id, e.Error)
+			job, detail := e.JobID, e.Error
+			if e.Kind == "check" {
+				// A check is of the repository: its structure, and the part of the data it read (spec §3.4a).
+				job = "the repository"
+				if detail == "" {
+					detail = checkedText(e.Detail["read_data_subset"])
+				}
+			}
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", e.Finished.Local().Format("2006-01-02 15:04:05"), e.Kind, job, e.Status, id, detail)
 		}
 		return w.Flush()
 	}})
@@ -541,6 +554,16 @@ func hostSlotsCmd() *cobra.Command {
 		}}
 	cmd.Flags().IntVar(&n, "count", 7, "how many slots per job, the newest last, up to 30")
 	return cmd
+}
+
+// checkedText says what a check read, from its read_data_subset, n/cycle: the repository's structure, and that part of
+// its data. An agent that does not say which part read one of the cycle's.
+func checkedText(subset string) string {
+	n, cycle, ok := strings.Cut(subset, "/")
+	if !ok {
+		return "its structure, and a part of the data"
+	}
+	return fmt.Sprintf("its structure, and data part %s of %s (all of it is read every %s days)", n, cycle, cycle)
 }
 
 // localZone is this machine's time zone by name, which the server can load: $TZ, else /etc/localtime's link into the

@@ -1170,7 +1170,9 @@ func (a *Agent) runCheck(ctx context.Context, commandID string) bool {
 	if ctx.Err() != nil {
 		return false
 	}
-	ev := proto.Event{Kind: proto.KindCheck, CommandID: commandID, Status: proto.StatusSuccess, Started: started, Finished: a.now().UTC(), Revision: rev}
+	// The part of the data it read: n of cycle, a different one each day, so all of it is read once per cycle.
+	ev := proto.Event{Kind: proto.KindCheck, CommandID: commandID, Status: proto.StatusSuccess, Started: started, Finished: a.now().UTC(), Revision: rev,
+		Detail: map[string]string{"read_data_subset": subset}}
 	switch {
 	case timedOut:
 		ev.Status, ev.ResticExit = proto.StatusFailed, restic.ExitCode(err)

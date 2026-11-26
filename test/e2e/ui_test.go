@@ -156,6 +156,18 @@ func TestUIPages(t *testing.T) {
 	run(t, ctx, "close the menu", chromedp.Click(`button[aria-label="More agent actions"]`, chromedp.ByQuery), chromedp.WaitNotPresent(`.menu-pop`, chromedp.ByQuery))
 	clickText(t, ctx, "button", "Back up now")
 	waitText(t, ctx, "Queued")
+	// A check, in the recent runs, is of the repository and says what it read.
+	e.cli("check")
+	waitFor(t, "the agent's check", time.Minute, func() bool {
+		for _, ev := range e.events(web) {
+			if ev.Kind == "check" {
+				return true
+			}
+		}
+		return false
+	})
+	open(t, ctx, "#/agents/"+web)
+	waitText(t, ctx, "sound: its structure, and data part ")
 
 	// The days the agent page draws, as the API and the CLI give them: today has both backups, and all went well.
 	var hd struct {

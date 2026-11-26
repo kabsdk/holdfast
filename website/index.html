@@ -412,7 +412,7 @@ figure.shot img { display: block; width: 100%; height: auto; border: 1px solid v
       <li><strong>If the server is down</strong> at a backup's time, the backup fails, as it goes through the gateway. While one of its retries is still to come, about an hour, the retry runs as soon as the server answers again. After a longer outage the job runs at its next slot, or sooner with <strong>Back up now</strong>.</li>
       <li><strong>A backup or check that runs too long</strong> is stopped at the schedule's longest gap (at least an hour) and reported as failed, so the host's other jobs can run. A first backup too big for one gap finishes over several runs: restic saves its index as it goes, so what a stopped run uploaded is not sent again.</li>
       <li><strong>One restic at a time per host.</strong> Backups, checks and restores queue on the host. A backup that meets the daily clean-up's lock on its repository waits up to 15 minutes (<code>retry_lock</code>), then fails and is retried like any failed run.</li>
-      <li><strong>Each agent checks its own repository</strong> once a day, right after a backup, reading a rotating 1/30 of the data, so all of it is read once a month.</li>
+      <li><strong>Each agent checks its own repository</strong> once a day, right after a backup, reading a rotating 1/30 of the data, so all of it is read once a month. The agent's recent runs say which part each check read.</li>
     </ul>
   </div>
 
