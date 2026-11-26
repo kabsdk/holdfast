@@ -407,6 +407,17 @@ func (e *env) cliErr(args ...string) ([]byte, error) {
 	return out.Bytes(), err
 }
 
+// cliText runs the CLI for what a person reads: its tables, not the API's JSON.
+func (e *env) cliText(args ...string) []byte {
+	e.t.Helper()
+	cmd := exec.Command(filepath.Join(binDir, "holdfast"), append([]string{"--socket", e.sock}, args...)...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		e.t.Fatalf("holdfast %s: %v\n%s", strings.Join(args, " "), err, out)
+	}
+	return out
+}
+
 // gatewayPolicy is the example gateway policy of docs/storage.md, for this environment's bucket (decision 041): read
 // and write under repos/, delete only lock files, never a version.
 func (e *env) gatewayPolicy() string {
@@ -563,17 +574,18 @@ func pointAgentAt(t *testing.T, a *agentProc, from, to string) {
 
 // event is one run as the API returns it.
 type event struct {
-	ID           string     `json:"id"`
-	Kind         string     `json:"kind"`
-	JobID        string     `json:"job_id"`
-	CommandID    string     `json:"command_id"`
-	Status       string     `json:"status"`
-	ScheduledFor *time.Time `json:"scheduled_for"`
-	Started      time.Time  `json:"started"`
-	Finished     time.Time  `json:"finished"`
-	Revision     int64      `json:"revision"`
-	SnapshotID   string     `json:"snapshot_id"`
-	Error        string     `json:"error"`
+	ID           string            `json:"id"`
+	Kind         string            `json:"kind"`
+	JobID        string            `json:"job_id"`
+	CommandID    string            `json:"command_id"`
+	Status       string            `json:"status"`
+	ScheduledFor *time.Time        `json:"scheduled_for"`
+	Started      time.Time         `json:"started"`
+	Finished     time.Time         `json:"finished"`
+	Revision     int64             `json:"revision"`
+	SnapshotID   string            `json:"snapshot_id"`
+	Error        string            `json:"error"`
+	Detail       map[string]string `json:"detail"`
 }
 
 // events returns a host's runs, newest first, through the CLI.

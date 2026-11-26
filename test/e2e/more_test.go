@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -227,7 +228,8 @@ func TestConfigHistoryDriftCheckAndNoLeaks(t *testing.T) {
 	waitFor(t, "the agent's check", time.Minute, func() bool {
 		for _, ev := range e.events(fqdn) {
 			if ev.Kind == "check" && ev.CommandID == checks[0].Command {
-				if ev.Status != "success" {
+				// It says which part of the data it read, a different one each day (spec §2.1).
+				if ev.Status != "success" || ev.Detail["read_data_subset"] != fmt.Sprintf("%d/30", time.Now().UTC().YearDay()%30+1) {
 					t.Fatalf("the agent's check: %+v", ev)
 				}
 				return true
@@ -235,6 +237,10 @@ func TestConfigHistoryDriftCheckAndNoLeaks(t *testing.T) {
 		}
 		return false
 	})
+	// The CLI's runs say what it read, as the agent page's do.
+	if out := string(e.cliText("agent", "events", fqdn)); !strings.Contains(out, "the repository") || !strings.Contains(out, "its structure, and data part ") {
+		t.Fatalf("holdfast agent events does not say what the check read:\n%s", out)
+	}
 	if m := metrics(t, e.url+"/metrics"); m[`holdfast_maintenance_last_success_timestamp_seconds{host="mon01.example.com",kind="check"}`] == 0 {
 		t.Fatal("check success not exported")
 	}

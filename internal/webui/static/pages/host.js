@@ -222,7 +222,16 @@ function fold(events) {
   return out;
 }
 
-function Runs({ host, events }) {
+// checked says what a check read: the repository's structure, and the part of its data its read_data_subset names, a
+// different one each day (spec §3.4a). An agent that does not say which read one part of the cycle's.
+const ordinal = (n) => n + ([11, 12, 13].includes(n % 100) ? 'th' : ({ 1: 'st', 2: 'nd', 3: 'rd' }[n % 10] || 'th'));
+function checked(e, cycle) {
+  const m = /^(\d+)\/(\d+)$/.exec(e.detail?.read_data_subset || '');
+  if (m) return `its structure, and data part ${m[1]} of ${m[2]} (all of it is read every ${m[2]} days)`;
+  return cycle > 1 ? `its structure, and a ${ordinal(cycle)} of the data` : 'its structure, and all of the data';
+}
+
+function Runs({ host, events, cycle }) {
   const groups = fold(events).slice(0, 8);
   const cols = '170px 110px minmax(0,3fr) 100px 110px';
   const pill = (st) => (st === 'success' ? 'ok' : st === 'warning' ? 'warning' : st === 'skipped' ? '' : 'error');
@@ -233,10 +242,10 @@ function Runs({ host, events }) {
       ${groups.map((g) => {
         const e = g.e;
         const what = e.kind === 'backup' ? (g.n > 1 ? `${g.n} backups` : 'backup') : e.kind.replace(/_/g, ' ');
-        const detail = e.error || (e.detail && e.detail.directory ? 'into ' + e.detail.directory : '') || (e.detail && e.detail.database ? 'into database ' + e.detail.database : '') || (g.n > 1 && e.status === 'success' ? 'all OK' : '');
+        const detail = e.error || (e.kind === 'check' ? 'sound: ' + checked(e, cycle) : '') || (e.detail && e.detail.directory ? 'into ' + e.detail.directory : '') || (e.detail && e.detail.database ? 'into database ' + e.detail.database : '') || (g.n > 1 && e.status === 'success' ? 'all OK' : '');
         return html`<div class="gt" style=${'--cols:' + cols + ';align-items:baseline'}>
           <span class="num muted">${g.n > 1 ? `${fmtDay(e.finished)} ${clock(g.from)}–${clock(e.finished)}` : fmtTime(e.finished)}</span>
-          <span>${e.job_id}</span>
+          <span>${e.kind === 'check' ? html`<span class="muted">the repository</span>` : e.job_id}</span>
           <span style="min-width:0"><${Pill} kind=${pill(e.status)}>${e.status === 'success' ? what : `${what} ${e.status}${g.n > 1 ? ' ×' + g.n : ''}`}<//> <span class="muted wrap">${detail}</span></span>
           <span>${e.snapshot_id ? html`<${Snap} fqdn=${host.fqdn} id=${e.snapshot_id} />` : html`<span class="muted">—</span>`}</span>
           <span class="muted">${e.initiated_by || 'schedule'}</span>
@@ -494,7 +503,7 @@ export function Host({ fqdn, reloadHosts, vault, settings }) {
         <span>A square per backup the schedule called for, the newest on the right; click one for its day on the job's page.</span></div>`}`}
     </section>
     ${withPG && html`<${Connections} host=${h} reload=${refresh} />`}
-    ${events.data ? html`<${Runs} host=${h} events=${events.data} />` : html`<${Loading} what="runs" />`}
+    ${events.data ? html`<${Runs} host=${h} events=${events.data} cycle=${settings?.maintenance?.check_cycle_days || 30} />` : html`<${Loading} what="runs" />`}
     <${Repository} host=${h} settings=${settings} siteB=${siteB.data} hostB=${hostB.data} />`;
 }
 

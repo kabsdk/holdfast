@@ -14,9 +14,9 @@ replaces it under the same name and tag, `v0.1-dev`, and installs as an upgrade 
   is left out of the metrics, so it raises no `HoldfastAgentOffline` or `HoldfastMaintenanceStale`, and `holdfast
   agent list` shows it as retired, not offline.
 - **holdfast-agent**: runs restic on each host on its own schedule, through the server's gateway; restores on the
-  host; and keeps its events until the server is back. Holdfast runs no command a person defines on a host: an
-  export of anything but PostgreSQL is the host's own job, on its own timer, and a Holdfast job backs up its files
-  (decision 052).
+  host; and keeps its events until the server is back. Its daily check says which part of the data it read. Holdfast
+  runs no command a person defines on a host: an export of anything but PostgreSQL is the host's own job, on its own
+  timer, and a Holdfast job backs up its files (decision 052).
 - **Agents are named in their own config** (decision 056): `agent_name` in `agent.yaml`, set with
   `holdfast-agent enroll --name`, the installer's `HOLDFAST_AGENT_NAME` or the collection's `holdfast_agent_name`,
   and never read from the machine. The list is **Agents**, the CLI `holdfast agent …` (which replaces `holdfast host

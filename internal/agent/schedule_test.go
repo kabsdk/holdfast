@@ -231,6 +231,10 @@ func TestDailyCheckAfterBackup(t *testing.T) {
 	if b, _ := os.ReadFile(argv); !strings.Contains(string(b), "check --read-data-subset 25/30") { // day 324 of 2026
 		t.Fatalf("restic was not asked to check today's subset:\n%s", b)
 	}
+	// The check says which part of the data it read.
+	if c := checks(); c[0].Detail["read_data_subset"] != "25/30" {
+		t.Fatalf("the check's report must name the part it read: %+v", c[0].Detail)
+	}
 	backup("2026-11-20 11:00:00")
 	if n := len(checks()); n != 1 {
 		t.Fatalf("a second check within the day: %d", n)
