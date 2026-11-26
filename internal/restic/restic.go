@@ -432,9 +432,26 @@ type Found struct {
 	Matches  []Node `json:"matches"`
 }
 
-// Find looks for a name pattern in every snapshot.
-func (r Runner) Find(ctx context.Context, pattern string, snapshots ...string) ([]Found, error) {
+// FindOptions are restic find's options Holdfast offers: --ignore-case, and the modification times --oldest and
+// --newest, zero for no bound.
+type FindOptions struct {
+	IgnoreCase     bool
+	Oldest, Newest time.Time
+}
+
+// Find looks for a name pattern in every snapshot. restic reads --oldest and --newest in its own time zone, which is
+// this process's: it inherits the environment.
+func (r Runner) Find(ctx context.Context, pattern string, o FindOptions, snapshots ...string) ([]Found, error) {
 	args := []string{"find", "--json"}
+	if o.IgnoreCase {
+		args = append(args, "--ignore-case")
+	}
+	if !o.Oldest.IsZero() {
+		args = append(args, "--oldest", o.Oldest.Local().Format(time.DateTime))
+	}
+	if !o.Newest.IsZero() {
+		args = append(args, "--newest", o.Newest.Local().Format(time.DateTime))
+	}
 	for _, id := range snapshots {
 		args = append(args, "--snapshot", id)
 	}

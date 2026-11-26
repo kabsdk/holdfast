@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -259,11 +260,54 @@ func TestUIPages(t *testing.T) {
 		t.Fatalf("Find a file in all snapshots must come before the restore points:\n%s", page(ctx))
 	}
 	run(t, ctx, "find later.txt in all snapshots", chromedp.SendKeys(`.findfile input`, "later.txt", chromedp.ByQuery), chromedp.Click(`.findfile button`, chromedp.ByQuery))
-	waitFor(t, "later.txt found in the job's snapshots", 60*time.Second, func() bool {
+	foundText := func() string {
 		var found string
-		_ = chromedp.Run(ctx, chromedp.Evaluate(`document.querySelector('.findfile table')?.textContent || ''`, &found))
-		return strings.Contains(found, "later.txt")
-	})
+		_ = chromedp.Run(ctx, chromedp.Evaluate(`document.querySelector('.findfile table.found')?.textContent || ''`, &found))
+		return found
+	}
+	waitFor(t, "later.txt found in the job's snapshots", 60*time.Second, func() bool { return strings.Contains(foundText(), "later.txt") })
+	// Its options are restic find's: a day after today, or From after To, turns its field red, says why in the
+	// server's words, and turns Find off; Ignore case finds LATER.TXT.
+	clickText(t, ctx, "button", "Options")
+	findOff := func() bool {
+		var off bool
+		run(t, ctx, "the Find button", chromedp.Evaluate(`document.querySelector('.findfile form button:not(.link)').disabled`, &off))
+		return off
+	}
+	const toField, fromField = `input[aria-label="Modified to, YYYY-MM-DD"]`, `input[aria-label="Modified from, YYYY-MM-DD"]`
+	// setField types into a field as a person's typing ends: the whole value, and an input event the UI hears.
+	setField := func(sel, v string) {
+		t.Helper()
+		var ok bool
+		run(t, ctx, "type "+v, chromedp.Evaluate(`(() => { const i = document.querySelector('`+sel+`'); i.value = `+strconv.Quote(v)+`;
+			i.dispatchEvent(new Event('input', {bubbles: true})); return true; })()`, &ok))
+	}
+	tomorrow := time.Now().AddDate(0, 0, 1).Format(time.DateOnly)
+	run(t, ctx, "a day after today", chromedp.SendKeys(toField, tomorrow, chromedp.ByQuery))
+	waitText(t, ctx, tomorrow+" is after today: no file has been modified then yet.")
+	if !findOff() {
+		t.Fatal("Find must be off while a day is after today")
+	}
+	if out, err := e.cliErr("snapshot", "find", web, "later.txt", "--newest", tomorrow); err == nil || !strings.Contains(string(out), "is after today") {
+		t.Fatalf("the CLI's find with a day after today: %v %s", err, out)
+	}
+	setField(toField, "2026-01-01")
+	setField(fromField, "2026-02-01")
+	waitText(t, ctx, "From (2026-02-01) is after To (2026-01-01).")
+	if !findOff() {
+		t.Fatal("Find must be off while From is after To")
+	}
+	var cleared bool
+	run(t, ctx, "clear the days", chromedp.Evaluate(`(() => { for (const i of document.querySelectorAll('.datefield input')) { i.value = ''; i.dispatchEvent(new Event('input', {bubbles: true})); } return true; })()`, &cleared))
+	clickText(t, ctx, "label", "Ignore case")
+	setField(`.findfile form input`, "LATER.TXT")
+	run(t, ctx, "find LATER.TXT, ignoring case", chromedp.Click(`.findfile form button:not(.link)`, chromedp.ByQuery))
+	waitFor(t, "LATER.TXT found, ignoring case", 60*time.Second, func() bool { return strings.Contains(foundText(), "later.txt") })
+	var ic []struct{ Matches []struct{ Path string } }
+	must(t, json.Unmarshal(e.cli("snapshot", "find", web, "LATER.TXT", "--ignore-case", "--oldest", "2026-01-01"), &ic))
+	if len(ic) == 0 || !strings.HasSuffix(ic[0].Matches[0].Path, "later.txt") {
+		t.Fatalf("the CLI's find, ignoring case: %+v", ic)
+	}
 	// Added per backup: what each backup added, as stored, a bar each over the calendar, and Largest first, which is the
 	// API's and the CLI's sort=added. Every snapshot has restic's figure, most first; another sort is refused.
 	var bySize []struct {
@@ -305,9 +349,10 @@ func TestUIPages(t *testing.T) {
 	})
 	clickText(t, ctx, "button", "Only changes")
 	waitText(t, ctx, "later.txt")
-	run(t, ctx, "find in this snapshot", chromedp.SendKeys(`.treebar input[type=search]`, "later", chromedp.ByQuery))
-	clickText(t, ctx, "button", "Find")
-	waitText(t, ctx, "1 match")
+	// The same search box, above the tree: its matches open in the tree.
+	waitText(t, ctx, "Find in this snapshot")
+	run(t, ctx, "find in this snapshot", chromedp.SendKeys(`.findfile form input`, "later.txt", chromedp.ByQuery), chromedp.Click(`.findfile form button:not(.link)`, chromedp.ByQuery))
+	waitText(t, ctx, "1 match, in the tree below")
 	open(t, ctx, "#/agents/"+web+"/snapshots/"+snaps[0]+"/changes")
 	waitText(t, ctx, "Changes against")
 	// Restore: a tree of ticks. Unticking a folder leaves it out; the dry run goes through the agent.

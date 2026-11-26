@@ -12,6 +12,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
+	"github.com/kabsdk/holdfast/internal/config"
 	"github.com/kabsdk/holdfast/internal/server/store"
 )
 
@@ -214,7 +215,17 @@ func (s *Server) apiChanges(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) apiFind(w http.ResponseWriter, r *http.Request) {
-	found, err := s.Find(r.Context(), r.PathValue("fqdn"), r.URL.Query().Get("pattern"), r.URL.Query().Get("snapshot"))
+	q := r.URL.Query()
+	in := FindInput{Pattern: q.Get("pattern"), Snapshot: q.Get("snapshot"), Oldest: q.Get("oldest"), Newest: q.Get("newest"), Zone: q.Get("tz")}
+	switch q.Get("ignore_case") {
+	case "", "0", "false":
+	case "1", "true":
+		in.IgnoreCase = true
+	default:
+		apiError(w, &ValidationError{config.Problems{{Path: "ignore_case", Message: "ignore_case is 1 or 0"}}})
+		return
+	}
+	found, err := s.Find(r.Context(), r.PathValue("fqdn"), in)
 	if err != nil {
 		apiError(w, err)
 		return

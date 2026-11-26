@@ -887,8 +887,16 @@ Restore and inspection behave like restic does on the host.
   The repository is the agent's, on its page. With off-site copies, a line per site has what the job takes there, and
   site B's the job's off-site settings.
 - A PostgreSQL job's page names its connection and database; each restore point is a dump.
-- **Find a file in all snapshots**, one line at the top of the page, above the restore points, uses `restic find` to
-  show the versions of a file. Each version links to the snapshot, opened at that folder.
+- **Find a file**, one line at the top of the page, above the restore points, uses `restic find` to show the versions
+  of a file in the job's snapshots. Each version links to the snapshot, opened at that folder. It takes a name, or
+  restic's glob patterns: `*` any text, `?` one character, `[ab]` one of them, `**` any number of folders, and with a
+  `/` the end of a path; never a regular expression, which restic has none of. Its **?** says so, on hover or focus.
+- Its **Options** are restic find's own: **Ignore case**, and the days files were **modified from** and **to**, in
+  Holdfast's date field: YYYY-MM-DD, empty for any day, with a calendar in the UI's style, English and Monday first,
+  whose days after today, and on the wrong side of the other end, are greyed out. A wrong day turns its field red, says
+  why, and turns Find off. `GET /api/v1/agents/{agent}/find?pattern=…&ignore_case=1&oldest=…&newest=…&tz=…` and
+  `holdfast snapshot find <agent> <pattern> --ignore-case --oldest --newest --tz` refuse the same, in the same words:
+  a day that is not one, a day after today, or From after To. The days are whole days in the zone given.
 - 0.7's squares per retention rule, its list of snapshots and its separate calendar page are gone:
   `#/hosts/{agent}/jobs/{job}/snapshots` opens the job page.
 
@@ -896,7 +904,7 @@ Restore and inspection behave like restic does on the host.
 
 | Tab | Behaviour |
 | --- | --- |
-| Files | One tree of the snapshot, names and metadata only: folders open in place, each entry with its change, mode, owner, size and time. A folder is read when it is opened (`restic ls` of that folder, 1 000 entries at a time). The change is `restic diff --metadata`'s mark against the snapshot before, or any older one chosen: **+** new, **−** removed (shown struck through, from the older snapshot), **M** content changed, **U** metadata only, **T** type changed, with their counts; a closed folder says how many changed inside. **Only changes** shows just those and their folders. **Find** looks for a name in this snapshot (`restic find --snapshot`). Each entry has **Restore…** (only that, §5.4), and a changed file **Diff…**: restore both versions to diff on the host (§5.4) and run the `diff -u` it prints, on the host. It never shows contents or line diffs, as restic does not. The first 10 000 changes mark the tree; `holdfast snapshot changes` lists all. `#/…/snapshots/{id}/changes` opens Files. |
+| Files | One tree of the snapshot, names and metadata only: folders open in place, each entry with its change, mode, owner, size and time. A folder is read when it is opened (`restic ls` of that folder, 1 000 entries at a time). The change is `restic diff --metadata`'s mark against the snapshot before, or any older one chosen: **+** new, **−** removed (shown struck through, from the older snapshot), **M** content changed, **U** metadata only, **T** type changed, with their counts; a closed folder says how many changed inside. **Only changes** shows just those and their folders. **Find in this snapshot**, the job page's search box (§5.2) above the tree, looks in this one (`restic find --snapshot`); its matches open in the tree. Each entry has **Restore…** (only that, §5.4), and a changed file **Diff…**: restore both versions to diff on the host (§5.4) and run the `diff -u` it prints, on the host. It never shows contents or line diffs, as restic does not. The first 10 000 changes mark the tree; `holdfast snapshot changes` lists all. `#/…/snapshots/{id}/changes` opens Files. |
 | Restore | See §5.4. |
 
 A PostgreSQL job's snapshot holds one file, the dump: it has only Restore.

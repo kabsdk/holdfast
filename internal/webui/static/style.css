@@ -343,3 +343,34 @@ button.danger-line { color: var(--err); border-color: var(--err); }
 .addchart .note { fill: var(--text); font-size: 11px; font-weight: 600; }
 .sizebar { height: 8px; border-radius: 4px; background: var(--sq-none); position: relative; overflow: hidden; }
 .sizebar > span { position: absolute; inset: 0 auto 0 0; background: var(--accent); border-radius: 4px; }
+/* The search box's ? (what can be typed) and its Options: restic find's own (spec §5.2). */
+.help { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 50%;
+  border: 1px solid #c8ced9; background: var(--panel); color: var(--muted); font-size: 12px; font-weight: 700; cursor: help; flex: none; }
+.help:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.helppop { display: none; position: absolute; right: -8px; top: calc(100% + 8px); z-index: 20; width: min(380px, 80vw); background: var(--panel);
+  border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 8px 24px rgba(29,35,48,.14); padding: .7rem .85rem; color: var(--text);
+  font-weight: 400; font-size: 12.5px; line-height: 1.5; text-align: left; cursor: default; }
+.help:hover .helppop, .help:focus .helppop, .help:focus-within .helppop { display: block; }
+.helppop p { margin: 0 0 .4rem; }
+.helppop table { margin: 0 0 .4rem; width: 100%; }
+.helppop td { padding: .12rem .3rem .12rem 0; border: 0; vertical-align: top; }
+.helppop td:first-child { white-space: nowrap; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.findopts { display: flex; flex-wrap: wrap; gap: .5rem 1.4rem; align-items: center; margin: .65rem 0 .25rem; font-size: 13px; }
+/* Holdfast's own date field: YYYY-MM-DD, "any date" when empty, its calendar in the UI's style. */
+.datefield { position: relative; display: inline-flex; }
+.datefield input { width: 8.6rem; padding: .3rem .5rem .3rem 1.85rem; font-variant-numeric: tabular-nums;
+  background: var(--panel) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23667085' stroke-width='1.4'%3E%3Crect x='2' y='3' width='12' height='11' rx='2'/%3E%3Cpath d='M2 6.5h12M5.5 1.5v3M10.5 1.5v3'/%3E%3C/svg%3E") no-repeat .55rem center / 14px; }
+.datefield input::placeholder { color: var(--muted); }
+.datefield input.bad { border-color: var(--err); box-shadow: 0 0 0 1px var(--err); }
+.datepop { position: fixed; z-index: 50; width: 256px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(29,35,48,.14); padding: .6rem; font-size: 13px; color: var(--text); }
+.dphead { display: flex; align-items: center; justify-content: space-between; margin-bottom: .4rem; }
+.dpgrid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+.dpgrid .wd { text-align: center; color: var(--muted); font-size: 11.5px; padding: .15rem 0 .25rem; }
+.dpgrid button { border: 0; background: none; padding: .3rem 0; border-radius: 6px; font-variant-numeric: tabular-nums; color: var(--text); }
+.dpgrid button:hover { background: #f2f4f8; }
+.dpgrid button.today { box-shadow: inset 0 0 0 1px var(--accent); }
+.dpgrid button.on, .dpgrid button.on:hover { background: var(--accent); color: #fff; }
+.dpfoot { display: flex; justify-content: space-between; align-items: center; margin-top: .45rem; padding-top: .45rem; border-top: 1px solid var(--line); }
+.dpgrid button:disabled, .dpgrid button:disabled:hover { color: #c3c8d2; background: none; cursor: default; opacity: 1; }
+.datemsg { flex-basis: 100%; }
