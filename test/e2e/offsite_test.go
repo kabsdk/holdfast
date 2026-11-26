@@ -119,6 +119,18 @@ func TestOffsite(t *testing.T) {
 		c2, ok2 := copyOf(rows, s2)
 		return ok1 && ok2 && c1.MadeByHoldfast && c2.MadeByHoldfast
 	})
+	// Site B measures what the job's copies take, as site A measures its own, once the first copy is there.
+	waitFor(t, "the off-site job's stored size", 3*time.Minute, func() bool {
+		var oh struct {
+			Jobs []struct {
+				Stored *struct {
+					Bytes int64 `json:"bytes"`
+				} `json:"stored"`
+			} `json:"jobs"`
+		}
+		must(t, json.Unmarshal(e.offsite("agent", "show", fqdn), &oh))
+		return len(oh.Jobs) == 1 && oh.Jobs[0].Stored != nil && oh.Jobs[0].Stored.Bytes > 0
+	})
 	var offEvents []event
 	must(t, json.Unmarshal(e.offsite("agent", "events", fqdn), &offEvents))
 	if countStatus(offEvents, "data", "success") < 2 {

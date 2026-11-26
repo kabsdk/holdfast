@@ -218,6 +218,9 @@ type hostView struct {
 		LongestGap    string      `json:"longest_gap"`
 		WorstCaseLoss string      `json:"worst_case_loss"`
 		Status        *jobStatus  `json:"status"`
+		Stored        *struct {
+			Bytes int64 `json:"bytes"`
+		} `json:"stored"`
 	} `json:"jobs"`
 }
 
@@ -316,7 +319,7 @@ func hostCmd() *cobra.Command {
 		}
 		printOperating(h)
 		w := table()
-		fmt.Fprintln(w, "\nJOB\tLAST STATUS\tLAST SUCCESS\tNEXT RUN\tLONGEST GAP\tWORST-CASE LOSS")
+		fmt.Fprintln(w, "\nJOB\tLAST STATUS\tLAST SUCCESS\tNEXT RUN\tLONGEST GAP\tWORST-CASE LOSS\tSTORED")
 		for _, j := range h.Jobs {
 			st, last := "—", "—"
 			if j.Status != nil {
@@ -326,7 +329,11 @@ func hostCmd() *cobra.Command {
 			if len(j.NextRuns) > 0 {
 				next = j.NextRuns[0].Local().Format("2006-01-02 15:04")
 			}
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", j.ID, st, last, next, j.LongestGap, j.WorstCaseLoss)
+			stored := "—" // what the job takes in this site's repository, measured once a day
+			if j.Stored != nil {
+				stored = sizeOf(j.Stored.Bytes)
+			}
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", j.ID, st, last, next, j.LongestGap, j.WorstCaseLoss, stored)
 		}
 		return w.Flush()
 	}})

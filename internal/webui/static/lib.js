@@ -155,6 +155,12 @@ export function bytes(n) {
   return (i ? n.toFixed(1) : n) + ' ' + u[i];
 }
 
+// storedTip says what a job's Stored is: what its restore points take in a site's repository, each piece of data once.
+export function storedTip(s, site) {
+  return s ? `What the job's restore points take in ${site || 'this site'}'s repository, each piece of data once (restic stats --mode raw-data). Measured ${fmtTime(s.measured_at)}.`
+    : 'Not measured yet: the server measures each job once a day.';
+}
+
 // Durations come from Go as "24h0m0s"; this makes them read like "1 d".
 export function dur(s) {
   if (!s) return '—';
