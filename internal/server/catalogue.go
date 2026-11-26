@@ -462,10 +462,66 @@ type FoundIn struct {
 	Matches  []restic.Node `json:"matches"`
 }
 
+// FindInput is what a find looks for: a name or a pattern, in one snapshot or all, with restic find's options.
+// Oldest and Newest are days, YYYY-MM-DD, in Zone (the server's when empty): files modified from the start of Oldest
+// to the end of Newest.
+type FindInput struct {
+	Pattern, Snapshot    string
+	IgnoreCase           bool
+	Oldest, Newest, Zone string
+}
+
+// findOptions checks a find's options and turns them into restic's: a day that is not one, a day after today, or an
+// oldest after the newest is refused.
+func (s *Server) findOptions(in FindInput) (restic.FindOptions, error) {
+	o := restic.FindOptions{IgnoreCase: in.IgnoreCase}
+	loc := time.Local
+	if in.Zone != "" {
+		l, err := time.LoadLocation(in.Zone)
+		if err != nil {
+			return o, &ValidationError{config.Problems{{Path: "tz", Message: "not a time zone, such as Europe/Copenhagen: " + in.Zone}}}
+		}
+		loc = l
+	}
+	today := s.now().In(loc).Format(time.DateOnly)
+	day := func(path, v string) (time.Time, error) {
+		if v == "" {
+			return time.Time{}, nil
+		}
+		d, err := time.ParseInLocation(time.DateOnly, v, loc)
+		if err != nil {
+			return d, &ValidationError{config.Problems{{Path: path, Message: fmt.Sprintf("“%s” isn't a date: type it as YYYY-MM-DD, such as 2026-11-01.", v)}}}
+		}
+		if v > today {
+			return d, &ValidationError{config.Problems{{Path: path, Message: v + " is after today: no file has been modified then yet."}}}
+		}
+		return d, nil
+	}
+	var err error
+	if o.Oldest, err = day("oldest", in.Oldest); err != nil {
+		return o, err
+	}
+	if o.Newest, err = day("newest", in.Newest); err != nil {
+		return o, err
+	}
+	if in.Oldest != "" && in.Newest != "" && in.Oldest > in.Newest {
+		return o, &ValidationError{config.Problems{{Path: "oldest", Message: fmt.Sprintf("From (%s) is after To (%s).", in.Oldest, in.Newest)}}}
+	}
+	if !o.Newest.IsZero() {
+		o.Newest = o.Newest.AddDate(0, 0, 1).Add(-time.Second) // the end of the day
+	}
+	return o, nil
+}
+
 // Find looks for a file name pattern in all of a host's snapshots, newest first, or in one snapshot (spec §5.2).
-func (s *Server) Find(ctx context.Context, fqdn, pattern, snapshot string) ([]FoundIn, error) {
+func (s *Server) Find(ctx context.Context, fqdn string, in FindInput) ([]FoundIn, error) {
+	pattern, snapshot := in.Pattern, in.Snapshot
 	if strings.TrimSpace(pattern) == "" || len(pattern) > 1024 || strings.ContainsRune(pattern, 0) {
 		return nil, &ValidationError{config.Problems{{Path: "pattern", Message: "give a file name or a pattern such as *.conf"}}}
+	}
+	opts, err := s.findOptions(in)
+	if err != nil {
+		return nil, err
 	}
 	if _, err := s.st.Q().GetHost(ctx, fqdn); err != nil {
 		return nil, fmt.Errorf("host %s: %w", fqdn, err)
@@ -485,7 +541,7 @@ func (s *Server) Find(ctx context.Context, fqdn, pattern, snapshot string) ([]Fo
 		return nil, err
 	}
 	defer cleanup()
-	found, err := r.Find(fctx, pattern, only...)
+	found, err := r.Find(fctx, pattern, opts, only...)
 	if errors.Is(fctx.Err(), context.DeadlineExceeded) {
 		return nil, fmt.Errorf("find stopped after %s; narrow the pattern: %w", findTimeout, ErrTimeout)
 	}

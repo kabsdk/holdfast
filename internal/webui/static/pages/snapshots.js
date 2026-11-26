@@ -1,4 +1,5 @@
-import { html, useState, useEffect, useRef, useMemo, usePoll, useAction, link, fmtTime, fmtDay, bytes, can, ErrorBox, Loading, Menu, isPG, dbIcon, dumpFile, folderIcon, SiteTag } from '../lib.js';
+import { html, useState, useEffect, useRef, useMemo, usePoll, useAction, link, fmtTime, fmtDay, bytes, can, ErrorBox, Loading, Menu, isPG, dbIcon, dumpFile, folderIcon, SiteTag, browserZone } from '../lib.js';
+import { DateField, rangeProblem } from '../datefield.js';
 import { api } from '../api.js';
 import { Restore, PGRestore, DeleteDialog, EVERYTHING, onlyThis } from './restore.js';
 import { point, copiesByOriginal, WORD_A, WORD_B } from '../keep.js';
@@ -16,28 +17,75 @@ export function fate(s) {
   return { kind: '', text: '' };
 }
 
-// FindFile is one line at the top of a job's page (spec §5.2), whose results open below it.
+// FindHelp is the search box's ?: what can be typed, on hover, or on focus from the keyboard.
+function FindHelp() {
+  return html`<span class="help" tabindex="0" aria-label="What you can search for">?<span class="helppop" role="tooltip">
+    <p>Looks for files and folders by name, as <code>restic find</code> does: on a job's page in all its snapshots, on a snapshot's page in that one. Names and metadata only, never contents.</p>
+    <table><tbody>
+      <tr><td>nginx.conf</td><td>that exact name</td></tr>
+      <tr><td>*.yaml</td><td><code>*</code> is any text: every name ending in .yaml</td></tr>
+      <tr><td>app-?.log</td><td><code>?</code> is one character: app-1.log, app-2.log…</td></tr>
+      <tr><td>report[12].pdf</td><td><code>[12]</code> is one of 1 or 2</td></tr>
+      <tr><td>config/*.yaml</td><td>with a <code>/</code>, the end of a path: .yaml files in a folder named config</td></tr>
+      <tr><td>**/secrets.yaml</td><td><code>**</code> is any number of folders</td></tr>
+    </tbody></table>
+    <p style="margin:0">Upper and lower case differ unless <b>Ignore case</b> is on, under Options. Regular expressions don't work: restic has none.</p></span></span>`;
+}
+
+// FindBox is the one search box of a job's page and a snapshot's (spec §5.2): a name or a pattern, its ?, Find, and
+// under Options restic find's own: Ignore case, and the days files were modified, in Holdfast's date field. A wrong
+// day turns its field red, says why, and turns Find off; the server checks the same, in the same words. onFind gets
+// the query; what it finds is the caller's to show, under the box.
+export function FindBox({ title, placeholder, busy, onFind, onClear, cls, children }) {
+  const [text, setText] = useState('');
+  const [opts, setOpts] = useState(false);
+  const [ic, setIc] = useState(false);
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+  const range = rangeProblem(from, to);
+  const set = [ic, from.trim(), to.trim()].filter(Boolean).length;
+  const go = (e) => {
+    e.preventDefault();
+    if (text.trim().length < 2 || range.msg) return;
+    const f = from.trim(), t = to.trim();
+    onFind({ pattern: text.trim(), ignore_case: ic || undefined, oldest: f || undefined, newest: t || undefined, tz: f || t ? browserZone() : undefined }, text.trim());
+  };
+  return html`<div class=${'panel findfile' + (cls ? ' ' + cls : '')}>
+    <form class="row" style="align-items:center" onSubmit=${go}>
+      <b style="white-space:nowrap">${title}</b>
+      <input aria-label="A name or a pattern" placeholder=${placeholder} value=${text} onInput=${(e) => { setText(e.target.value); if (!e.target.value) onClear?.(); }} style="flex:1;min-width:14rem" />
+      <${FindHelp} />
+      <button disabled=${busy || !!range.msg} title=${range.msg ? 'Correct the dates first' : ''}>Find</button>
+      <button type="button" class="link" aria-expanded=${opts ? 'true' : 'false'} onClick=${() => setOpts(!opts)}>Options${set && !opts ? ` (${set})` : ''} ${opts ? '▴' : '▾'}</button>
+    </form>
+    ${opts && html`<div class="findopts">
+      <label style="display:inline-flex;gap:.35rem;align-items:center"><input type="checkbox" checked=${ic} onChange=${(e) => setIc(e.target.checked)} /> Ignore case</label>
+      <span style="display:inline-flex;gap:.4rem;align-items:center;flex-wrap:wrap">Modified from
+        <${DateField} label="Modified from" value=${from} onChange=${setFrom} max=${range.bad.to ? '' : to.trim()} maxWhy="after To" bad=${range.bad.from} />
+        to <${DateField} label="Modified to" value=${to} onChange=${setTo} min=${range.bad.from ? '' : from.trim()} minWhy="before From" bad=${range.bad.to} /></span>
+      ${range.msg && html`<span class="datemsg errtext small-text" role="alert">${range.msg}</span>`}
+    </div>`}
+    ${children}
+  </div>`;
+}
+
+// FindFile is the search box at the top of a job's page, over all the agent's snapshots, showing the job's matches.
 export function FindFile({ fqdn, job }) {
   const [text, setText] = useState('');
   const act = useAction();
   const found = (act.done || []).filter((f) => !job || f.job_id === job);
-  return html`<div class="panel findfile">
-    <form class="row" style="align-items:center" onSubmit=${(e) => { e.preventDefault(); if (text.trim().length >= 2) act.run(() => api.find(fqdn, text.trim())); }}>
-      <b style="white-space:nowrap">Find a file in all snapshots</b>
-      <input aria-label="Path or name" placeholder="Path or name, e.g. nginx.conf" value=${text} onInput=${(e) => setText(e.target.value)} style="flex:1;min-width:14rem" />
-      <button disabled=${act.busy}>Find</button>
-    </form>
-    <p class="muted small-text" style="margin:.4rem 0 0">Like <code>restic find</code>: names and metadata, never contents.</p>
+  return html`<${FindBox} title="Find a file" placeholder="A name or pattern in any snapshot, e.g. nginx.conf or *.yaml" busy=${act.busy}
+      onFind=${(query, t) => { setText(t); act.run(() => api.find(fqdn, query)); }} onClear=${() => act.reset()}>
     <${ErrorBox} error=${act.error} />
     ${act.busy && html`<${Loading} what="every snapshot" />`}
-    ${act.done && (found.length === 0 ? html`<p class="muted">No file matching “${text}” in any snapshot${job ? ' of this job' : ''}.</p>` : html`<table>
+    ${act.done && (found.length === 0 ? html`<p class="muted">No file matching “${text}” in any snapshot${job ? ' of this job' : ''}.</p>` : html`<table class="found">
       <thead><tr><th>Path</th><th>Snapshot</th><th>Size</th><th>Owner · mode</th><th>Modified</th></tr></thead>
       <tbody>${found.flatMap((f) => f.matches.map((m) => html`<tr>
         <td class="mono">${m.path}</td>
         <td><a class="mono" href=${link('agents', fqdn, 'snapshots', f.snapshot) + '/files?path=' + encodeURIComponent(m.path.slice(0, m.path.lastIndexOf('/')) || '/')}>${f.short_id}</a> · ${fmtTime(f.time)}</td>
         <td>${bytes(m.size)}</td><td>${m.user || m.uid} · ${m.permissions}</td><td>${fmtTime(m.mtime)}</td>
       </tr>`))}</tbody></table>`)}
-  </div>`;
+  <//>`;
 }
 
 /* ---------------- one snapshot ---------------- */
@@ -141,7 +189,6 @@ function FileTree({ fqdn, snap, host, older, onRestoreOnly }) {
     if (!only && d.page < d.pages) rows.push({ more: d.total - d.entries.length, dir, page: d.page, depth });
   };
   walk('/', 0);
-  const pattern = (s) => (/[*?[]/.test(s) ? s : `*${s}*`);
   const found = (find.done || []).flatMap((f) => f.matches || []);
   const cd = ch.data;
   const chip = (k, n) => n > 0 && html`<span class=${'chg ' + CHANGE[k][0]}>${CHANGE[k][1].split(' ')[0]} ${n}</span>`;
@@ -157,11 +204,14 @@ function FileTree({ fqdn, snap, host, older, onRestoreOnly }) {
       ${!n.gone && mayRestore && html`<button type="button" class="link small-link" data-tip=${'Restore only ' + n.path + (isDir ? ', and what is in it' : '')} onClick=${() => onRestoreOnly(n.path)}>Restore…</button>`}</span>
   </div>`;
   return html`
+    <${FindBox} cls="tabpanel" title="Find in this snapshot" placeholder="A name or pattern in this snapshot, e.g. nginx.conf or *.yaml" busy=${find.busy}
+        onFind=${(query, t) => { setQ(t); find.run(() => api.find(fqdn, { ...query, snapshot: snap.id })); }} onClear=${() => { setQ(''); find.reset(); }}>
+      ${find.busy && html`<${Loading} what="this snapshot" />`}
+      ${find.done && html`<p class="muted small-text" style="margin:.45rem 0 0">${found.length ? `${found.length} ${found.length === 1 ? 'match' : 'matches'}, in the tree below` : `Nothing in this snapshot matches “${q}”.`}</p>`}
+    <//>
+    <section class="list">
     <div class="treebar">
       <span class="seg"><button type="button" class=${only ? '' : 'on'} onClick=${() => setOnly(false)}>All files</button><button type="button" class=${only ? 'on' : ''} disabled=${!cd} onClick=${showOnly}>Only changes${cd ? html` <b>${cd.total}</b>` : ''}</button></span>
-      <form class="row" style="gap:.4rem;flex:0 1 22rem;min-width:0" onSubmit=${(e) => { e.preventDefault(); if (q.trim().length >= 2) find.run(() => api.find(fqdn, pattern(q.trim()), snap.id)); }}>
-        <input type="search" placeholder="Find a name, such as *.conf" aria-label="Find a name in this snapshot" value=${q} onInput=${(e) => { setQ(e.target.value); if (!e.target.value) find.reset(); }} style="flex:1;min-width:0" />
-        <button class="small" disabled=${find.busy}>Find</button></form>
       <button type="button" class="link" onClick=${expandAll}>Expand all</button><button type="button" class="link" onClick=${() => setOpen(new Set(['/']))}>Collapse all</button>
       <span class="muted row" style="margin-left:auto;gap:.35rem">${older.length ? html`Changes against
         <select value=${against} onChange=${(e) => setAgainst(e.target.value)} aria-label="The older snapshot to compare with">
@@ -171,7 +221,6 @@ function FileTree({ fqdn, snap, host, older, onRestoreOnly }) {
     </div>
     <${ErrorBox} error=${ch.error || find.error} />
     ${cd?.capped && html`<div class="banner info">The first ${(MAX_CHANGE_PAGES * 1000).toLocaleString('en')} of ${cd.total.toLocaleString('en')} changes are marked; <code>holdfast snapshot changes</code> lists them all.</div>`}
-    ${find.busy && html`<${Loading} what="this snapshot" />`}
     <div class="scrollx"><div style="min-width:840px">
       <div class="trow head"><span>Name</span><span>Change</span><span>Mode</span><span>Owner</span><span style="text-align:right">Size</span><span>Modified</span><span></span></div>
       ${find.done ? html`
@@ -186,7 +235,8 @@ function FileTree({ fqdn, snap, host, older, onRestoreOnly }) {
       ${!find.done && only && cd && cd.total === 0 && html`<div class="trow note"><span class="muted">Nothing changed against the older snapshot.</span></div>`}
     </div></div>
     <div class="legend">${Object.entries(CHANGE).map(([k, [cls, label]]) => html`<span><span class=${'chg ' + cls}>${label.split(' ')[0]}</span> ${label.split(' ').slice(1).join(' ')}</span>`)}
-      <span>restic diff’s marks against the older snapshot; hover one for what it means. Names and metadata only: to read a file, restore it where the agent runs.</span></div>`;
+      <span>restic diff’s marks against the older snapshot; hover one for what it means. Names and metadata only: to read a file, restore it where the agent runs.</span></div>
+    </section>`;
 }
 
 function DiffOnHost({ fqdn, id, against, path }) {
@@ -299,7 +349,7 @@ export function Snapshot({ fqdn, id, tab, vault, hosts, settings }) {
     <${ErrorBox} error=${act.error} />
     ${deleted && html`<div class="banner warning">${deleted.now ? 'Deleting now: the maintenance run forgets it, and Config history lists it.' : 'Deletion asked: restic forgets it once its 7 days have passed. Until then you can cancel.'}</div>`}
     ${tabs.length > 0 && html`<div class="tabs">${tabs.map(([k, label]) => html`<a class=${shown === k ? 'on' : ''} href=${base + '/' + k}>${label}</a>`)}</div>
-      ${shown === 'files' && html`<section class="list tabpanel"><${FileTree} fqdn=${fqdn} snap=${snap} host=${h} older=${older} onRestoreOnly=${(x) => { setSel(onlyThis(x)); location.hash = base + '/restore'; }} /></section>`}
+      ${shown === 'files' && html`<${FileTree} fqdn=${fqdn} snap=${snap} host=${h} older=${older} onRestoreOnly=${(x) => { setSel(onlyThis(x)); location.hash = base + '/restore'; }} />`}
       ${shown === 'restore' && (pg ? html`<${PGRestore} fqdn=${fqdn} snap=${snap} host=${h} job=${job} copy=${live(copy)} aGone=${aGone} settings=${settings} />`
         : html`<${Restore} fqdn=${fqdn} snap=${snap} host=${h} hosts=${hosts} sel=${sel} setSel=${setSel} copy=${live(copy)} aGone=${aGone} />`)}`}
     ${!pg && !can(h, 'browse') && html`<p class="muted">File names are for editors and admins (decision 033).</p>`}

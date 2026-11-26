@@ -234,36 +234,56 @@ func snapshotCmd() *cobra.Command {
 	changes.Flags().IntVar(&changesPage, "page", 1, "page of 1000 changes")
 	c.AddCommand(changes)
 
-	var findIn string
-	find := &cobra.Command{Use: "find <agent> <pattern>", Short: "Find a file in all of an agent's snapshots, or in one (--snapshot)", Args: cobra.ExactArgs(2), RunE: func(_ *cobra.Command, a []string) error {
-		var found []struct {
-			ShortID string    `json:"short_id"`
-			Time    time.Time `json:"time"`
-			JobID   string    `json:"job_id"`
-			Matches []node
-		}
-		q := url.Values{"pattern": {a[1]}}
-		if findIn != "" {
-			q.Set("snapshot", findIn)
-		}
-		raw, err := call("GET", "/api/v1/agents/"+url.PathEscape(a[0])+"/find?"+q.Encode(), nil, &found)
-		if err != nil {
-			return err
-		}
-		if asJSON {
-			printJSON(raw)
-			return nil
-		}
-		w := table()
-		fmt.Fprintln(w, "SNAPSHOT\tTIME\tJOB\tSIZE\tMODIFIED\tPATH")
-		for _, f := range found {
-			for _, m := range f.Matches {
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", f.ShortID, f.Time.Local().Format("2006-01-02 15:04"), f.JobID, human(m.Size), m.MTime.Local().Format("2006-01-02 15:04"), m.Path)
+	var findIn, oldest, newest, findZone string
+	var ignoreCase bool
+	find := &cobra.Command{Use: "find <agent> <pattern>", Short: "Find a file in all of an agent's snapshots, or in one (--snapshot)",
+		Long: `Find a file by its name in all of an agent's snapshots, or in one, as restic find does: names and metadata, never
+contents. The pattern is a name, such as nginx.conf, or a glob: * any characters, ? one, [ab] one of them, ** any
+number of folders, and a path ending in / a folder. Regular expressions do not work: restic has none.`,
+		Args: cobra.ExactArgs(2), RunE: func(_ *cobra.Command, a []string) error {
+			var found []struct {
+				ShortID string    `json:"short_id"`
+				Time    time.Time `json:"time"`
+				JobID   string    `json:"job_id"`
+				Matches []node
 			}
-		}
-		return w.Flush()
-	}}
+			q := url.Values{"pattern": {a[1]}}
+			if findIn != "" {
+				q.Set("snapshot", findIn)
+			}
+			if ignoreCase {
+				q.Set("ignore_case", "1")
+			}
+			if oldest != "" || newest != "" {
+				q.Set("oldest", oldest)
+				q.Set("newest", newest)
+				if findZone == "" {
+					findZone = localZone()
+				}
+				q.Set("tz", findZone)
+			}
+			raw, err := call("GET", "/api/v1/agents/"+url.PathEscape(a[0])+"/find?"+q.Encode(), nil, &found)
+			if err != nil {
+				return err
+			}
+			if asJSON {
+				printJSON(raw)
+				return nil
+			}
+			w := table()
+			fmt.Fprintln(w, "SNAPSHOT\tTIME\tJOB\tSIZE\tMODIFIED\tPATH")
+			for _, f := range found {
+				for _, m := range f.Matches {
+					fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", f.ShortID, f.Time.Local().Format("2006-01-02 15:04"), f.JobID, human(m.Size), m.MTime.Local().Format("2006-01-02 15:04"), m.Path)
+				}
+			}
+			return w.Flush()
+		}}
 	find.Flags().StringVar(&findIn, "snapshot", "", "look in this snapshot only")
+	find.Flags().BoolVar(&ignoreCase, "ignore-case", false, "upper and lower case are the same")
+	find.Flags().StringVar(&oldest, "oldest", "", "files modified on or after this day, YYYY-MM-DD")
+	find.Flags().StringVar(&newest, "newest", "", "files modified on or before this day, YYYY-MM-DD")
+	find.Flags().StringVar(&findZone, "tz", "", "the time zone the days are in, such as Europe/Copenhagen (default: this machine's)")
 	c.AddCommand(find)
 	return c
 }

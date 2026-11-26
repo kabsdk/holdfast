@@ -68,7 +68,8 @@ export const api = {
   snapshots: (f, opts) => req('GET', `/api/v1/agents/${e(f)}/snapshots${q(opts || {})}`),
   files: (f, id, path, page) => req('GET', `/api/v1/agents/${e(f)}/snapshots/${e(id)}/files${q({ path, page })}`),
   changes: (f, id, against, page) => req('GET', `/api/v1/agents/${e(f)}/snapshots/${e(id)}/changes${q({ against, page })}`),
-  find: (f, pattern, snapshot) => req('GET', `/api/v1/agents/${e(f)}/find${q({ pattern, snapshot })}`),
+  // query: { pattern, snapshot, ignore_case, oldest, newest, tz }, as the API takes them.
+  find: (f, query) => req('GET', `/api/v1/agents/${e(f)}/find${q({ ...query })}`),
   restore: (f, id, body) => req('POST', `/api/v1/agents/${e(f)}/snapshots/${e(id)}/restore`, body),
   restorePair: (f, id, body) => req('POST', `/api/v1/agents/${e(f)}/snapshots/${e(id)}/restore-pair`, body),
   restorePairStatus: (f, a, b, path) => req('GET', `/api/v1/agents/${e(f)}/restore-pair${q({ a, b, path })}`),
