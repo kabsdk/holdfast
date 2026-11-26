@@ -1,4 +1,4 @@
-import { html, useState, useEffect, usePoll, useAction, fmtTime, ErrorBox, Loading, Pill } from '../lib.js';
+import { html, useState, useEffect, usePoll, useAction, fmtTime, ErrorBox, Loading, Pill, SiteTag, OFFSITE_DOCS } from '../lib.js';
 import { api } from '../api.js';
 
 export function Audit({ hosts }) {
@@ -80,7 +80,10 @@ export function Exports({ me }) {
     ${!v.on && html`<div class="banner warning">No export is written: server.yaml names no <code>escrow.age_recipient</code>.</div>`}
     ${v.restored && html`<div class="banner">This server was restored from ${v.restored.export_name} on ${fmtTime(v.restored.restored_at)}, at revision ${v.restored.head}.</div>`}
     ${v.on && html`<div class="panel row">
-      <span>Last written: ${v.last_good ? fmtTime(v.last_good.started_at) : 'never'}${v.offsite ? ` · off-site: ${v.last_offsite ? fmtTime(v.last_offsite.started_at) : 'never'}` : ''} · next: ${fmtTime(v.next_at)}</span>
+      <dl class="facts" style="margin:0;flex:1">
+        <dt>${v.offsite ? html`<${SiteTag} /> last written` : 'Last written'}</dt><dd>${v.last_good ? fmtTime(v.last_good.started_at) : 'never'}</dd>
+        ${v.offsite && html`<dt><${SiteTag} b /> last written</dt><dd>${v.last_offsite ? fmtTime(v.last_offsite.started_at) : 'never'}</dd>`}
+        <dt>Next</dt><dd>${fmtTime(v.next_at)}</dd></dl>
       ${me.admin_everywhere && html`<button class="primary" disabled=${now.busy} onClick=${() => now.run(() => api.exportNow()).then(ex.reload, ex.reload)}>Export now</button>`}
     </div>`}
     <${ErrorBox} error=${now.error} />
@@ -101,7 +104,8 @@ export function Settings({ settings, me }) {
     <div class="panel"><dl class="facts">
       ${s.role === 'vault' ? html`<dt>Off-site copies</dt><dd>made by ${s.node}, every agent's snapshots copied with restic copy, under their own retention</dd>`
         : html`<dt>Server</dt><dd>${s.node} · agents connect to ${s.agent_url}${s.ui_url ? ` · people to ${s.ui_url}` : ''}</dd>
-          <dt>Off-site copies</dt><dd>${s.offsite ? 'on: see the Off-site copies pages' : 'off: server.yaml has no offsite: section'}</dd>`}
+          <dt>Off-site copies</dt><dd>${s.offsite ? html`<${SiteTag} b /> on: see the Off-site copies pages`
+            : html`<${SiteTag} b /> <span class="notset">not set up</span>: <code>server.yaml</code> has no <code>offsite:</code> section. <a href=${OFFSITE_DOCS} target="_blank" rel="noopener">How to set it up</a>`}</dd>`}
       <dt>Default time zone</dt><dd>${s.default_zone}</dd>
       <dt>restic</dt><dd>${s.restic_version}, which the packages ship</dd>
       <dt>Storage</dt><dd>${s.storage.endpoint} · bucket ${s.storage.bucket}${s.storage.region ? ' · ' + s.storage.region : ''}</dd>

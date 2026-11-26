@@ -49,7 +49,8 @@ replaces it under the same name and tag, `v0.1-dev`, and installs as an upgrade 
   restoring onto another host.
 - Optional off-site copies, on the same pages as primary: a job's off-site retention follows its primary retention
   until one is saved off-site, and Match primary makes it follow again (decision 053). The problems `offsite_copy`
-  and `offsite_lag` show under the host and are alerted.
+  and `offsite_lag` show under the host and are alerted. Without them, the Overview and Settings say that site B is
+  not set up, and nothing else mentions it (decision 057).
 - Logins through OIDC with three roles, or `holdfast ui-login` for root without an identity provider. A page opened
   without a session goes straight to the login, without flashing a “not logged in” error on the way.
 - Recovery of the server itself from one recovery file and the bucket.

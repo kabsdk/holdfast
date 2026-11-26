@@ -482,9 +482,10 @@ See decision 032.
 
 ### 3.7 Off-site copies (optional)
 
-Decisions 027, 031, 039 and 041. **Off-site copies are optional.** Without an `offsite:` section in `server.yaml`,
-Holdfast keeps one bucket: nothing is copied, no off-site page, setting, column or action is shown, no snapshot is held
-back for a copy, and no off-site metric or alert exists. With it, holdfast-server copies every host's snapshots into a
+Decisions 027, 031, 039, 041 and 057. **Off-site copies are optional.** Without an `offsite:` section in
+`server.yaml`, Holdfast keeps one bucket: nothing is copied, no off-site page, column or action is shown, no snapshot is
+held back for a copy, and no off-site metric or alert exists. Only the Overview and Settings say that site B is not set
+up (decision 057), as `GET /api/v1/settings` and `holdfast settings` do: `"offsite": false`. With it, holdfast-server copies every host's snapshots into a
 second bucket, best in another site, with a key of its own there. Adding the section later starts copying from then on.
 
 **How it runs.** The server runs a second instance of its own code beside itself, the **off-site instance**, on the
@@ -1004,7 +1005,8 @@ tab:
 **The Overview**, the UI's start page, lists every host, those with problems first, and under each host what the
 server knows is wrong with it, each problem once, with its code. Its tiles count the stale, failed and incomplete jobs,
 with an off-site bucket the hosts whose copies fail or lag (`offsite_copy`, `offsite_lag`), and the hosts with any
-other problem; choosing a tile filters the list by it. `#/problems`, the page it replaced,
+other problem; choosing a tile filters the list by it. Without an off-site bucket, a tile in the Off-site tile's place
+says that site B is not set up, and links to how to set it up (decision 057). `#/problems`, the page it replaced,
 opens it. The problems are:
 - errors: `stale`, `failed`, `not_in_bucket` (the agent reported a backup whose snapshot the server, reading the
   repository from the bucket after the report, did not find: decision 045), `offsite_copy` (the last copy to the

@@ -1,7 +1,8 @@
 # 041: Two programs: a gateway in the server, agent certificates, off-site copies by the server
 
 Status: accepted, 2026-11-22, after a study of a simpler architecture and an independent review of it. It is built
-in M8.
+in M8. **Amended by [decision 057](057-site-b-not-set-up-is-shown.md) (2026-11-26):** without off-site copies, the
+Overview and Settings say that site B is not set up.
 
 It replaces: the per-host S3 keys of decisions 011 and 029; holdfast-vault (decisions 027 and 039); the part of
 decision 006 that lets a backup run while the server is down; M1's agent bearer token; and CLAUDE.md's rule

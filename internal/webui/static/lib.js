@@ -355,6 +355,9 @@ export function Kind({ job, more }) {
     ${more && paths.length > 3 && html`<a class="more" href=${more}>+${paths.length - 3} more</a>`}</span></span>`;
 }
 
+// OFFSITE_DOCS is how to set up off-site copies, in the documentation.
+export const OFFSITE_DOCS = 'https://kabsdk.github.io/holdfast/#install-offsite';
+
 // SiteTag is a site's label: SITE A blue, SITE B red. It names a site only where there are two.
 export const SiteTag = ({ b }) => html`<span class=${'sitetag' + (b ? ' b' : '')}>${b ? 'SITE B' : 'SITE A'}</span>`;
 

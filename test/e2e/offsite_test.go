@@ -296,6 +296,14 @@ func TestOffsite(t *testing.T) {
 	ctx := newBrowser(t)
 	errs := jsErrors(ctx)
 	run(t, ctx, "root's link into the UI", chromedp.Navigate(e.rootLink()), chromedp.WaitVisible(`nav.side`, chromedp.ByQuery))
+	// The Overview's site B tile counts the agents whose copies fail or lag; nothing says it is not set up.
+	open(t, ctx, "#/")
+	waitText(t, ctx, "copies failing or behind")
+	var notSet bool
+	run(t, ctx, "the Overview's tiles", chromedp.Evaluate(`document.body.textContent.includes('not set up')`, &notSet))
+	if notSet {
+		t.Fatal("with an off-site bucket, nothing may say site B is not set up")
+	}
 	open(t, ctx, "#/agents/"+fqdn)
 	waitText(t, ctx, "Last 14 days")
 	waitText(t, ctx, "Off-site")

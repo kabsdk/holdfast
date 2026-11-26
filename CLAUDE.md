@@ -56,7 +56,7 @@ Read the spec, and the decisions it points to, before changing anything.
 - **Hosts hold no S3 key.** They back up through the server's gateway with their own pinned certificate, and the
   gateway decides what a host may do: read and add to its own repository, delete only its own lock files, never
   rewrite a file or write config or keys (decision 041). Off-site stays optional: without `offsite:` nothing about
-  it is shown, checked or alerted.
+  it is checked or alerted, and only the Overview and Settings say that it is not set up (decision 057).
 
 These also follow from the spec:
 
