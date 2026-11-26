@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -180,7 +181,8 @@ func (s *Server) measureDue(ctx context.Context) {
 		if h.SizeError != "" {
 			wait = sizeRetry
 		}
-		if h.SizeTriedAt == nil || now.Sub(*h.SizeTriedAt) >= wait {
+		// Once more as soon as the first backup is there, so a new host's size and its jobs' show the same day.
+		if h.SizeTriedAt == nil || now.Sub(*h.SizeTriedAt) >= wait || (h.FirstBackupAt != nil && h.SizeTriedAt.Before(*h.FirstBackupAt)) {
 			due = append(due, h.FQDN)
 		}
 	}
@@ -204,6 +206,48 @@ func (s *Server) measure(ctx context.Context, fqdn string) {
 	}
 	if err := s.st.Q().RecordSize(ctx, fqdn, sz, s.now(), failure); err != nil {
 		s.log.Error("recording the repository's size", "host", fqdn, "err", err)
+	}
+	s.measureJobs(ctx, fqdn)
+}
+
+// measureJobs asks restic what each of a host's jobs takes in its repository: restic stats --mode raw-data of the
+// job's snapshots, each piece of data once, as stored. Jobs share data, so together they can take more than the
+// repository holds. A job without snapshots has no size; one restic could not measure keeps its last, and the next
+// day's measurement tries again.
+func (s *Server) measureJobs(ctx context.Context, fqdn string) {
+	q := s.st.Q()
+	head, err := s.head(ctx, q)
+	if err != nil {
+		s.log.Warn("measuring the jobs: reading the config failed", "host", fqdn, "err", err)
+		return
+	}
+	jobs := make([]string, 0, len(head.Config.Hosts[fqdn].Jobs))
+	for id := range head.Config.Hosts[fqdn].Jobs {
+		jobs = append(jobs, id)
+	}
+	sort.Strings(jobs)
+	sizes, failed := map[string]int64{}, []string{}
+	if len(jobs) > 0 {
+		r, cleanup, err := s.readRunner(ctx, fqdn)
+		if err != nil {
+			s.log.Warn("measuring the jobs: opening the repository failed", "host", fqdn, "err", err)
+			return
+		}
+		defer cleanup()
+		for _, id := range jobs {
+			st, err := r.Stored(ctx, "job="+id)
+			if err != nil {
+				s.log.Warn("measuring a job failed", "host", fqdn, "job", id, "err", err)
+				failed = append(failed, id)
+				continue
+			}
+			if st.SnapshotsCount > 0 {
+				sizes[id] = st.TotalSize
+			}
+		}
+	}
+	if err := q.RecordJobSizes(ctx, fqdn, sizes, failed, s.now()); err != nil {
+		s.log.Error("recording the jobs' sizes", "host", fqdn, "err", err)
 	}
 }
 

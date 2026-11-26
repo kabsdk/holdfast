@@ -113,6 +113,17 @@ func TestEscrowSizeAndRotate(t *testing.T) {
 	if m := metrics(t, e.url+"/metrics"); m[`holdfast_repository_bytes{host="`+fqdn+`",versions="current"}`] <= 0 {
 		t.Fatal("the size metric is missing")
 	}
+	// Each job's size, measured with the repository's once the first backup is there: what restic stats --mode
+	// raw-data says of the job's snapshots, no more than the repository holds.
+	waitFor(t, "the job's stored size", 3*time.Minute, func() bool {
+		h := e.host(fqdn)
+		return len(h.Jobs) == 1 && h.Jobs[0].Stored != nil && h.Jobs[0].Stored.Bytes > 0
+	})
+	want, err := old.Stored(ctx, "job=data")
+	must(t, err)
+	if h := e.host(fqdn); h.Jobs[0].Stored.Bytes != want.TotalSize || want.TotalSize > h.Size.Current {
+		t.Fatalf("the job's stored size is %d; restic says %d, and the repository holds %d", h.Jobs[0].Stored.Bytes, want.TotalSize, h.Size.Current)
+	}
 
 	// Rotate: a new password, the old one gone, the token revoked, a new code.
 	var rot struct {

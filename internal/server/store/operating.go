@@ -55,6 +55,47 @@ func (q *Q) RecordSize(ctx context.Context, fqdn string, s storage.Size, now tim
 	return err
 }
 
+// JobSize is what one job's restore points take in the repository, from its last measurement.
+type JobSize struct {
+	FQDN       string
+	JobID      string
+	Bytes      int64
+	MeasuredAt time.Time
+}
+
+// RecordJobSizes keeps one measurement of a host's jobs: sizes holds those restic measured, failed those it could not,
+// which keep their last size. Every other job of the host, one without snapshots or one it no longer has, has none.
+func (q *Q) RecordJobSizes(ctx context.Context, fqdn string, sizes map[string]int64, failed []string, now time.Time) error {
+	keep := append([]string{}, failed...)
+	for id, n := range sizes {
+		keep = append(keep, id)
+		if _, err := q.db.Exec(ctx, `INSERT INTO job_sizes (fqdn, job_id, bytes, measured_at) VALUES ($1, $2, $3, $4)
+			ON CONFLICT (fqdn, job_id) DO UPDATE SET bytes = EXCLUDED.bytes, measured_at = EXCLUDED.measured_at`, fqdn, id, n, now); err != nil {
+			return err
+		}
+	}
+	_, err := q.db.Exec(ctx, `DELETE FROM job_sizes WHERE fqdn = $1 AND NOT (job_id = ANY($2))`, fqdn, keep)
+	return err
+}
+
+// ListJobSizes returns every job's last measurement.
+func (q *Q) ListJobSizes(ctx context.Context) ([]JobSize, error) {
+	rows, err := q.db.Query(ctx, `SELECT fqdn, job_id, bytes, measured_at FROM job_sizes ORDER BY fqdn, job_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []JobSize
+	for rows.Next() {
+		var s JobSize
+		if err := rows.Scan(&s.FQDN, &s.JobID, &s.Bytes, &s.MeasuredAt); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
 // StartRotation records a host's new repository key and the old one, which is still to be removed. It runs in
 // the transaction that stores the new password, before the old key is removed, so a crash in between leaves
 // the old key on record.
@@ -124,6 +165,9 @@ func (q *Q) MarkDecommissioned(ctx context.Context, fqdn string, now time.Time, 
 		return err
 	}
 	if _, err := q.db.Exec(ctx, `UPDATE snapshots SET deleted_by_holdfast = true, gone_at = $2 WHERE fqdn = $1 AND gone_at IS NULL`, fqdn, now); err != nil {
+		return err
+	}
+	if _, err := q.db.Exec(ctx, `DELETE FROM job_sizes WHERE fqdn = $1`, fqdn); err != nil {
 		return err
 	}
 	_, err := q.db.Exec(ctx, `DELETE FROM pending_deletions WHERE fqdn = $1`, fqdn)

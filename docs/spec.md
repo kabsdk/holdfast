@@ -422,6 +422,11 @@ disappeared (§3.6).
 - The repository's size is measured once a day: one listing of the prefix with its versions gives the
   current bytes and objects, and the bytes of the old versions S3 keeps. The host's page and the metrics
   `holdfast_repository_bytes{versions="current"|"noncurrent"}` and `holdfast_repository_objects` show it.
+- Each job's **Stored** is measured with it: what the job's snapshots take in the repository, each piece of data once,
+  as stored (`restic stats --mode raw-data --tag job=<job>`, run by the server). Jobs share data, so together they can
+  take more than the repository. A job without snapshots has none, and one restic could not measure keeps its last.
+  The job's `stored` in the API (`{bytes, measured_at}`) and `holdfast agent show` show it; off-site measures its own
+  copies the same way. A host is measured once more as soon as its first backup is there.
 
 ### 3.5b Rolling a repository back
 
@@ -815,7 +820,8 @@ Restore and inspection behave like restic does on the host.
 ### 5.1a Agent page
 
 - Its name, and the address it last connected from ("from 10.0.4.17").
-- One row per job: its state, its **last 14 days**, its last and next backup, and **Back up now** and **Restore**
+- One row per job: its state, its **last 14 days**, its last and next backup, what it takes in each site (**Stored**,
+  §3.5), and **Back up now** and **Restore**
   (from the newest snapshot). A PostgreSQL job shows its database and connection. Paths, schedule and retention are
   on the job's page.
 - **PostgreSQL connections**, when the agent has any or has a PostgreSQL client: each with its URL, its users,
@@ -850,7 +856,8 @@ Restore and inspection behave like restic does on the host.
 - **Several days** are chosen with shift-click, or a whole month by its name; Delete then deletes all their restore
   points, with one reason (§3.4).
 - The job's retention rules are chips; choosing one highlights the days it keeps.
-- The card's header has a line per site: primary, and off-site when there is one.
+- The card's header has a line per site: primary, and off-site when there is one, each with what the job takes there
+  (**Stored**, §3.5).
 - A PostgreSQL job's page names its connection and database; each restore point is a dump.
 - **Find a file in all snapshots**, one line at the top of the page, above the restore points, uses `restic find` to
   show the versions of a file. Each version links to the snapshot, opened at that folder.

@@ -2,7 +2,7 @@
 // square is two halves, site A on top and site B below, each in its own site's state (decision 053). A day lists its
 // restore points, each with its snapshot in site A and its copy in site B, to open, restore or delete, in either site
 // or both, always with a reason (decision 055). What restic keeps is restic's answer (forget --dry-run), from kept_by.
-import { html, useState, useEffect, useRef, usePoll, useAction, link, offsiteLink, fmtTime, fmtDay, dur, bytes, scheduleText, retentionText, windowText, Pill, Snap, can, ErrorBox, Loading, Menu, MONTHS, fullDate, clock, browserZone, localDay, isPG, Kind, repoPath, icons } from '../lib.js';
+import { html, useState, useEffect, useRef, usePoll, useAction, link, offsiteLink, fmtTime, fmtDay, dur, bytes, scheduleText, retentionText, windowText, Pill, Snap, can, ErrorBox, Loading, Menu, MONTHS, fullDate, clock, browserZone, localDay, isPG, Kind, repoPath, icons, storedTip } from '../lib.js';
 import { api } from '../api.js';
 import { StateBadge } from './host.js';
 import { FindFile } from './snapshots.js';
@@ -23,7 +23,7 @@ function VaultJobFacts({ host, job }) {
 
 // SiteB is site B's line: where it keeps the copies, how many, and whether it keeps the same as site A; with the job's
 // off-site settings (decision 053).
-function SiteB({ host, job, pts, storage, onChange }) {
+function SiteB({ host, job, pts, storage, stored, onChange }) {
   const act = useAction();
   const oj = host.offsite.jobs.find((x) => x.id === job.id);
   const save = (fn, body) => act.run(() => fn(host.fqdn, job.id, body || {})).then((r) => { if (r) onChange(); });
@@ -32,8 +32,8 @@ function SiteB({ host, job, pts, storage, onChange }) {
   const there = pts.filter((p) => p.sb === 'copied' || p.sb === 'waits').length;
   const pending = pts.filter((p) => p.sb === 'pending').length;
   return html`<div class="siteline b"><span class="tag">SITE B</span><code>${repoPath(storage, host.fqdn)}</code>
-    <span class="muted">${[storage?.endpoint, `${there} restore points${pending ? `, ${pending} copy pending` : ', up to date'}`, oj.excluded && 'new snapshots are not copied',
-      oj.own_retention ? `its own retention: ${retentionText(oj.retention)}` : 'the same retention as site A'].filter(Boolean).join(' · ')}</span>
+    <span class="muted">${[storage?.endpoint, `${there} restore points${pending ? `, ${pending} copy pending` : ', up to date'}`].filter(Boolean).join(' · ')} · <span data-tip=${storedTip(stored, 'site B')}>${stored ? bytes(stored.bytes) + ' stored' : 'stored: not measured yet'}</span>
+      ${[oj.excluded && 'new snapshots are not copied', oj.own_retention ? `its own retention: ${retentionText(oj.retention)}` : 'the same retention as site A'].filter(Boolean).map((x) => ` · ${x}`)}</span>
     ${oj.shorter_than_primary && html`<${Pill} kind="warning">keeps less than site A (O101)<//>`}
     ${canSet && oj.own_retention && html`<button class="small" disabled=${act.busy} onClick=${() => save(api.offsiteMatchPrimary)}>Keep the same as site A</button>`}
     ${canSet && html`<a class="button small" href=${offsiteLink('agents', host.fqdn, 'configure', job.id)}>Set its own…</a>`}
@@ -72,7 +72,7 @@ function SiteCell({ p, site, fqdn, mayDelete, onCancel, vault }) {
 }
 
 // RestorePoints is the calendar and the chosen day's restore points.
-function RestorePoints({ h, j, pts, off, vault, siteA, siteB, days, events, reload }) {
+function RestorePoints({ h, j, pts, off, vault, siteA, siteB, storedB, days, events, reload }) {
   const fqdn = h.fqdn;
   const pg = isPG(j);
   const mayDelete = can(h, 'snapshot.delete');
@@ -186,8 +186,9 @@ function RestorePoints({ h, j, pts, off, vault, siteA, siteB, days, events, relo
   return html`<section class="list" aria-labelledby="rp-h">
     <div class="list-head" style="align-items:flex-start"><div style="display:flex;flex-direction:column;gap:.4rem;min-width:0;flex:1 1 40rem">
       <h2 id="rp-h">Restore points <span class="muted" style="font-weight:400;font-size:13px">${pts.length ? `newest ${fmtTime(pts[0].time)} · oldest ${fullDate(pts[pts.length - 1].time)}` : 'none yet'}</span></h2>
-      <div class="siteline"><span class="tag">${vault ? 'SITE B' : 'SITE A'}</span><code>${repoPath(siteA, fqdn)}</code><span class="muted">${siteA?.endpoint ? siteA.endpoint + ' · ' : ''}${inA} restore points · ${retentionText(ret)}</span></div>
-      ${off && html`<${SiteB} host=${h} job=${j} pts=${pts} storage=${siteB} onChange=${reload} />`}
+      <div class="siteline"><span class="tag">${vault ? 'SITE B' : 'SITE A'}</span><code>${repoPath(siteA, fqdn)}</code><span class="muted">${siteA?.endpoint ? siteA.endpoint + ' · ' : ''}${inA} restore points
+        · <span data-tip=${storedTip(j.stored, vault ? 'site B' : 'site A')}>${j.stored ? bytes(j.stored.bytes) + ' stored' : 'stored: not measured yet'}</span> · ${retentionText(ret)}</span></div>
+      ${off && html`<${SiteB} host=${h} job=${j} pts=${pts} storage=${siteB} stored=${storedB} onChange=${reload} />`}
     </div></div>
     <div class="rules"><span class="muted">Kept by restic:</span>
       ${chips.map(([k, label, n]) => html`<button type="button" class=${'rulechip' + (rule === k ? ' on' : '')} aria-pressed=${rule === k ? 'true' : 'false'} onClick=${() => setRule(rule === k ? null : k)}>${label} <b>${n}</b></button>`)}
@@ -242,6 +243,7 @@ export function Job({ fqdn, job: jid, vault, reloadHosts, settings }) {
   const listA = usePoll(() => api.snapshots(fqdn, { job: jid, retention: true, all: true }), [fqdn, jid], 60000);
   const listB = usePoll(() => (withOff ? api.offsiteSnapshots(fqdn, { job: jid, retention: true, all: true }) : Promise.resolve(null)), [fqdn, jid, withOff], 60000);
   const siteB = usePoll(() => (withOff ? api.offsiteSettings() : Promise.resolve(null)), [withOff], 0);
+  const hostB = usePoll(() => (withOff ? api.offsiteHost(fqdn) : Promise.resolve(null)), [fqdn, withOff], 60000); // site B's Stored
   const days = usePoll(() => api.hostDays(fqdn, 92, browserZone()), [fqdn], 60000);
   const events = usePoll(() => api.hostEvents(fqdn, 200), [fqdn], 60000);
   const cuts = usePoll(() => api.retentionCuts(), [fqdn], 60000);
@@ -298,5 +300,6 @@ export function Job({ fqdn, job: jid, vault, reloadHosts, settings }) {
     ${withOff && listB.error && html`<div class="banner warning">Site B's copies could not be read, so the calendar shows site A only: ${listB.error.message}</div>`}
     ${listA.error ? html`<${ErrorBox} error=${listA.error} />` : !ready ? html`<${Loading} what="the restore points (restic is asked what it keeps)" />`
       : html`<${RestorePoints} key=${off ? 'ab' : 'a'} h=${h} j=${j} pts=${restorePoints(listA.data, off ? listB.data : null, { off, excluded: !!oj?.excluded })} off=${off} vault=${vault}
-          siteA=${settings?.storage} siteB=${siteB.data?.storage} days=${days.data?.jobs} events=${events.data} reload=${refresh} />`}`;
+          siteA=${settings?.storage} siteB=${siteB.data?.storage} storedB=${(hostB.data?.jobs || []).find((x) => x.id === jid)?.stored}
+          days=${days.data?.jobs} events=${events.data} reload=${refresh} />`}`;
 }

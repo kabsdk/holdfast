@@ -803,6 +803,9 @@ type hostView struct {
 		ID       string     `json:"id"`
 		Status   *jobStatus `json:"status"`
 		InBucket *bool      `json:"in_bucket"`
+		Stored   *struct {
+			Bytes int64 `json:"bytes"`
+		} `json:"stored"`
 	} `json:"jobs"`
 	// M5: the escrow file, the repository's size, a rotation not finished, decommission.
 	Escrow struct {

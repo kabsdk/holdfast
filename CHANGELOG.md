@@ -35,7 +35,8 @@ replaces it under the same name and tag, `v0.1-dev`, and installs as an upgrade 
 - **holdfast**: the CLI, with every action the web UI has.
 - **The web UI**: an **Overview** of every agent, worst first, whose tiles count stale, failed and incomplete jobs
   and filter the agents by them; an **agent page** with a row per job and its last 14 days as squares, and its
-  PostgreSQL connections; a **job page** that is one **calendar** of the job's restore points, a square a day, a
+  PostgreSQL connections, and what each job takes in each site (**Stored**, from `restic stats --mode raw-data`,
+  measured daily); a **job page** that is one **calendar** of the job's restore points, a square a day, a
   year in one row with the year chosen above it, primary and off-site in its two halves, where a day opens its
   restore points with Restore and Delete, and **Find a file in all snapshots** at its top; a snapshot's **Files** as one tree with what changed against an older
   snapshot (`holdfast find --snapshot` finds a name in one snapshot); and a snapshot's
