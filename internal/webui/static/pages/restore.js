@@ -1,7 +1,7 @@
 // A snapshot's Restore tab (spec §5.4), one column: from, what, where, then the Run bar; a PostgreSQL dump's, into a
 // new database beside the original, in place, or as its file (decision 055). And the dialog that deletes restore points
 // in site A, site B or both (§5.3). Every rule is the server's and the agent's; this asks and shows.
-import { html, useState, useEffect, useRef, useAction, can, ErrorBox, shortName, dumpFile, onOffsite } from '../lib.js';
+import { html, useState, useEffect, useRef, useAction, can, ErrorBox, shortName, dumpFile, onOffsite, SiteTag } from '../lib.js';
 import { api } from '../api.js';
 
 // The selection: everything ticked and you untick (Left out, restic's --exclude), or nothing ticked and you tick
@@ -239,7 +239,7 @@ export function DeleteDialog({ fqdn, points, off, site, onClose, onDone }) {
       <h2 id="del-h">${n === 1 ? `Delete snapshot ${points[0].short || points[0].copyShort}?` : `Delete ${n} snapshots?`}</h2>
       <p class="muted">${n > 1 && html`<span class="mono">${points.slice(0, 6).map((p) => p.short || p.copyShort).join(' ')}</span>${n > 6 ? ` and ${n - 6} more` : ''}. `}restic forgets ${n === 1 ? 'it' : 'them'} in 7 days${text ? ', ' + text : ''}. Until then you can cancel.</p>
       ${off && html`<div class="opts" style="padding:0" role="radiogroup" aria-label="Where">
-        ${opt('a', 'Site A', inA.length > 0, of(inA.length))}${opt('b', 'Site B, the off-site copies', inB.length > 0, of(inB.length))}
+        ${opt('a', html`<${SiteTag} />`, inA.length > 0, of(inA.length))}${opt('b', html`<${SiteTag} b /> the off-site copies`, inB.length > 0, of(inB.length))}
         ${opt('both', 'Both sites', inA.length > 0 && inB.length > 0, `${inA.length} in site A and ${inB.length} in site B`)}</div>`}
       <label class="field"><span>Why <b class="errtext">(required)</b>: it goes into the audit log</span>
         <textarea class="reason" ref=${first} aria-label="Why" value=${reason} onInput=${(e) => setReason(e.target.value)} placeholder="Such as: dump taken during the failed migration, ticket OPS-512"></textarea></label>

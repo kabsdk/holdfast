@@ -299,6 +299,13 @@ func TestOffsite(t *testing.T) {
 	open(t, ctx, "#/agents/"+fqdn)
 	waitText(t, ctx, "Last 14 days")
 	waitText(t, ctx, "Off-site")
+	// With two sites, the repository box has a row for each, under the sites' labels.
+	waitText(t, ctx, "Escrow")
+	var repo []string
+	run(t, ctx, "the repository box", chromedp.Evaluate(`[...document.querySelectorAll('dl.facts.box dt')].map((d) => d.textContent)`, &repo))
+	if strings.Join(repo, ",") != "SITE A,SITE B,Escrow" {
+		t.Fatalf("the repository box with off-site copies: %q", repo)
+	}
 	// The job page's one calendar has both sites, and the site B line its settings.
 	open(t, ctx, "#/agents/"+fqdn+"/jobs/data")
 	waitText(t, ctx, "Restore points")
