@@ -13,9 +13,10 @@ import (
 )
 
 // The agent page's last backups (spec §5.1a): for each job, the last slots its schedule called for, and how each
-// went. A slot is served by the scheduled backup the agent ran for it, retries included; one with no backup is
-// missed, so a weekly job's 7 slots cover 7 weeks and a missed one shows. Backups run by hand serve no slot. The
-// server decides what each slot's state is, so the UI and the CLI only draw what it says.
+// went. A slot is served by the scheduled backup the agent ran for it, retries included; failing that, by a backup run
+// outside the schedule while it was the newest slot, such as the job's first backup or one run by hand. One with no
+// backup is missed, so a weekly job's 7 slots cover 7 weeks and a missed one shows. The server decides what each
+// slot's state is, so the UI and the CLI only draw what it says.
 
 // Slot states. A backup's own statuses, success, warning and failed, say how it went; the rest say why there is none.
 const (
@@ -35,6 +36,9 @@ type Slot struct {
 	Runs       int        `json:"runs,omitempty"`
 	SnapshotID string     `json:"snapshot_id,omitempty"`
 	Error      string     `json:"error,omitempty"`
+	// Unscheduled says the backup ran outside the schedule, while this was the newest slot: the job's first backup,
+	// or one run by hand, in place of the slot's own.
+	Unscheduled bool `json:"unscheduled,omitempty"`
 }
 
 // JobSlots is one job's last slots, oldest first.
@@ -102,7 +106,12 @@ func jobSlots(sch schedule.Schedule, loc *time.Location, runs []store.SlotRun, f
 		all = all[len(all)-n:]
 	}
 	by := map[int64][]store.SlotRun{}
+	var unscheduled []store.SlotRun
 	for _, r := range runs {
+		if r.ScheduledFor.IsZero() {
+			unscheduled = append(unscheduled, r)
+			continue
+		}
 		by[r.ScheduledFor.Unix()] = append(by[r.ScheduledFor.Unix()], r)
 	}
 	out := make([]Slot, 0, len(all))
@@ -114,6 +123,19 @@ func jobSlots(sch schedule.Schedule, loc *time.Location, runs []store.SlotRun, f
 			if rs[k].Status != "skipped" {
 				sl.Runs++
 				last = &rs[k]
+			}
+		}
+		if last == nil {
+			// None of its own: a backup run outside the schedule while this was the newest slot stands in for it.
+			end := now
+			if i+1 < len(all) {
+				end = all[i+1]
+			}
+			for k := range unscheduled {
+				if u := &unscheduled[k]; !u.Started.Before(at) && u.Started.Before(end) && u.Status != "skipped" {
+					sl.Runs++
+					last, sl.Unscheduled = u, true
+				}
 			}
 		}
 		switch {

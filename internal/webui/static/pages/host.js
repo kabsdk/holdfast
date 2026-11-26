@@ -167,7 +167,7 @@ const isoDay = (t) => { const d = new Date(t); return `${d.getFullYear()}-${Stri
 function Slots({ fqdn, job, slots }) {
   if (!slots) return html`<div class="strip slots" aria-hidden="true">${Array.from({ length: 7 }, () => html`<span class="d-wait"></span>`)}</div>`;
   const tip = (s) => {
-    const how = s.finished && s.state !== 'missed' ? `${SLOT_TEXT[s.state]} at ${clock(s.finished)}${s.runs > 1 ? `, after ${s.runs} tries` : ''}` : SLOT_TEXT[s.state];
+    const how = s.finished && s.state !== 'missed' ? `${SLOT_TEXT[s.state]} at ${clock(s.finished)}${s.unscheduled ? ', outside the schedule' : s.runs > 1 ? `, after ${s.runs} tries` : ''}` : SLOT_TEXT[s.state];
     return `${fullDate(s.at)} ${clock(s.at)}\n${how}${s.error ? ': ' + s.error : ''}`;
   };
   return html`<div class="strip slots" role="list" aria-label=${job + ', the last backups'}>${slots.map((s) => (s.state === 'before'

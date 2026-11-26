@@ -189,21 +189,32 @@ func TestUIPages(t *testing.T) {
 		t.Fatalf("today's backups, as host days gives them: %+v", today)
 	}
 	// The last 7 backups the schedule called for, as the API and the CLI give them and the agent page draws them: the
-	// job's first backup ran at enrollment and the second by hand, on no slot, so its daily slots came before it.
+	// job's first backup ran at enrollment and the next by hand, outside the schedule, so they stand in for the newest
+	// slot, which has none of its own; the older slots came before the first backup.
 	var hs struct {
 		Jobs []struct {
 			JobID string `json:"job_id"`
-			Slots []struct{ State string }
+			Slots []struct {
+				State       string
+				Unscheduled bool
+			}
 		}
 	}
 	must(t, json.Unmarshal(e.cli("agent", "slots", web), &hs))
-	if len(hs.Jobs) != 1 || len(hs.Jobs[0].Slots) != 7 || hs.Jobs[0].Slots[6].State != "before" {
+	if len(hs.Jobs) != 1 || len(hs.Jobs[0].Slots) != 7 || hs.Jobs[0].Slots[6].State != "success" || !hs.Jobs[0].Slots[6].Unscheduled || hs.Jobs[0].Slots[5].State != "before" {
 		t.Fatalf("agent slots: %+v", hs)
 	}
 	var squares, links int
-	run(t, ctx, "the job's squares", chromedp.Evaluate(`document.querySelectorAll('.strip.slots > *').length`, &squares), chromedp.Evaluate(`document.querySelectorAll('.strip.slots a').length`, &links))
-	if squares != 7 || links != 0 {
-		t.Fatalf("the agent page draws %d squares, %d of them links; want 7, none before the first backup", squares, links)
+	run(t, ctx, "the job's squares", chromedp.Evaluate(`document.querySelectorAll('.strip.slots > *').length`, &squares), chromedp.Evaluate(`document.querySelectorAll('.strip.slots a.d-success').length`, &links))
+	if squares != 7 || links != 1 {
+		t.Fatalf("the agent page draws %d squares, %d of them a backup to open; want 7, and the newest", squares, links)
+	}
+	// A path never runs past its column into the squares: it is cut in its middle instead.
+	var inside bool
+	run(t, ctx, "the path's width", chromedp.Evaluate(`(() => { const p = document.querySelector('.gt .cutpath'), c = p.closest('.gt > div');
+		return p.getBoundingClientRect().right <= c.getBoundingClientRect().right + 1; })()`, &inside))
+	if !inside {
+		t.Fatal("a path runs past the Backs up column")
 	}
 
 	// Configure: the checks come from the server as you type, and the save makes a revision.

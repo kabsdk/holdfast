@@ -174,8 +174,11 @@ button.icon { display: inline-flex; align-items: center; justify-content: center
 .legend .legendbtn:disabled { color: #9aa3b2; opacity: 1; }
 /* What a job backs up: a path a line, a long one cut in its middle; many, or any exclusion, fold into one line. */
 .paths { display: flex; flex-direction: column; gap: .1rem; min-width: 0; }
-/* A narrow column cuts a path at its end too, rather than let it run into the next; the whole is on hover. */
-.kindline .paths > .mono { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A path in a narrow column: its folders give way first, with an ellipsis, then its file name; never past the column. */
+.cutpath { display: flex; min-width: 0; max-width: 100%; white-space: nowrap; }
+.cutpath .head { flex: 0 1000 auto; min-width: 1.5ch; overflow: hidden; text-overflow: ellipsis; }
+.cutpath .tail { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.kindline .paths { flex: 1 1 auto; }
 .paths .more { font-size: 12.5px; }
 details.pathlist summary { cursor: pointer; color: var(--accent); width: max-content; }
 details.pathlist ul { margin: .3rem 0 .2rem; padding-left: 1.1rem; }
@@ -258,7 +261,7 @@ button.cell:hover, button.cell:focus-visible { outline: 2px solid var(--text); o
 .cell.c-focus { outline: 2px solid var(--text); outline-offset: 1px; }
 .selbar { display: flex; flex-wrap: wrap; gap: .5rem .8rem; align-items: center; padding: .55rem 1rem; border-top: 1px solid var(--line); background: #f3f6fd; font-size: 13px; }
 .dayhead { display: flex; flex-wrap: wrap; gap: .3rem .8rem; align-items: baseline; padding: .7rem 1rem .4rem; border-top: 1px solid var(--line); }
-.kindline { display: inline-flex; gap: .35rem; align-items: flex-start; min-width: 0; }
+.kindline { display: inline-flex; gap: .35rem; align-items: flex-start; min-width: 0; max-width: 100%; }
 svg.kind { flex: none; margin-top: 2px; color: var(--muted); }
 .jobpill svg.kind { margin-top: 0; }
 .warntext { color: var(--warn); }
