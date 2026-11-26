@@ -172,6 +172,20 @@ func TestUIPages(t *testing.T) {
 	}
 	open(t, ctx, "#/agents/"+web+"/jobs/system/calendar")
 	waitText(t, ctx, "Restore points")
+	// Find a file in all snapshots is at the top of the job page, above the restore points, so the calendar loading
+	// below it never moves it; it finds later.txt.
+	var findFirst bool
+	run(t, ctx, "where Find a file is", chromedp.Evaluate(`(() => { const f = document.querySelector('.findfile'), r = document.querySelector('#rp-h');
+		return !!f && !!r && !!(f.compareDocumentPosition(r) & Node.DOCUMENT_POSITION_FOLLOWING); })()`, &findFirst))
+	if !findFirst {
+		t.Fatalf("Find a file in all snapshots must come before the restore points:\n%s", page(ctx))
+	}
+	run(t, ctx, "find later.txt in all snapshots", chromedp.SendKeys(`.findfile input`, "later.txt", chromedp.ByQuery), chromedp.Click(`.findfile button`, chromedp.ByQuery))
+	waitFor(t, "later.txt found in the job's snapshots", 60*time.Second, func() bool {
+		var found string
+		_ = chromedp.Run(ctx, chromedp.Evaluate(`document.querySelector('.findfile table')?.textContent || ''`, &found))
+		return strings.Contains(found, "later.txt")
+	})
 
 	// Snapshot: Files is one tree with what changed against the snapshot before (later.txt is new), Only changes, and a
 	// find in this snapshot; the old Changes address opens it too. Then a restore's dry run through the agent.

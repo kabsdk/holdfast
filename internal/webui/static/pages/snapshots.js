@@ -16,17 +16,18 @@ export function fate(s) {
   return { kind: '', text: '' };
 }
 
+// FindFile is one line at the top of a job's page (spec §5.2), whose results open below it.
 export function FindFile({ fqdn, job }) {
   const [text, setText] = useState('');
   const act = useAction();
   const found = (act.done || []).filter((f) => !job || f.job_id === job);
-  return html`<div class="panel">
-    <h3>Find a file in all snapshots</h3>
-    <p class="muted">Like <code>restic find</code>: names and metadata, never contents.</p>
-    <form class="row" onSubmit=${(e) => { e.preventDefault(); if (text.trim().length >= 2) act.run(() => api.find(fqdn, text.trim())); }}>
-      <input placeholder="Path or name, e.g. nginx.conf" value=${text} onInput=${(e) => setText(e.target.value)} style="flex:1" />
+  return html`<div class="panel findfile">
+    <form class="row" style="align-items:center" onSubmit=${(e) => { e.preventDefault(); if (text.trim().length >= 2) act.run(() => api.find(fqdn, text.trim())); }}>
+      <b style="white-space:nowrap">Find a file in all snapshots</b>
+      <input aria-label="Path or name" placeholder="Path or name, e.g. nginx.conf" value=${text} onInput=${(e) => setText(e.target.value)} style="flex:1;min-width:14rem" />
       <button disabled=${act.busy}>Find</button>
     </form>
+    <p class="muted small-text" style="margin:.4rem 0 0">Like <code>restic find</code>: names and metadata, never contents.</p>
     <${ErrorBox} error=${act.error} />
     ${act.busy && html`<${Loading} what="every snapshot" />`}
     ${act.done && (found.length === 0 ? html`<p class="muted">No file matching “${text}” in any snapshot${job ? ' of this job' : ''}.</p>` : html`<table>
