@@ -187,6 +187,33 @@ func TestUIPages(t *testing.T) {
 		_ = chromedp.Run(ctx, chromedp.Evaluate(`document.querySelector('.findfile table')?.textContent || ''`, &found))
 		return strings.Contains(found, "later.txt")
 	})
+	// Added per backup: what each backup added, as stored, a bar each over the calendar, and Largest first, which is the
+	// API's and the CLI's sort=added. Every snapshot has restic's figure, most first; another sort is refused.
+	var bySize []struct {
+		ShortID string `json:"short_id"`
+		Added   *int64 `json:"data_added_packed"`
+	}
+	must(t, json.Unmarshal(e.cli("snapshot", "list", web, "--job", "system", "--sort", "added"), &bySize))
+	for i, s := range bySize {
+		if s.Added == nil || (i > 0 && *s.Added > *bySize[i-1].Added) {
+			t.Fatalf("--sort added lists what each backup added, most first: %+v", bySize)
+		}
+	}
+	if _, err := e.cliErr("snapshot", "list", web, "--sort", "size"); err == nil {
+		t.Fatal("a sort other than time or added must be refused")
+	}
+	var bars int
+	run(t, ctx, "the bars of Added per backup", chromedp.WaitVisible(`.addchart svg`, chromedp.ByQuery),
+		chromedp.Evaluate(`document.querySelectorAll('.addchart svg path.bar').length`, &bars))
+	if bars < 1 || bars > len(bySize) {
+		t.Fatalf("Added per backup draws %d bars for %d restore points", bars, len(bySize))
+	}
+	clickText(t, ctx, "button", "Largest first")
+	waitFor(t, "Largest first lists every restore point", 30*time.Second, func() bool {
+		var rows int
+		_ = chromedp.Run(ctx, chromedp.Evaluate(`document.querySelectorAll('.largest .gt:not(.head)').length`, &rows))
+		return rows == len(bySize)
+	})
 
 	// Snapshot: Files is one tree with what changed against the snapshot before (later.txt is new), Only changes, and a
 	// find in this snapshot; the old Changes address opens it too. Then a restore's dry run through the agent.

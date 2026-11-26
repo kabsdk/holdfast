@@ -14,23 +14,25 @@ import (
 
 // Snapshot is one row of the catalogue.
 type Snapshot struct {
-	FQDN           string     `json:"fqdn"`
-	ID             string     `json:"id"`
-	ShortID        string     `json:"short_id"`
-	Time           time.Time  `json:"time"`
-	Hostname       string     `json:"hostname"`
-	JobID          string     `json:"job_id,omitempty"`
-	Tags           []string   `json:"tags"`
-	Paths          []string   `json:"paths"`
-	Parent         string     `json:"parent,omitempty"`
-	TotalFiles     *int64     `json:"total_files,omitempty"`
-	TotalBytes     *int64     `json:"total_bytes,omitempty"`
-	DataAdded      *int64     `json:"data_added,omitempty"`
-	FirstSeen      time.Time  `json:"first_seen"`
-	GoneAt         *time.Time `json:"gone_at,omitempty"` // no longer in the repository
-	DeletedByUs    bool       `json:"deleted_by_holdfast,omitempty"`
-	MadeByHoldfast bool       `json:"made_by_holdfast"` // an agent reported this snapshot ID (decision 032)
-	Acknowledged   *time.Time `json:"acknowledged_at,omitempty"`
+	FQDN       string    `json:"fqdn"`
+	ID         string    `json:"id"`
+	ShortID    string    `json:"short_id"`
+	Time       time.Time `json:"time"`
+	Hostname   string    `json:"hostname"`
+	JobID      string    `json:"job_id,omitempty"`
+	Tags       []string  `json:"tags"`
+	Paths      []string  `json:"paths"`
+	Parent     string    `json:"parent,omitempty"`
+	TotalFiles *int64    `json:"total_files,omitempty"`
+	TotalBytes *int64    `json:"total_bytes,omitempty"`
+	DataAdded  *int64    `json:"data_added,omitempty"`
+	// DataAddedPacked is what the backup added to the repository, as stored: restic's data_added_packed.
+	DataAddedPacked *int64     `json:"data_added_packed,omitempty"`
+	FirstSeen       time.Time  `json:"first_seen"`
+	GoneAt          *time.Time `json:"gone_at,omitempty"` // no longer in the repository
+	DeletedByUs     bool       `json:"deleted_by_holdfast,omitempty"`
+	MadeByHoldfast  bool       `json:"made_by_holdfast"` // an agent reported this snapshot ID (decision 032)
+	Acknowledged    *time.Time `json:"acknowledged_at,omitempty"`
 	// In the vault (decision 039): the snapshot in the source site this one is a copy of, and when the source
 	// deleted it, if it did (decision 031's "Deleted in primary").
 	Original         string     `json:"original,omitempty"`
@@ -62,15 +64,22 @@ func (q *Q) SyncSnapshots(ctx context.Context, fqdn string, listed []Snapshot, n
 	for _, s := range listed {
 		ids = append(ids, s.ID)
 		tag, err := q.db.Exec(ctx, `INSERT INTO snapshots (fqdn, id, short_id, time, hostname, job_id, tags, paths, parent,
-			total_files, total_bytes, data_added, first_seen, original)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+			total_files, total_bytes, data_added, first_seen, original, data_added_packed)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
 			ON CONFLICT (fqdn, id) DO UPDATE SET gone_at = NULL, acknowledged_at = NULL WHERE snapshots.gone_at IS NOT NULL`,
 			fqdn, s.ID, s.ShortID, s.Time, s.Hostname, s.JobID, nonNil(s.Tags), nonNil(s.Paths), s.Parent,
-			s.TotalFiles, s.TotalBytes, s.DataAdded, now, s.Original)
+			s.TotalFiles, s.TotalBytes, s.DataAdded, now, s.Original, s.DataAddedPacked)
 		if err != nil {
 			return 0, 0, err
 		}
 		added += int(tag.RowsAffected())
+		// A snapshot catalogued before Holdfast read data_added_packed gets it now (migration 0020).
+		if s.DataAddedPacked != nil {
+			if _, err := q.db.Exec(ctx, `UPDATE snapshots SET data_added_packed = $3 WHERE fqdn = $1 AND id = $2 AND data_added_packed IS NULL`,
+				fqdn, s.ID, s.DataAddedPacked); err != nil {
+				return 0, 0, err
+			}
+		}
 	}
 	// A snapshot Holdfast is deleting is marked before restic forgets it, so it never counts as gone here.
 	err = q.db.QueryRow(ctx, `WITH g AS (UPDATE snapshots SET gone_at = $2 WHERE fqdn = $1 AND gone_at IS NULL AND NOT (id = ANY($3))
@@ -89,7 +98,7 @@ func (q *Q) RecordCatalogueError(ctx context.Context, fqdn, msg string) error {
 }
 
 const snapshotCols = `s.fqdn, s.id, s.short_id, s.time, s.hostname, s.job_id, s.tags, s.paths, s.parent, s.total_files, s.total_bytes,
-	s.data_added, s.first_seen, s.gone_at, s.deleted_by_holdfast, s.acknowledged_at,
+	s.data_added, s.data_added_packed, s.first_seen, s.gone_at, s.deleted_by_holdfast, s.acknowledged_at,
 	EXISTS (SELECT 1 FROM events e WHERE e.fqdn = s.fqdn AND e.snapshot_id = s.id), s.original,
 	(SELECT p.deleted_at FROM primary_deleted p WHERE p.fqdn = s.fqdn AND p.original = s.original AND s.original <> ''),
 	s.deletion_requested_by, s.deletion_reason, s.deleted_on_request_at`
@@ -97,7 +106,7 @@ const snapshotCols = `s.fqdn, s.id, s.short_id, s.time, s.hostname, s.job_id, s.
 func scanSnapshot(row pgx.Row) (Snapshot, error) {
 	var s Snapshot
 	err := row.Scan(&s.FQDN, &s.ID, &s.ShortID, &s.Time, &s.Hostname, &s.JobID, &s.Tags, &s.Paths, &s.Parent, &s.TotalFiles, &s.TotalBytes,
-		&s.DataAdded, &s.FirstSeen, &s.GoneAt, &s.DeletedByUs, &s.Acknowledged, &s.MadeByHoldfast, &s.Original, &s.DeletedInPrimary,
+		&s.DataAdded, &s.DataAddedPacked, &s.FirstSeen, &s.GoneAt, &s.DeletedByUs, &s.Acknowledged, &s.MadeByHoldfast, &s.Original, &s.DeletedInPrimary,
 		&s.DeletionRequestedBy, &s.DeletionReason, &s.DeletedOnRequest)
 	return s, notFound(err)
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -46,8 +47,8 @@ func toCatalogueRow(fqdn string, sn restic.Snapshot) store.Snapshot {
 		}
 	}
 	if sn.Summary != nil {
-		files, bytes, added := sn.Summary.TotalFilesProcessed, sn.Summary.TotalBytesProcessed, sn.Summary.DataAdded
-		row.TotalFiles, row.TotalBytes, row.DataAdded = &files, &bytes, &added
+		files, bytes, added, packed := sn.Summary.TotalFilesProcessed, sn.Summary.TotalBytesProcessed, sn.Summary.DataAdded, sn.Summary.DataAddedPacked
+		row.TotalFiles, row.TotalBytes, row.DataAdded, row.DataAddedPacked = &files, &bytes, &added, &packed
 	}
 	return row
 }
@@ -180,6 +181,8 @@ type SnapshotQuery struct {
 	// Retention adds, for one job, why each snapshot is kept and until when a pending one stays. It asks
 	// restic, with --dry-run and no lock.
 	Retention bool
+	// Sort is "" or "time", newest first, or "added", what each backup added first (spec §5.2).
+	Sort string
 }
 
 // Snapshots lists a host's snapshots, newest first (spec §5.2).
@@ -199,6 +202,9 @@ func (s *Server) Snapshots(ctx context.Context, fqdn string, in SnapshotQuery) (
 			return nil, &ValidationError{config.Problems{{Path: "month", Message: "the month is YYYY-MM"}}}
 		}
 		f.From, f.Until = m, m.AddDate(0, 1, 0)
+	}
+	if in.Sort != "" && in.Sort != "time" && in.Sort != "added" {
+		return nil, &ValidationError{config.Problems{{Path: "sort", Message: "sort is time or added"}}}
 	}
 	if in.Refresh {
 		if err := s.RefreshCatalogue(ctx, fqdn); err != nil {
@@ -227,6 +233,16 @@ func (s *Server) Snapshots(ctx context.Context, fqdn string, in SnapshotQuery) (
 	}
 	if err := s.pgRestoreNames(ctx, fqdn, list); err != nil {
 		return nil, err
+	}
+	if in.Sort == "added" {
+		// What each backup added, as stored, most first; those without restic's figure last; newest first among equals.
+		added := func(s store.Snapshot) int64 {
+			if s.DataAddedPacked == nil {
+				return -1
+			}
+			return *s.DataAddedPacked
+		}
+		sort.SliceStable(list, func(i, j int) bool { return added(list[i]) > added(list[j]) })
 	}
 	return list, s.deletionDates(ctx, fqdn, list)
 }

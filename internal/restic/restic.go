@@ -328,6 +328,7 @@ type SnapshotSummary struct {
 	BackupStart         time.Time `json:"backup_start"`
 	BackupEnd           time.Time `json:"backup_end"`
 	DataAdded           int64     `json:"data_added"`
+	DataAddedPacked     int64     `json:"data_added_packed"` // as stored: compressed
 	TotalFilesProcessed int64     `json:"total_files_processed"`
 	TotalBytesProcessed int64     `json:"total_bytes_processed"`
 }
