@@ -850,6 +850,12 @@ Restore and inspection behave like restic does on the host.
 - **Several days** are chosen with shift-click, or a whole month by its name; Delete then deletes all their restore
   points, with one reason (§3.4).
 - The job's retention rules are chips; choosing one highlights the days it keeps.
+- **Added per backup**, above the calendar: what each backup added to the repository, as stored (restic's
+  `data_added_packed`, from the snapshot's summary), a bar per restore point for the newest 60, oldest on the left; a bar
+  opens its day. When one bar is over three times the next, as a job's first backup is, the scale stops above the next
+  and that bar says its size. **Largest first** lists them by what they added: `GET …/snapshots?job=<job>&sort=added`,
+  `holdfast snapshot list <agent> --job <job> --sort added`. A day's restore points show it as **Added**. It is what
+  the backup added when it ran, not what deleting it would free: later backups may use the same data.
 - The card's header has a line per site: primary, and off-site when there is one.
 - A PostgreSQL job's page names its connection and database; each restore point is a dump.
 - **Find a file in all snapshots** uses `restic find` to show the versions of a file. Each version links to

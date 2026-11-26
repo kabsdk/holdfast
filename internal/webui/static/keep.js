@@ -81,7 +81,7 @@ export function point(s, c, off, excluded, original) {
   const id = s ? s.id : original || c.original;
   return {
     key: id, id, short: s ? s.short_id : id.slice(0, 8), a: s, b: c || null, copyId: c ? c.id : '', copyShort: c ? c.short_id || c.id.slice(0, 8) : '',
-    time: (s || c).time, sa, sb, bytes: s?.total_bytes ?? c?.total_bytes,
+    time: (s || c).time, sa, sb, bytes: s?.total_bytes ?? c?.total_bytes, added: s?.data_added_packed ?? c?.data_added_packed,
     kept: (s && !s.gone_at && (s.kept_by || []).length ? s.kept_by : c && !c.gone_at ? c.kept_by : null) || [],
   };
 }

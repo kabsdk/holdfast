@@ -1216,7 +1216,7 @@ curl -sfL https://github.com/kabsdk/holdfast/releases/download/v0.2.0/install.sh
     <div class="tablebox"><table class="ref">
       <thead><tr><th>Command</th><th>Does</th></tr></thead>
       <tbody>
-        <tr><td>holdfast snapshot list &lt;agent&gt;</td><td>An agent's snapshots, newest first. <code>--job</code>, <code>--month 2026-11</code>, <code>--all</code> for snapshots no longer in the repository, <code>--refresh</code> to read the repository first.</td></tr>
+        <tr><td>holdfast snapshot list &lt;agent&gt;</td><td>An agent's snapshots, newest first, each with its size and what it added to the repository, as stored. <code>--job</code>, <code>--month 2026-11</code>, <code>--all</code> for snapshots no longer in the repository, <code>--refresh</code> to read the repository first, <code>--sort added</code> for what each backup added, most first.</td></tr>
         <tr><td>holdfast snapshot files &lt;agent&gt; &lt;id&gt; [path]</td><td>One folder of a snapshot: names and metadata (<code>restic ls --long</code>).</td></tr>
         <tr><td>holdfast snapshot changes &lt;agent&gt; &lt;id&gt;</td><td>What changed since the job's previous snapshot, or since <code>--against &lt;id&gt;</code>: added, removed, content changed, metadata only, type changed (<code>restic diff --metadata</code>).</td></tr>
         <tr><td>holdfast snapshot find &lt;agent&gt; &lt;pattern&gt;</td><td>A file's versions across all snapshots (<code>restic find</code>).</td></tr>
@@ -1231,7 +1231,7 @@ curl -sfL https://github.com/kabsdk/holdfast/releases/download/v0.2.0/install.sh
         <tr><td>Off-site (bottom)</td><td><strong>copied</strong>; <strong>copy pending</strong>; <strong>deletion waits</strong>; <strong>deleted</strong>; <strong>never copied</strong>, for an excluded job or a day before copying began.</td></tr>
       </tbody>
     </table></div>
-    <p>Click a day for its restore points: each with its time, its snapshot, restic's reasons for keeping it, such as "daily within 14d", and <strong>Restore</strong> and <strong>Delete</strong>. Shift-click more days, or click a month's name, to choose several and delete them together. The job's retention rules are chips above it; choose one to light up the days it keeps. The card's header has a line per site.</p>
+    <p>Click a day for its restore points: each with its time, its snapshot, restic's reasons for keeping it, such as "daily within 14d", and <strong>Restore</strong> and <strong>Delete</strong>. Shift-click more days, or click a month's name, to choose several and delete them together. The job's retention rules are chips above it; choose one to light up the days it keeps. Between them, <strong>Added per backup</strong> is a bar per restore point, what its backup added to the repository, so the one that suddenly took space stands out; click a bar for its day, or choose <strong>Largest first</strong> for them by size. It is what the backup added when it ran, not what deleting it would free. The card's header has a line per site.</p>
     <p><strong>The UI, the API and the CLI never show file contents</strong>, only names and metadata. To compare a file's lines between two snapshots, restore both on the host and diff them there (<a href="#restore">Restoring</a>, Restore both versions).</p>
     <p>Snapshots marked <strong>Not made by Holdfast</strong> were found in the repository but no agent reported them. Snapshots that <strong>disappeared</strong> were deleted without Holdfast. Both are alerted (<a href="#outside">Changes outside Holdfast</a>).</p>
   </div>

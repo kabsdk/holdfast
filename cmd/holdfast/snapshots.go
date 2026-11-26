@@ -20,6 +20,7 @@ type snapshotRow struct {
 	Paths          []string   `json:"paths"`
 	TotalFiles     *int64     `json:"total_files"`
 	TotalBytes     *int64     `json:"total_bytes"`
+	Added          *int64     `json:"data_added_packed"` // what the backup added, as stored
 	MadeByHoldfast bool       `json:"made_by_holdfast"`
 	GoneAt         *time.Time `json:"gone_at"`
 	DeletedByUs    bool       `json:"deleted_by_holdfast"`
@@ -91,10 +92,13 @@ func searchCmd() *cobra.Command {
 func snapshotCmd() *cobra.Command {
 	c := &cobra.Command{Use: "snapshot", Short: "Snapshots: list, files, changes and find (names and metadata only)"}
 
-	var job, month string
+	var job, month, sortBy string
 	var all, refresh bool
-	list := &cobra.Command{Use: "list <agent>", Short: "A host's snapshots, newest first", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, a []string) error {
+	list := &cobra.Command{Use: "list <agent>", Short: "A host's snapshots, newest first or what each added first", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, a []string) error {
 		q := url.Values{}
+		if sortBy != "" {
+			q.Set("sort", sortBy)
+		}
 		if job != "" {
 			q.Set("job", job)
 		}
@@ -117,9 +121,12 @@ func snapshotCmd() *cobra.Command {
 			return nil
 		}
 		w := table()
-		fmt.Fprintln(w, "SNAPSHOT\tTIME\tJOB\tFILES\tSIZE\tPATHS\tNOTE")
+		fmt.Fprintln(w, "SNAPSHOT\tTIME\tJOB\tFILES\tSIZE\tADDED\tPATHS\tNOTE")
 		for _, s := range rows {
-			files, size := "—", "—"
+			files, size, added := "—", "—", "—"
+			if s.Added != nil {
+				added = human(uint64(*s.Added))
+			}
 			if s.TotalFiles != nil {
 				files = strconv.FormatInt(*s.TotalFiles, 10)
 			}
@@ -142,7 +149,7 @@ func snapshotCmd() *cobra.Command {
 			case !s.MadeByHoldfast:
 				note = "not made by Holdfast"
 			}
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", s.ShortID, s.Time.Local().Format("2006-01-02 15:04"), s.JobID, files, size, strings.Join(s.Paths, " "), note)
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", s.ShortID, s.Time.Local().Format("2006-01-02 15:04"), s.JobID, files, size, added, strings.Join(s.Paths, " "), note)
 		}
 		return w.Flush()
 	}}
@@ -150,6 +157,7 @@ func snapshotCmd() *cobra.Command {
 	list.Flags().StringVar(&month, "month", "", "only this month, such as 2026-11")
 	list.Flags().BoolVar(&all, "all", false, "also snapshots that are no longer in the repository")
 	list.Flags().BoolVar(&refresh, "refresh", false, "read the repository first")
+	list.Flags().StringVar(&sortBy, "sort", "", "time (newest first, the default) or added (what each backup added, most first)")
 	c.AddCommand(list, snapshotDeleteCmd())
 
 	var filesPage int

@@ -299,3 +299,23 @@ button.danger-line { color: var(--err); border-color: var(--err); }
 .diff-del { color: var(--err); }
 .steps li { margin: .3rem 0; }
 .steps li.done::marker { content: "✓ "; color: var(--ok); }
+
+/* A job's Added per backup (spec §5.2): a bar per restore point, what its backup added as stored, or the largest first.
+   One hue, thin bars rounded at the top and square at the baseline, a 2px gap, hairline grid. */
+.addhead { display: flex; flex-wrap: wrap; gap: .4rem 1rem; align-items: center; padding: .2rem 1rem .3rem; }
+.addhead .toggle { margin-left: auto; }
+.toggle { display: inline-flex; border: 1px solid #c8ced9; border-radius: 7px; overflow: hidden; }
+.toggle button { border: 0; border-radius: 0; padding: .2rem .65rem; font-size: 12.5px; }
+.toggle button + button { border-left: 1px solid #c8ced9; }
+.toggle button.on, .toggle button.on:hover { background: var(--text); color: #fff; }
+.addchart { padding: 0 1rem .5rem; }
+.addchart svg { display: block; width: 100%; max-width: 900px; height: auto; } /* its own size at most: a band, not a poster */
+.addchart .axis { fill: var(--muted); font-size: 11px; }
+.addchart .grid { stroke: var(--line); stroke-width: 1; }
+.addchart .bar { fill: var(--accent); }
+.addchart .bar.on { stroke: var(--text); stroke-width: 1.5; }
+.addchart .hit { fill: transparent; cursor: pointer; }
+.addchart .hit:hover, .addchart .hit:focus-visible { fill: rgba(37, 87, 214, .07); outline: none; }
+.addchart .note { fill: var(--text); font-size: 11px; font-weight: 600; }
+.sizebar { height: 8px; border-radius: 4px; background: var(--sq-none); position: relative; overflow: hidden; }
+.sizebar > span { position: absolute; inset: 0 auto 0 0; background: var(--accent); border-radius: 4px; }

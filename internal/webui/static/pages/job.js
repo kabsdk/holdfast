@@ -71,6 +71,78 @@ function SiteCell({ p, site, fqdn, mayDelete, onCancel, vault }) {
   return html`<span class="muted small-text">${p.sa === 'deleted' ? 'never copied: deleted in site A first' : 'not copied: copying is stopped for this job'}</span>`;
 }
 
+// AddedPerBackup is what each backup added to this site's repository, as stored (restic's data_added_packed), to find
+// the backup that suddenly took space (spec §5.2): a bar per restore point, the newest CHART_POINTS, oldest on the left;
+// or, with Largest first, the server's list sorted by it. A bar or a row opens its day below. A job's first backup holds
+// everything: when one bar is over three times the next, the scale stops above the next, and that bar says its size.
+const CHART_POINTS = 60;
+function AddedPerBackup({ fqdn, job, pts, focus, onDay }) {
+  const [view, setView] = useState('chart');
+  const [all, setAll] = useState(false);
+  const largest = usePoll(() => (view === 'largest' ? api.snapshots(fqdn, { job, sort: 'added' }) : Promise.resolve(null)), [fqdn, job, view], 0);
+  const shown = pts.filter((p) => p.sa !== 'deleted' && p.added != null).slice(0, CHART_POINTS).reverse();
+  if (!shown.length) return null;
+  const dayOf = (t) => startOf('day', t).getTime();
+  const first = pts[pts.length - 1]?.key; // the job's oldest restore point
+  const short = (t) => { const d = new Date(t); return `${d.getDate()} ${MONTHS[d.getMonth()]}`; };
+  let body;
+  if (view === 'chart') {
+    const W = 900, H = 170, L = 64, R = 96, T = 12, B = 24;
+    const n = shown.length, slot = (W - L - R) / n, bw = Math.max(2, Math.min(24, slot - 2));
+    const top2 = shown.map((p) => p.added).sort((a, b) => b - a);
+    const capped = n > 1 && top2[1] > 0 && top2[0] > 3 * top2[1];
+    const max = Math.max(1, capped ? top2[1] * 1.25 : top2[0]);
+    const y = (v) => T + (H - T - B) * (1 - Math.min(v, max) / max);
+    const base = H - B;
+    // A bar grows from the baseline, square there, its top corners rounded by 4px.
+    const bar = (x, v) => {
+      const y1 = y(v), r = Math.min(4, bw / 2, base - y1);
+      return `M${x},${base}V${y1 + r}Q${x},${y1} ${x + r},${y1}H${x + bw - r}Q${x + bw},${y1} ${x + bw},${y1 + r}V${base}Z`;
+    };
+    const every = Math.max(1, Math.ceil(n / 7));
+    body = html`<div class="addchart scrollx"><svg viewBox=${`0 0 ${W} ${H}`} style="min-width:560px" role="img"
+        aria-label=${`What each of the newest ${n} backups added, from ${fullDate(shown[0].time)} to ${fullDate(shown[n - 1].time)}; Largest first lists them by size`}>
+      ${[0, max / 2, max].map((v) => html`<line class="grid" x1=${L} x2=${W - R} y1=${y(v)} y2=${y(v)} /><text class="axis" x=${L - 6} y=${y(v) + 4} text-anchor="end">${v ? bytes(v) : '0'}</text>`)}
+      ${shown.map((p, i) => {
+        const x = L + i * slot + (slot - bw) / 2;
+        const over = capped && p.added > max;
+        const tip = `${fullDate(p.time)} ${clock(p.time)} · ${p.short}\nAdded ${bytes(p.added)}${p.key === first ? ', the first backup: all of it was new' : ''}\nSize ${bytes(p.bytes)}`;
+        const go = () => onDay(dayOf(p.time));
+        return html`<g>
+          ${p.added > 0 && html`<path class=${'bar' + (dayOf(p.time) === focus ? ' on' : '')} d=${bar(x, p.added)} />`}
+          ${over && html`<text class="note" x=${x + bw + 4} y=${T + 10}>↑ ${bytes(p.added)}</text>`}
+          <rect class="hit" x=${L + i * slot} y=${T} width=${slot} height=${base - T} tabindex="0" role="button" aria-label=${tip.replace(/\n/g, ', ')} data-tip=${tip}
+            onClick=${go} onKeyDown=${(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } }} />
+          ${(i % every === 0 || i === n - 1) && html`<text class="axis" x=${x + bw / 2} y=${H - 8} text-anchor="middle">${short(p.time)}</text>`}
+        </g>`;
+      })}
+    </svg></div>`;
+  } else if (largest.error) {
+    body = html`<${ErrorBox} error=${largest.error} />`;
+  } else if (!largest.data) {
+    body = html`<${Loading} what="the restore points by size" />`;
+  } else {
+    const rows = largest.data.filter((s) => s.data_added_packed != null);
+    const most = Math.max(1, rows[0]?.data_added_packed || 1);
+    const cols = 'minmax(150px,1fr) 90px minmax(80px,2fr) 90px 90px';
+    body = html`<div class="scrollx largest"><div style="min-width:560px">
+      <div class="gt head" style=${'--cols:' + cols}><span>Day</span><span>Snapshot</span><span></span><span class="num">Added</span><span class="num">Size</span></div>
+      ${(all ? rows : rows.slice(0, 10)).map((s) => html`<div class="gt" style=${'--cols:' + cols}>
+        <span><button type="button" class="link" onClick=${() => onDay(dayOf(s.time))}>${fullDate(s.time)} ${clock(s.time)}</button></span>
+        <a class="mono" href=${link('agents', fqdn, 'snapshots', s.id)}>${s.short_id}</a>
+        <span class="sizebar" role="img" aria-label=${bytes(s.data_added_packed)}><span style=${'width:' + ((100 * s.data_added_packed) / most).toFixed(1) + '%'}></span></span>
+        <span class="num">${bytes(s.data_added_packed)}</span><span class="num muted">${bytes(s.total_bytes)}</span></div>`)}
+      ${rows.length > 10 && html`<p class="muted small-text" style="padding:.4rem 1rem;margin:0"><button type="button" class="link" onClick=${() => setAll(!all)}>${all ? 'Show the largest 10' : `Show all ${rows.length}`}</button></p>`}
+    </div></div>`;
+  }
+  return html`<div class="added">
+    <div class="addhead"><b>Added per backup</b><span class="muted small-text">what each backup added, as stored${view === 'chart' ? ` · the newest ${shown.length}` : ''}</span>
+      <div class="toggle" role="group" aria-label="Show the backups">
+        <button type="button" class=${view === 'chart' ? 'on' : ''} aria-pressed=${view === 'chart' ? 'true' : 'false'} onClick=${() => setView('chart')}>Chart</button>
+        <button type="button" class=${view === 'largest' ? 'on' : ''} aria-pressed=${view === 'largest' ? 'true' : 'false'} onClick=${() => setView('largest')}>Largest first</button></div></div>
+    ${body}</div>`;
+}
+
 // RestorePoints is the calendar and the chosen day's restore points.
 function RestorePoints({ h, j, pts, off, vault, siteA, siteB, days, events, reload }) {
   const fqdn = h.fqdn;
@@ -176,7 +248,7 @@ function RestorePoints({ h, j, pts, off, vault, siteA, siteB, days, events, relo
   const ff = failedRuns.get(focus) || [];
   const fr = ran.get(focus);
   const inA = pts.filter((p) => p.sa !== 'deleted').length;
-  const cols = mayDelete ? `26px 60px minmax(150px,1fr) ${off ? 'minmax(150px,1fr) ' : ''}84px minmax(0,1fr) 170px` : `60px minmax(150px,1fr) ${off ? 'minmax(150px,1fr) ' : ''}84px minmax(0,1fr) 100px`;
+  const cols = mayDelete ? `26px 60px minmax(150px,1fr) ${off ? 'minmax(150px,1fr) ' : ''}84px 84px minmax(0,1fr) 170px` : `60px minmax(150px,1fr) ${off ? 'minmax(150px,1fr) ' : ''}84px 84px minmax(0,1fr) 100px`;
   const dayKeys = fs.filter(deletable).map((p) => p.key);
   const chosen = pts.filter((p) => sel.includes(p.key));
   const cancel = (site, p) => act.run(() => (site === 'a' ? api.cancelDeletion(fqdn, p.id) : api.offsiteCancelDeletion(fqdn, p.copyId))).then((r) => r && reload());
@@ -192,6 +264,7 @@ function RestorePoints({ h, j, pts, off, vault, siteA, siteB, days, events, relo
     <div class="rules"><span class="muted">Kept by restic:</span>
       ${chips.map(([k, label, n]) => html`<button type="button" class=${'rulechip' + (rule === k ? ' on' : '')} aria-pressed=${rule === k ? 'true' : 'false'} onClick=${() => setRule(rule === k ? null : k)}>${label} <b>${n}</b></button>`)}
       ${rule && html`<span class="muted">its days are highlighted below</span>`}</div>
+    <${AddedPerBackup} fqdn=${fqdn} job=${j.id} pts=${pts} focus=${focus} onDay=${go} />
     <div class="yearbar">${years.length > 1 ? html`<span class="muted">Year</span>${years.map((y) => html`<button type="button" class=${'yr' + (y === year ? ' on' : '')}
         aria-pressed=${y === year ? 'true' : 'false'} onClick=${() => setYear(y)}>${y}<span class="n">${inYear(y)}</span></button>`)}`
       : html`<b>${year}</b><span class="muted">· ${inYear(year)} restore ${inYear(year) === 1 ? 'point' : 'points'}; earlier years show here once the job has restore points in them</span>`}</div>
@@ -213,8 +286,8 @@ function RestorePoints({ h, j, pts, off, vault, siteA, siteB, days, events, relo
     <${ErrorBox} error=${act.error} />
     <div class="dayhead flash" key=${'day' + focus}><b>${fullDate(focus)}</b><span class="muted">${fs.length ? `${fs.length} restore ${fs.length === 1 ? 'point' : 'points'}` : 'no restore point'}${fr && fr.failed ? ` · ${fr.failed} failed` : ff.length ? ` · ${ff.length} failed` : ''}</span>
       ${mayDelete && dayKeys.length > 1 && html`<button type="button" class="link" onClick=${() => add(dayKeys)}>Select the day</button>`}</div>
-    <div class="scrollx"><div style=${'min-width:' + (off ? 940 : 760) + 'px'}>
-      ${fs.length > 0 && html`<div class="gt head" style=${'--cols:' + cols}>${mayDelete && html`<span></span>`}<span>Time</span><span>${vault ? 'This site' : 'Site A'}</span>${off && html`<span>Site B</span>`}<span>Size</span><span>Kept by</span><span></span></div>`}
+    <div class="scrollx"><div style=${'min-width:' + (off ? 1020 : 840) + 'px'}>
+      ${fs.length > 0 && html`<div class="gt head" style=${'--cols:' + cols}>${mayDelete && html`<span></span>`}<span>Time</span><span>${vault ? 'This site' : 'Site A'}</span>${off && html`<span>Site B</span>`}<span>Size</span><span data-tip="What this backup added to the repository, as stored">Added</span><span>Kept by</span><span></span></div>`}
       ${fs.map((p) => html`<div class="gt" style=${'--cols:' + cols}>
         ${mayDelete && html`<span><input type="checkbox" aria-label=${'Select ' + p.short} disabled=${!deletable(p)} checked=${sel.includes(p.key)}
           onChange=${(e) => setSel(e.target.checked ? [...sel, p.key] : sel.filter((x) => x !== p.key))} /></span>`}
@@ -222,6 +295,7 @@ function RestorePoints({ h, j, pts, off, vault, siteA, siteB, days, events, relo
         <${SiteCell} p=${p} site="a" fqdn=${fqdn} mayDelete=${mayDelete} onCancel=${cancel} vault=${vault} />
         ${off && html`<${SiteCell} p=${p} site="b" fqdn=${fqdn} mayDelete=${mayDelete} onCancel=${cancel} />`}
         <span class="num muted">${bytes(p.bytes)}</span>
+        <span class="num">${bytes(p.added)}</span>
         <span class="muted small-text wrap">${p.kept.length ? p.kept.join(', ') : '—'}</span>
         <span class="row" style="justify-content:flex-end;gap:.35rem">
           ${restorable(p) && html`<a class="button small" href=${open(p) + (pg ? '/restore' : '')}>${pg ? 'Restore…' : 'Open'}</a>`}

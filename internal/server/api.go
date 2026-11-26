@@ -185,7 +185,7 @@ func (s *Server) apiEnrollmentCode(w http.ResponseWriter, r *http.Request) {
 func (s *Server) apiSnapshots(w http.ResponseWriter, r *http.Request) {
 	qv := r.URL.Query()
 	list, err := s.Snapshots(r.Context(), r.PathValue("fqdn"), SnapshotQuery{JobID: qv.Get("job"), Month: qv.Get("month"),
-		All: qv.Get("all") == "1", Refresh: qv.Get("refresh") == "1", Retention: qv.Get("retention") == "1"})
+		All: qv.Get("all") == "1", Refresh: qv.Get("refresh") == "1", Retention: qv.Get("retention") == "1", Sort: qv.Get("sort")})
 	if err != nil {
 		apiError(w, err)
 		return
