@@ -852,8 +852,8 @@ Restore and inspection behave like restic does on the host.
 - The job's retention rules are chips; choosing one highlights the days it keeps.
 - The card's header has a line per site: primary, and off-site when there is one.
 - A PostgreSQL job's page names its connection and database; each restore point is a dump.
-- **Find a file in all snapshots** uses `restic find` to show the versions of a file. Each version links to
-  the snapshot, opened at that folder.
+- **Find a file in all snapshots**, one line at the top of the page, above the restore points, uses `restic find` to
+  show the versions of a file. Each version links to the snapshot, opened at that folder.
 - 0.7's squares per retention rule, its list of snapshots and its separate calendar page are gone:
   `#/hosts/{agent}/jobs/{job}/snapshots` opens the job page.
 

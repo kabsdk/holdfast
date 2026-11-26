@@ -293,10 +293,10 @@ export function Job({ fqdn, job: jid, vault, reloadHosts, settings }) {
         <a class="button small" href=${link('agents', fqdn, 'pending')}>What waits</a>
         ${can(h, 'retention.cut') && html`<a class="button small" href=${link('agents', fqdn, 'prune-now')}>Prune now…</a>`}
       </div></div>`}
+    ${!vault && !isPG(j) && can(h, 'browse') && html`<${FindFile} fqdn=${fqdn} job=${jid} />`}
     ${vault && html`<${VaultJobFacts} host=${h} job=${j} />`}
     ${withOff && listB.error && html`<div class="banner warning">Site B's copies could not be read, so the calendar shows site A only: ${listB.error.message}</div>`}
     ${listA.error ? html`<${ErrorBox} error=${listA.error} />` : !ready ? html`<${Loading} what="the restore points (restic is asked what it keeps)" />`
       : html`<${RestorePoints} key=${off ? 'ab' : 'a'} h=${h} j=${j} pts=${restorePoints(listA.data, off ? listB.data : null, { off, excluded: !!oj?.excluded })} off=${off} vault=${vault}
-          siteA=${settings?.storage} siteB=${siteB.data?.storage} days=${days.data?.jobs} events=${events.data} reload=${refresh} />`}
-    ${!vault && !isPG(j) && can(h, 'browse') && html`<${FindFile} fqdn=${fqdn} job=${jid} />`}`;
+          siteA=${settings?.storage} siteB=${siteB.data?.storage} days=${days.data?.jobs} events=${events.data} reload=${refresh} />`}`;
 }
