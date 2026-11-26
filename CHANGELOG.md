@@ -34,16 +34,18 @@ replaces it under the same name and tag, `v0.1-dev`, and installs as an upgrade 
   a PostgreSQL server in Kubernetes from a pod.
 - **holdfast**: the CLI, with every action the web UI has.
 - **The web UI**: an **Overview** of every agent, worst first, whose tiles count stale, failed and incomplete jobs and
-  filter the agents by them; an **agent page** with a row per job, what it backs up and its last 7 backups as squares,
-  and its PostgreSQL connections, and what each job takes in each site (**Stored**, from `restic stats --mode
-  raw-data`, measured daily), with one subject per line and a site named only where there are two; a **job page**, its
-  paths and exclusions folded into one line when there are many, that is one **calendar** of the job's restore points,
-  a square a day, a year in one row with the year chosen above it, primary and off-site in its two halves, where a day
-  opens its restore points with Restore and Delete, **Find a file** at its top, with restic find's Ignore case and
-  modified days, and **Added per backup** above the calendar, a bar per restore point of what its backup added as
-  stored (restic's `data_added_packed`), with **Largest first** (`--sort added`); a snapshot's **Files** as one tree
-  with what changed against an older snapshot (`holdfast find --snapshot` finds a name in one snapshot); and a
-  snapshot's **Restore** as a tree of ticks, restic's `--exclude` or `--include`, in one column.
+  filter the agents by them; an **agent page** with a row per job, what it backs up (a path longer than 50 characters
+  cut in its middle) and its last 7 backups as squares, a backup outside the schedule filling the slot it ran in, and
+  its PostgreSQL connections, and what each job takes in each site (**Stored**, from `restic stats --mode raw-data`,
+  measured after each new snapshot), with one subject per line and a site named only where there are two; a **job
+  page**, its paths and exclusions folded into one line when there are many, that is one **calendar** of the job's
+  restore points, a square a day, a year in one row with the year chosen above it, primary and off-site in its two
+  halves, where a day opens its restore points with Restore and Delete, their **Size on host** and **Added to S3**
+  (restic's `data_added_packed`; the API and the CLI sort by it, `--sort added`), and **Find a file** at its top, with
+  restic find's Ignore case and modified days; a snapshot's **Files** as one tree with what changed against an older
+  snapshot (`holdfast find --snapshot` finds a name in one snapshot); and a snapshot's **Restore** as a tree of ticks,
+  restic's `--exclude` or `--include`, in one column. Lists share their columns, evenly spaced, nothing running into
+  the next; the breadcrumbs follow the side menu, every part a link; each retention tier is in its own unit.
 - Retention by time windows, decided by restic's `forget --dry-run`; checks with stable codes; deleting snapshots,
   always with a reason, in primary, off-site or both; Prune now; rolling a repository back from S3 versions, picking
   what was deleted or overwritten to bring back, while the gateway holds the agent's writes; restoring onto another

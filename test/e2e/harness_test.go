@@ -816,7 +816,8 @@ type hostView struct {
 		Status   *jobStatus `json:"status"`
 		InBucket *bool      `json:"in_bucket"`
 		Stored   *struct {
-			Bytes int64 `json:"bytes"`
+			Bytes      int64     `json:"bytes"`
+			MeasuredAt time.Time `json:"measured_at"`
 		} `json:"stored"`
 	} `json:"jobs"`
 	// M5: the escrow file, the repository's size, a rotation not finished, decommission.

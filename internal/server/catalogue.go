@@ -144,9 +144,12 @@ func (s *Server) refreshSoon(fqdn string) {
 	c.mu.Unlock()
 	go func() {
 		for {
-			if err := s.RefreshCatalogue(s.background(), fqdn); err != nil {
+			ctx := s.background()
+			if err := s.RefreshCatalogue(ctx, fqdn); err != nil {
 				s.log.Warn("refreshing the snapshot catalogue", "host", fqdn, "err", err)
 			}
+			// What the snapshots take changes with them: measured again each time, so Stored is never a day old.
+			s.measure(ctx, fqdn)
 			c.mu.Lock()
 			if !c.again[fqdn] {
 				delete(c.running, fqdn)

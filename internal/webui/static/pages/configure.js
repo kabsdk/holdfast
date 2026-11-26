@@ -4,7 +4,11 @@
 import { html, useState, useEffect, usePoll, useAction, link, go, fmtTime, dur, bytes, ago, TIERS, Findings, ErrorBox, Loading, can, retentionText, isPG, dbIcon, folderIcon, repoPath } from '../lib.js';
 import { api } from '../api.js';
 
-const UNITS = { within: ['hours', 'days', 'weeks'], hourly: ['hours', 'days'], daily: ['days', 'weeks', 'months'], weekly: ['weeks', 'months'], monthly: ['months', 'years'], yearly: ['years'] };
+// Each tier's window is in its own unit: one per day for N days, one per week for N weeks. A window saved in another
+// unit is shown in this one where that is exact (2 weeks are 14 days), and as it is where it is not.
+const UNIT = { within: 'days', hourly: 'hours', daily: 'days', weekly: 'weeks', monthly: 'months', yearly: 'years' };
+const PER = { hours: { days: 24 }, days: { weeks: 7 }, months: { years: 12 } };
+const inUnit = (k, w) => (w.unit === UNIT[k] ? w : PER[UNIT[k]]?.[w.unit] ? { n: w.n * PER[UNIT[k]][w.unit], unit: UNIT[k] } : w);
 const FRESH = { within: { n: 2, unit: 'days' }, hourly: { n: 48, unit: 'hours' }, daily: { n: 14, unit: 'days' }, weekly: { n: 8, unit: 'weeks' }, monthly: { n: 12, unit: 'months' }, yearly: { n: 3, unit: 'years' } };
 const DAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
 const clone = (x) => JSON.parse(JSON.stringify(x));
@@ -24,7 +28,7 @@ function ScheduleEditor({ s, set }) {
   return html`<div>
     <div class="row">${['every', 'daily', 'weekly'].map((m) => html`<label><input type="radio" checked=${mode === m} onChange=${() => to(m)} /> ${m[0].toUpperCase() + m.slice(1)}</label>`)}</div>
     ${s.every && html`<p class="row">Every <input type="number" min="1" style="width:5rem" value=${s.every.n} onInput=${(e) => set({ ...s, every: { ...s.every, n: +e.target.value } })} />
-      <select value=${s.every.unit} onChange=${(e) => set({ ...s, every: { ...s.every, unit: e.target.value } })}><option>minutes</option><option>hours</option></select>
+      <select value=${s.every.unit} onChange=${(e) => set({ ...s, every: { ...s.every, unit: e.target.value } })}><option value="minutes">minutes</option><option value="hours">hours</option></select>
       starting each day at <input style="width:5.5rem" value=${s.every.from} onInput=${(e) => set({ ...s, every: { ...s.every, from: e.target.value } })} /></p>`}
     ${s.daily && html`<p class="row">At ${s.daily.times.map((t, i) => html`<span><input style="width:5.5rem" value=${t} onInput=${(e) => { const times = [...s.daily.times]; times[i] = e.target.value; set({ ...s, daily: { times } }); }} />
         ${s.daily.times.length > 1 && html`<button class="small" onClick=${() => set({ ...s, daily: { times: s.daily.times.filter((_, k) => k !== i) } })}>×</button>`}</span>`)}
@@ -43,11 +47,10 @@ function RetentionEditor({ r, set }) {
   return html`<table><tbody>
     ${TIERS.map(([k, label]) => html`<tr>
       <td><label><input type="checkbox" checked=${!!r[k]} onChange=${(e) => { const n = { ...r }; if (e.target.checked) n[k] = { ...FRESH[k] }; else delete n[k]; set(n); }} /> Keep ${label}</label></td>
-      <td>${r[k] ? html`for <input type="number" min="1" style="width:5rem" value=${r[k].n} onInput=${(e) => set({ ...r, [k]: { ...r[k], n: +e.target.value } })} />
-        <select value=${r[k].unit} onChange=${(e) => set({ ...r, [k]: { ...r[k], unit: e.target.value } })}>${UNITS[k].map((u) => html`<option>${u}</option>`)}</select>` : html`<span class="muted">off</span>`}</td>
+      <td>${r[k] ? html`<span class="inline-field">for <input type="number" min="1" style="width:5rem" value=${inUnit(k, r[k]).n} onInput=${(e) => set({ ...r, [k]: { n: +e.target.value, unit: inUnit(k, r[k]).unit } })} /> ${inUnit(k, r[k]).unit}</span>` : html`<span class="muted">off</span>`}</td>
       <td class="muted mono">--keep-within${k === 'within' ? '' : '-' + k}</td>
     </tr>`)}
-    <tr><td>Always keep the newest</td><td><input type="number" min="0" style="width:5rem" value=${r.keep_last} onInput=${(e) => set({ ...r, keep_last: +e.target.value })} /> snapshots, whatever their age</td><td class="muted mono">--keep-last</td></tr>
+    <tr><td>Always keep the newest</td><td><span class="inline-field"><input type="number" min="0" style="width:5rem" value=${r.keep_last} onInput=${(e) => set({ ...r, keep_last: +e.target.value })} /> snapshots, whatever their age</span></td><td class="muted mono">--keep-last</td></tr>
   </tbody></table>
   <p class="muted">Windows are times, never counts (spec §4.2). restic decides what each window keeps.</p>`;
 }

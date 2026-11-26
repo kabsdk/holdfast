@@ -38,6 +38,21 @@ function Search() {
   </div>`;
 }
 
+// crumbs is the way to the page, in the side menu's names, each a link but the page itself: Overview, the agent, the
+// job; a page of the side menu is its name alone.
+const PAGES = { restores: 'Restores', history: 'Config history', audit: 'Audit log', access: 'Access', exports: 'Exports', settings: 'Settings', 'add-agent': 'Add agent' };
+const AGENT_PAGES = { configure: 'Configure', rollback: 'Roll back', pending: 'Waiting to be deleted', 'prune-now': 'Prune now' };
+function crumbs(seg, vault) {
+  const home = [vault ? 'Copied agents' : 'Overview', link()];
+  if (!seg.length || seg[0] === 'problems') return [home];
+  if (seg[0] !== 'agents' || !seg[1]) return [[PAGES[seg[0]] || seg[0]]];
+  const out = [home, [seg[1], link('agents', seg[1])]];
+  if (seg[2] === 'jobs' && seg[3]) out.push([seg[3], link('agents', seg[1], 'jobs', seg[3])]);
+  else if (seg[2] === 'snapshots' && seg[3]) out.push(['snapshot ' + seg[3].slice(0, 8)]);
+  else if (seg[2]) out.push([AGENT_PAGES[seg[2]] || seg[2]]);
+  return out;
+}
+
 function Shell({ me, settings }) {
   const path = useRoute();
   const hosts = usePoll(() => api.hosts(), []);
@@ -95,7 +110,7 @@ function Shell({ me, settings }) {
     </nav>
     <main>
       <header class="top">
-        <div class="crumbs"><a href=${link()}>Holdfast${vault ? ' off-site' : ''}</a> / ${seg.length && seg[0] !== 'problems' ? seg.slice(0, 2).join(' / ') : 'Overview'}</div>
+        <div class="crumbs">${crumbs(seg, vault).map(([label, href], i, all) => html`${i ? ' / ' : ''}${href && i < all.length - 1 ? html`<a href=${href}>${label}</a>` : label}`)}</div>
         <${Search} />
         <span>${me.name} · ${me.admin_everywhere ? 'admin' : 'by agent'} · via ${me.name === 'local:root' ? 'holdfast ui-login' : settings.login.issuer ? new URL(settings.login.issuer).host : 'the root socket'}</span>
         <button class="small" onClick=${async () => { try { await api.logout(); } finally { location.href = '/'; } }}>Log out</button>

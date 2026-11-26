@@ -83,6 +83,12 @@ func TestUIPages(t *testing.T) {
 	e.cli("job", "run", web, "system")
 	waitFor(t, "a second snapshot", 2*time.Minute, func() bool { return len(e.snapshotIDs(web)) >= 2 })
 	snaps := e.snapshotIDs(web)
+	// What the job takes in S3 is measured again after each new snapshot, not once a day.
+	second := time.Now()
+	waitFor(t, "the job measured after its second backup", time.Minute, func() bool {
+		h := e.host(web)
+		return len(h.Jobs) == 1 && h.Jobs[0].Stored != nil && h.Jobs[0].Stored.MeasuredAt.After(second.Add(-30*time.Second))
+	})
 
 	ctx := newBrowser(t)
 	errs := jsErrors(ctx)
@@ -211,7 +217,7 @@ func TestUIPages(t *testing.T) {
 	}
 	// A path never runs past its column into the squares: it is cut in its middle instead.
 	var inside bool
-	run(t, ctx, "the path's width", chromedp.Evaluate(`(() => { const p = document.querySelector('.gt .cutpath'), c = p.closest('.gt > div');
+	run(t, ctx, "the path's width", chromedp.Evaluate(`(() => { const p = document.querySelector('.gt .kindline .cut'), c = p.closest('.gt > div');
 		return p.getBoundingClientRect().right <= c.getBoundingClientRect().right + 1; })()`, &inside))
 	if !inside {
 		t.Fatal("a path runs past the Backs up column")
@@ -245,10 +251,15 @@ func TestUIPages(t *testing.T) {
 	// Its path and the exclusion the UI saved above fold into one line; what its restore points take is in their line,
 	// and with one site no site is named: the repository is the agent's.
 	waitText(t, ctx, "1 path, 1 excluded")
+	var crumbs []string
+	run(t, ctx, "the breadcrumbs", chromedp.Evaluate(`[...document.querySelectorAll('.crumbs a')].map((a) => a.textContent).concat([document.querySelector('.crumbs').textContent])`, &crumbs))
+	if len(crumbs) != 3 || crumbs[0] != "Overview" || crumbs[1] != web || crumbs[2] != "Overview / "+web+" / system" {
+		t.Fatalf("the job page's breadcrumbs: %q, want Overview and the agent as links, then the job", crumbs)
+	}
 	var head string
 	var tags int
 	run(t, ctx, "the restore points' line", chromedp.Text(`#rp-h`, &head, chromedp.ByQuery), chromedp.Evaluate(`document.querySelectorAll('.sitetag').length`, &tags))
-	if !strings.Contains(head, "stored") || tags != 0 {
+	if !strings.Contains(head, "in S3") || tags != 0 {
 		t.Fatalf("the restore points' line %q, and %d site labels with one site", head, tags)
 	}
 	var days, points int
@@ -319,8 +330,8 @@ func TestUIPages(t *testing.T) {
 	if len(ic) == 0 || !strings.HasSuffix(ic[0].Matches[0].Path, "later.txt") {
 		t.Fatalf("the CLI's find, ignoring case: %+v", ic)
 	}
-	// Added per backup: what each backup added, as stored, a bar each over the calendar, and Largest first, which is the
-	// API's and the CLI's sort=added. Every snapshot has restic's figure, most first; another sort is refused.
+	// What each backup added to S3: the API's and the CLI's sort=added, most first; another sort is refused. The day's
+	// list shows it as Added to S3, beside Size on host; the job page has no chart of it.
 	var bySize []struct {
 		ShortID string `json:"short_id"`
 		Added   *int64 `json:"data_added_packed"`
@@ -334,18 +345,14 @@ func TestUIPages(t *testing.T) {
 	if _, err := e.cliErr("snapshot", "list", web, "--sort", "size"); err == nil {
 		t.Fatal("a sort other than time or added must be refused")
 	}
-	var bars int
-	run(t, ctx, "the bars of Added per backup", chromedp.WaitVisible(`.addchart svg`, chromedp.ByQuery),
-		chromedp.Evaluate(`document.querySelectorAll('.addchart svg path.bar').length`, &bars))
-	if bars < 1 || bars > len(bySize) {
-		t.Fatalf("Added per backup draws %d bars for %d restore points", bars, len(bySize))
+	open(t, ctx, "#/agents/"+web+"/jobs/system?day="+time.Now().Format(time.DateOnly))
+	waitText(t, ctx, "Size on host")
+	waitText(t, ctx, "Added to S3")
+	var charts int
+	run(t, ctx, "no chart", chromedp.Evaluate(`document.querySelectorAll('.addchart, .added').length`, &charts))
+	if charts != 0 {
+		t.Fatal("the job page has no chart of what each backup added")
 	}
-	clickText(t, ctx, "button", "Largest first")
-	waitFor(t, "Largest first lists every restore point", 30*time.Second, func() bool {
-		var rows int
-		_ = chromedp.Run(ctx, chromedp.Evaluate(`document.querySelectorAll('.largest .gt:not(.head)').length`, &rows))
-		return rows == len(bySize)
-	})
 
 	// Snapshot: Files is one tree with what changed against the snapshot before (later.txt is new), Only changes, and a
 	// find in this snapshot; the old Changes address opens it too. Then a restore's dry run through the agent.

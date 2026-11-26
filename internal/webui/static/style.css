@@ -59,7 +59,7 @@ th, td { text-align: left; padding: .45rem .55rem; border-bottom: 1px solid var(
 th { font-size: 12px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .03em; }
 dl.facts { display: grid; grid-template-columns: max-content 1fr; gap: .3rem 1rem; margin: .5rem 0; }
 dl.facts dt { color: var(--muted); }
-dl.facts dd { margin: 0; }
+dl.facts dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 
 .pill { display: inline-block; padding: .1rem .5rem; border-radius: 999px; font-size: 12px; background: #eef0f4; white-space: nowrap; margin: .1rem .2rem .1rem 0; }
 .pill.ok { background: var(--ok-bg); color: var(--ok); }
@@ -122,7 +122,15 @@ button.link:hover { background: none; text-decoration: underline; }
 .list-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: .6rem; padding: .7rem 1rem; }
 .list-head h2 { margin: 0; }
 .scrollx { overflow-x: auto; }
-.gt { display: grid; grid-template-columns: var(--cols); gap: .75rem; align-items: center; padding: .6rem 1rem; border-top: 1px solid var(--line); }
+.gt { display: grid; grid-template-columns: var(--cols); gap: .75rem; align-items: start; padding: .6rem 1rem; border-top: 1px solid var(--line); }
+/* A list's rows share one set of columns, each as wide as its widest value, and what is left is shared evenly among
+   them; every value starts at the top of its row. Anything else in a list spans the whole row. */
+.gtable { display: grid; grid-template-columns: var(--cols); column-gap: 1.1rem; }
+.gtable > * { grid-column: 1 / -1; }
+.gtable > .gt, .gtable > .hostrow, .gtable > .hostrow > .gt { display: grid; grid-template-columns: subgrid; column-gap: normal; }
+.gtable > .hostrow > * { grid-column: 1 / -1; }
+/* A column's heading and a time are never broken over lines: the columns with room give way first. */
+.gt.head > *, .gt .num { white-space: nowrap; }
 .gt.head { padding-block: .45rem; background: #fafbfc; font-size: 12px; font-weight: 600; color: var(--muted); }
 .hostrow.bad { background: #fffafa; }
 .probs { padding: 0 1rem .6rem; display: flex; flex-direction: column; gap: .2rem; }
@@ -174,15 +182,15 @@ button.icon { display: inline-flex; align-items: center; justify-content: center
 .legend .legendbtn:disabled { color: #9aa3b2; opacity: 1; }
 /* What a job backs up: a path a line, a long one cut in its middle; many, or any exclusion, fold into one line. */
 .paths { display: flex; flex-direction: column; gap: .1rem; min-width: 0; }
-/* A path in a narrow column: its folders give way first, with an ellipsis, then its file name; never past the column. */
-.cutpath { display: flex; min-width: 0; max-width: 100%; white-space: nowrap; }
-.cutpath .head { flex: 0 1000 auto; min-width: 1.5ch; overflow: hidden; text-overflow: ellipsis; }
-.cutpath .tail { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* A path never runs past its column: in a column narrower than its 50 characters, it ends in an ellipsis. */
+.kindline .paths > .cut { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .kindline .paths { flex: 1 1 auto; }
 .paths .more { font-size: 12.5px; }
 details.pathlist summary { cursor: pointer; color: var(--accent); width: max-content; }
 details.pathlist ul { margin: .3rem 0 .2rem; padding-left: 1.1rem; }
 details.pathlist li { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; overflow-wrap: anywhere; }
+.qmark { display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px; border-radius: 50%; border: 1px solid #c8ced9;
+  font-size: 10px; font-weight: 700; color: var(--muted); background: var(--panel); cursor: help; vertical-align: 1px; text-transform: none; letter-spacing: 0; }
 dl.facts.box { padding: .7rem 1rem; margin: 1rem 0; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; font-size: 13px; }
 dl.facts.head { margin: .3rem 0 .4rem; }
 .jobwhat { display: flex; flex-direction: column; gap: .3rem; margin: .3rem 0 .4rem; }
@@ -267,6 +275,8 @@ svg.kind { flex: none; margin-top: 2px; color: var(--muted); }
 .warntext { color: var(--warn); }
 .small-text { font-size: 12.5px; }
 .nowrap { white-space: nowrap; }
+/* Words around a field, as far from it on both sides. */
+.inline-field { display: inline-flex; align-items: center; gap: .4rem; }
 button.link.small-link { font-size: 12.5px; }
 .errtext { color: var(--err); }
 .autoname { display: inline-block; margin-top: .3rem; padding: .15rem .5rem; border-radius: 6px; background: #f0f2f5; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; color: var(--text); width: max-content; max-width: 100%; overflow-wrap: anywhere; }
@@ -327,25 +337,6 @@ button.danger-line { color: var(--err); border-color: var(--err); }
 .steps li { margin: .3rem 0; }
 .steps li.done::marker { content: "✓ "; color: var(--ok); }
 
-/* A job's Added per backup (spec §5.2): a bar per restore point, what its backup added as stored, or the largest first.
-   One hue, thin bars rounded at the top and square at the baseline, a 2px gap, hairline grid. */
-.addhead { display: flex; flex-wrap: wrap; gap: .4rem 1rem; align-items: center; padding: .2rem 1rem .3rem; }
-.addhead .toggle { margin-left: auto; }
-.toggle { display: inline-flex; border: 1px solid #c8ced9; border-radius: 7px; overflow: hidden; }
-.toggle button { border: 0; border-radius: 0; padding: .2rem .65rem; font-size: 12.5px; }
-.toggle button + button { border-left: 1px solid #c8ced9; }
-.toggle button.on, .toggle button.on:hover { background: var(--text); color: #fff; }
-.addchart { padding: 0 1rem .5rem; }
-.addchart svg { display: block; width: 100%; max-width: 900px; height: auto; } /* its own size at most: a band, not a poster */
-.addchart .axis { fill: var(--muted); font-size: 11px; }
-.addchart .grid { stroke: var(--line); stroke-width: 1; }
-.addchart .bar { fill: var(--accent); }
-.addchart .bar.on { stroke: var(--text); stroke-width: 1.5; }
-.addchart .hit { fill: transparent; cursor: pointer; }
-.addchart .hit:hover, .addchart .hit:focus-visible { fill: rgba(37, 87, 214, .07); outline: none; }
-.addchart .note { fill: var(--text); font-size: 11px; font-weight: 600; }
-.sizebar { height: 8px; border-radius: 4px; background: var(--sq-none); position: relative; overflow: hidden; }
-.sizebar > span { position: absolute; inset: 0 auto 0 0; background: var(--accent); border-radius: 4px; }
 /* The search box's ? (what can be typed) and its Options: restic find's own (spec §5.2). */
 .help { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 50%;
   border: 1px solid #c8ced9; background: var(--panel); color: var(--muted); font-size: 12px; font-weight: 700; cursor: help; flex: none; }

@@ -27,9 +27,9 @@ export function Restores({ hosts }) {
     <p class="muted">Every restore on the agents you can see: files, and PostgreSQL dumps into a database or as their file. A restore always starts from a restore point: agent → job → its calendar → Restore.</p>
     <div class="panel row">
       <label>Agent <select value=${fqdn} onChange=${(e) => { setFqdn(e.target.value); setJob(''); }}>
-        <option value="">choose…</option>${hosts.filter((h) => h.jobs.length).map((h) => html`<option>${h.fqdn}</option>`)}</select></label>
+        <option value="">choose…</option>${hosts.filter((h) => h.jobs.length).map((h) => html`<option value=${h.fqdn}>${h.fqdn}</option>`)}</select></label>
       <label>Job <select value=${job} onChange=${(e) => setJob(e.target.value)} disabled=${!host}>
-        <option value="">choose…</option>${(host?.jobs || []).map((j) => html`<option>${j.id}</option>`)}</select></label>
+        <option value="">choose…</option>${(host?.jobs || []).map((j) => html`<option value=${j.id}>${j.id}</option>`)}</select></label>
       <a class="button primary" href=${fqdn && job ? link('agents', fqdn, 'jobs', job) : '#/restores'} disabled=${!(fqdn && job)}>Choose a snapshot</a>
     </div>
     <${ErrorBox} error=${r.error} />
