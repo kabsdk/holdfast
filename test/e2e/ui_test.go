@@ -117,6 +117,35 @@ func TestUIPages(t *testing.T) {
 	waitText(t, ctx, "Backs up")
 	waitText(t, ctx, "Stored") // what each job takes in the repository
 	waitText(t, ctx, "Set in its agent.yaml")
+	// One subject per row: the agent, then its software; the repository's box a row each for it and the escrow file,
+	// and with one site, no site label anywhere.
+	var heads []string
+	run(t, ctx, "the agent page's head", chromedp.Evaluate(`[...document.querySelectorAll('dl.facts.head dt')].map((d) => d.textContent)`, &heads))
+	if strings.Join(heads, ",") != "Agent,Software" {
+		t.Fatalf("the agent page's head: %q, want a row for the agent and one for its software", heads)
+	}
+	waitText(t, ctx, "Repository")
+	var repo []string
+	run(t, ctx, "the repository box", chromedp.Evaluate(`[...document.querySelectorAll('dl.facts.box dt')].map((d) => d.textContent)`, &repo))
+	if strings.Join(repo, ",") != "Repository,Escrow" {
+		t.Fatalf("the repository box: %q", repo)
+	}
+	// Back up now and Restore…, a button and a link, are the same size.
+	var sizes []float64
+	run(t, ctx, "the job row's buttons", chromedp.Evaluate(`[...document.querySelectorAll('.gt button.small, .gt a.button.small')].map((b) => b.getBoundingClientRect().height)`, &sizes))
+	if len(sizes) != 2 || sizes[0] != sizes[1] {
+		t.Fatalf("Back up now and Restore… are %v px high, want the same", sizes)
+	}
+	// The ⋯ menu's Remove agent… is red text on the menu's white, not a red box.
+	run(t, ctx, "open the agent's menu", chromedp.Click(`button[aria-label="More agent actions"]`, chromedp.ByQuery))
+	var look []string
+	run(t, ctx, "Remove agent… in the menu", chromedp.Evaluate(`(() => { const b = [...document.querySelectorAll('.menu-item')].find((x) => x.textContent.includes('Remove agent'));
+		const c = getComputedStyle(b); return [c.backgroundColor, c.color]; })()`, &look))
+	if len(look) != 2 || look[0] != "rgba(0, 0, 0, 0)" || look[1] != "rgb(179, 38, 30)" {
+		t.Fatalf("Remove agent… in the menu: background and colour %q, want none and red", look)
+	}
+	// Its own button closes it again, before anything under it is clicked.
+	run(t, ctx, "close the menu", chromedp.Click(`button[aria-label="More agent actions"]`, chromedp.ByQuery), chromedp.WaitNotPresent(`.menu-pop`, chromedp.ByQuery))
 	clickText(t, ctx, "button", "Back up now")
 	waitText(t, ctx, "Queued")
 
@@ -163,8 +192,16 @@ func TestUIPages(t *testing.T) {
 	// today is chosen, and lists its restore points. The old snapshot list's and calendar's addresses open it too.
 	open(t, ctx, "#/hosts/"+web+"/jobs/system/snapshots")
 	waitText(t, ctx, "Restore points")
-	waitText(t, ctx, "SITE A")
 	waitText(t, ctx, "one per day for 7 days") // --keep-daily 7d
+	// Its path and the exclusion the UI saved above fold into one line; what its restore points take is in their line,
+	// and with one site no site is named: the repository is the agent's.
+	waitText(t, ctx, "1 path, 1 excluded")
+	var head string
+	var tags int
+	run(t, ctx, "the restore points' line", chromedp.Text(`#rp-h`, &head, chromedp.ByQuery), chromedp.Evaluate(`document.querySelectorAll('.sitetag').length`, &tags))
+	if !strings.Contains(head, "stored") || tags != 0 {
+		t.Fatalf("the restore points' line %q, and %d site labels with one site", head, tags)
+	}
 	var days, points int
 	run(t, ctx, "the calendar's days with restore points", chromedp.Evaluate(`document.querySelectorAll('.mgrid button.cell:not(.c-none)').length`, &days))
 	run(t, ctx, "today's restore points", chromedp.Evaluate(`[...document.querySelectorAll('.gt:not(.head)')].filter((r) => r.querySelector('a.mono')).length`, &points))

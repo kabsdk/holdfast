@@ -1,6 +1,6 @@
 // An agent's page (decision 056): its jobs with what each backs up and its last 14 days, its PostgreSQL connections, its
 // recent runs and where its repository is. Every rule is the server's; this asks and shows.
-import { html, useState, useEffect, usePoll, useAction, link, offsiteLink, go, ago, until, fmtTime, fmtDay, dur, bytes, scheduleText, Pill, Snap, can, ErrorBox, Loading, EnrollLines, Menu, Problem, icons, fullDate, clock, localDay, browserZone, isPG, Kind, dbIcon, repoPath, storedTip } from '../lib.js';
+import { html, useState, useEffect, usePoll, useAction, link, offsiteLink, go, ago, until, fmtTime, fmtDay, dur, bytes, scheduleText, Pill, Snap, can, ErrorBox, Loading, EnrollLines, Menu, Problem, icons, fullDate, clock, localDay, browserZone, isPG, Kind, dbIcon, repoPath, storedTip, SiteTag } from '../lib.js';
 import { api } from '../api.js';
 import { jobState, agentSub } from './overview.js';
 
@@ -67,19 +67,25 @@ function DecommissionPanel({ host, done }) {
   </div>`;
 }
 
-// The repository on one line: where each site keeps it, its size, the escrow file, Object Lock and a decommission.
-function Repository({ host, settings, siteB }) {
-  const s = host.size, d = host.decommission, esc = host.escrow || {};
-  return html`<section class="factline" aria-label="Repository">
-    <span><span class="muted">${host.offsite ? 'Site A' : 'Repository'}</span> <code>${repoPath(settings?.storage, host.fqdn)}</code>${s ? ` · ${bytes(s.current_bytes)}, and ${bytes(s.noncurrent_bytes)} of old versions S3 keeps` : ' · not measured yet'}</span>
-    ${host.offsite && html`<span><span class="muted">Site B</span> <code>${repoPath(siteB?.storage, host.fqdn)}</code> · ${host.offsite.copies} copies${host.offsite.pending ? `, ${host.offsite.pending} waiting` : ''} · last copy ${host.offsite.last_copy ? ago(host.offsite.last_copy) : 'none yet'}</span>`}
-    <span class="row" style="gap:.35rem"><span class="muted">Escrow</span>${esc.current ? html`${icons.ok()} current password` : esc.error ? html`<span class="num error">not written: ${esc.error}</span>` : 'not written'}</span>
-    ${host.storage?.object_lock && html`<span><span class="muted">Object Lock</span> ${host.storage.object_lock}</span>`}
-    ${s && html`<span class="muted">measured ${ago(s.measured_at)}</span>`}
-    ${d && html`<span><span class="muted">Decommission</span> ${d.done_at
+// sizeText is a repository's size, and what S3 still keeps of what was deleted from it: what a rollback can bring back.
+function sizeText(s, days) {
+  if (!s) return html`<span class="muted">not measured yet</span>`;
+  return html`<span data-tip=${'Measured ' + fmtTime(s.measured_at)}>${bytes(s.current_bytes)}, and ${bytes(s.noncurrent_bytes)} of deleted data S3 keeps${days ? ` for ${days} days` : ''}</span>`;
+}
+
+// The repository, a row per subject: where it is and its size, once for all the agent's jobs, in each site when there
+// are two; the escrow file; Object Lock; a decommission.
+function Repository({ host, settings, siteB, hostB }) {
+  const d = host.decommission, esc = host.escrow || {}, o = host.offsite;
+  return html`<dl class="facts box" aria-label="Repository">
+    <dt>${o ? html`<${SiteTag} />` : 'Repository'}</dt><dd><code>${repoPath(settings?.storage, host.fqdn)}</code> · ${sizeText(host.size, host.storage?.noncurrent_days)}</dd>
+    ${o && html`<dt><${SiteTag} b /></dt><dd><code>${repoPath(siteB?.storage, host.fqdn)}</code>${hostB?.size ? html` · ${sizeText(hostB.size, hostB.storage?.noncurrent_days)}` : ''}${` · ${o.copies} copies${o.pending ? `, ${o.pending} waiting` : ''}, the last ${o.last_copy ? ago(o.last_copy) : 'none yet'}`}</dd>`}
+    <dt>Escrow</dt><dd>${esc.current ? html`${icons.ok()} current password` : esc.error ? html`<span class="num error">not written: ${esc.error}</span>` : 'not written'}</dd>
+    ${host.storage?.object_lock && html`<dt>Object Lock</dt><dd>${host.storage.object_lock}</dd>`}
+    ${d && html`<dt>Decommission</dt><dd>${d.done_at
       ? `done ${fmtTime(d.done_at)}: ${d.objects_deleted} objects deleted, as ${d.requested_by} asked; really gone ${d.really_gone_at ? fmtDay(d.really_gone_at) : 'when the lifecycle rule expires the old versions'}`
-      : `asked by ${d.requested_by}; the repository is deleted ${fmtTime(d.due_at)}`}</span>`}
-  </section>`;
+      : `asked by ${d.requested_by}; the repository is deleted ${fmtTime(d.due_at)}`}</dd>`}
+  </dl>`;
 }
 
 // offState is a job's off-site copies in a word or two, for its row: up to date, copying, behind, failing, or not
@@ -162,14 +168,14 @@ function JobRow({ host, job, days, cut, onRun, queued, vault, cols, storedB }) {
       <div class="sub">${scheduleText(job.schedule)}</div>
       ${probs.map((p) => html`<${Problem} p=${{ ...p, job_id: '' }} />`)}
     </div>
-    <div style="min-width:0"><${Kind} job=${job} /></div>
+    <div style="min-width:0"><${Kind} job=${job} more=${link('agents', host.fqdn, 'jobs', job.id)} /></div>
     <${Strip} job=${job.id} days=${days} />
     <div><div class="num">${s.last_success_at ? ago(s.last_success_at) : '—'}</div>${s.last_success_at && html`<div class="sub">${fmtTime(s.last_success_at)}</div>`}</div>
     <span class="num muted">${job.next_runs?.[0] ? until(job.next_runs[0]) : '—'}</span>
     ${off && html`<div><div class=${'offstate ' + off.kind}>${off.text}</div>${off.sub && html`<div class="sub">${off.sub}</div>`}</div>`}
-    <div class="stored"><div class="num" data-tip=${storedTip(job.stored, off ? 'site A' : '')}>${job.stored ? bytes(job.stored.bytes) : '—'}${off ? html` <span class="muted">site A</span>` : ''}</div>
-      ${off && html`<div class="sub" data-tip=${storedTip(storedB, 'site B')}>${storedB ? bytes(storedB.bytes) : '—'} site B</div>`}</div>
-    <div class="row" style="justify-content:flex-end;gap:.4rem">
+    <div class="stored"><div class="num nowrap" data-tip=${storedTip(job.stored, off ? 'site A' : '')}>${off ? html`<${SiteTag} /> ` : ''}${job.stored ? bytes(job.stored.bytes) : '—'}</div>
+      ${off && html`<div class="num nowrap" data-tip=${storedTip(storedB, 'site B')}><${SiteTag} b /> ${storedB ? bytes(storedB.bytes) : '—'}</div>`}</div>
+    <div class="row" style="justify-content:flex-end;gap:.4rem;flex-wrap:nowrap;white-space:nowrap">
       ${queued && html`<span class="ok" style="font-size:12.5px">Queued</span>`}
       ${!vault && can(host, 'backup.run') && html`<button class="small" disabled=${queued} onClick=${onRun}>Back up now</button>`}
       ${!vault && can(host, 'restore.new_dir') && s.last_snapshot_id && html`<a class="button small" href=${link('agents', host.fqdn, 'snapshots', s.last_snapshot_id, 'restore')}>Restore…</a>`}
@@ -408,13 +414,15 @@ export function Host({ fqdn, reloadHosts, vault, settings }) {
   const withPG = !vault && (!!a?.postgresql?.client || (h.postgresql || []).length > 0);
   return html`
     <div class="spread">
-      <div style="min-width:0">
+      <div style="min-width:0;flex:1 1 32rem">
         <h1 class="row" style="gap:.6rem"><span class="wrap">${h.fqdn}</span>
           ${probs.length === 0 ? html`<${Pill} kind="ok">${h.jobs.length === 1 ? 'its job is OK' : `all ${h.jobs.length} jobs OK`}<//>`
             : html`<${Pill} kind=${errors ? 'error' : 'warning'}>${needy ? `${needy} ${needy === 1 ? 'job needs' : 'jobs need'} attention` : 'needs attention'}<//>`}</h1>
-        <p class="muted">${vault ? `copied from primary · last copy ${h.copied_at ? fmtTime(h.copied_at) : 'none yet'}`
-          : a ? html`${a.remote_addr ? `Connects from ${a.remote_addr} · ` : ''}${a.os_id} ${a.os_version} · agent ${a.agent_version} seen ${ago(a.last_seen_at)} · restic ${a.restic_version}${a.postgresql?.client ? ` · PostgreSQL client ${a.postgresql.client}` : ''}${h.in_sync ? '' : html` · <${Pill} kind="warning">runs revision ${a.applied_revision}, not ${h.desired_revision}<//>`}`
-          : `${agentSub(h)} · progress: ${h.progress}`}</p>
+        ${vault ? html`<p class="muted">copied from primary · last copy ${h.copied_at ? fmtTime(h.copied_at) : 'none yet'}</p>`
+          : a ? html`<dl class="facts head">
+              <dt>Agent</dt><dd>seen ${ago(a.last_seen_at)}${a.remote_addr ? `, connects from ${a.remote_addr}` : ''}${h.in_sync ? '' : html` <${Pill} kind="warning">runs revision ${a.applied_revision}, not ${h.desired_revision}<//>`}</dd>
+              <dt>Software</dt><dd>Holdfast agent ${a.agent_version} · restic ${a.restic_version} · ${a.os_id} ${a.os_version}${a.postgresql?.client ? ` · PostgreSQL client ${a.postgresql.client}` : ''}</dd></dl>`
+          : html`<p class="muted">${agentSub(h)} · progress: ${h.progress}</p>`}
         ${!vault && html`<${Limits} host=${h} />`}
       </div>
       <div class="row">
@@ -462,7 +470,7 @@ export function Host({ fqdn, reloadHosts, vault, settings }) {
     </section>
     ${withPG && html`<${Connections} host=${h} reload=${refresh} />`}
     ${events.data ? html`<${Runs} host=${h} events=${events.data} />` : html`<${Loading} what="runs" />`}
-    <${Repository} host=${h} settings=${settings} siteB=${siteB.data} />`;
+    <${Repository} host=${h} settings=${settings} siteB=${siteB.data} hostB=${hostB.data} />`;
 }
 
 export function Pending({ fqdn }) {

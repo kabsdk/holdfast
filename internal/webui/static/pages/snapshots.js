@@ -1,4 +1,4 @@
-import { html, useState, useEffect, useRef, useMemo, usePoll, useAction, link, fmtTime, fmtDay, bytes, can, ErrorBox, Loading, Menu, isPG, dbIcon, dumpFile, folderIcon } from '../lib.js';
+import { html, useState, useEffect, useRef, useMemo, usePoll, useAction, link, fmtTime, fmtDay, bytes, can, ErrorBox, Loading, Menu, isPG, dbIcon, dumpFile, folderIcon, SiteTag } from '../lib.js';
 import { api } from '../api.js';
 import { Restore, PGRestore, DeleteDialog, EVERYTHING, onlyThis } from './restore.js';
 import { point, copiesByOriginal, WORD_A, WORD_B } from '../keep.js';
@@ -277,7 +277,8 @@ export function Snapshot({ fqdn, id, tab, vault, hosts, settings }) {
           : html`<h1>Snapshot <span class="mono">${snap.short_id}</span></h1>
             <p class="muted"><a href=${link('agents', fqdn)}>${fqdn}</a> · ${snap.job_id ? html`<a href=${link('agents', fqdn, 'jobs', snap.job_id)}>${snap.job_id}</a>` : 'not made by Holdfast'} · ${fmtTime(snap.time)} · ${snap.total_files ?? '—'} files · ${bytes(snap.total_bytes)} · ${(snap.paths || []).map((x) => html`<code>${x}</code> `)}</p>`}
         ${snap.original && html`<p class="muted">A copy of <span class="mono">${snap.original.slice(0, 8)}</span> in site A.</p>`}
-        ${off && html`<p class="muted">Site A: ${WORD_A[p.sa]} · Site B: ${WORD_B[p.sb]}${copy ? html` (copy <span class="mono">${p.copyShort}</span>)` : ''}</p>`}
+        ${off && html`<dl class="facts head"><dt><${SiteTag} /></dt><dd>${WORD_A[p.sa]}</dd>
+          <dt><${SiteTag} b /></dt><dd>${WORD_B[p.sb]}${copy ? html` (copy <span class="mono">${p.copyShort}</span>)` : ''}</dd></dl>`}
         ${!aGone && (snap.kept_by || []).length > 0 && html`<p class="muted">Kept: ${snap.kept_by.join(', ')}</p>`}
       </div>
       <div class="row">
@@ -288,10 +289,10 @@ export function Snapshot({ fqdn, id, tab, vault, hosts, settings }) {
         ]} />
       </div>
     </div>
-    ${!snap.unknown && (snap.gone_at || snap.deletion_requested_at) ? html`<${SiteBanner} where=${off ? 'Site A' : 'This snapshot'} s=${snap} mayDelete=${mayDelete}
+    ${!snap.unknown && (snap.gone_at || snap.deletion_requested_at) ? html`<${SiteBanner} where=${off ? html`<${SiteTag} />` : 'This snapshot'} s=${snap} mayDelete=${mayDelete}
         onCancel=${() => act.run(() => api.cancelDeletion(fqdn, snap.id)).then(reload)} />`
       : !aGone && f.text && f.kind !== 'ok' && html`<div class=${'banner ' + (f.kind || 'info')}><span>${f.text}</span></div>`}
-    ${copy && html`<${SiteBanner} where=${`Site B, copy ${p.copyShort}`} s=${copy} mayDelete=${mayDelete} onCancel=${() => act.run(() => api.offsiteCancelDeletion(fqdn, copy.id)).then(reload)} />`}
+    ${copy && html`<${SiteBanner} where=${html`<${SiteTag} b /> copy ${p.copyShort}`} s=${copy} mayDelete=${mayDelete} onCancel=${() => act.run(() => api.offsiteCancelDeletion(fqdn, copy.id)).then(reload)} />`}
     ${aGone && !bHolds && html`<div class="banner info"><span>Nothing is left to restore: ${off ? 'neither site holds it any more' : 'it is deleted'}.</span></div>`}
     ${aGone && bHolds && html`<div class="banner info"><span>Site B still holds it: restore from site B’s copy below.</span></div>`}
     ${withOff && listB.error && html`<div class="banner warning">Site B's copies could not be read: ${listB.error.message}</div>`}
