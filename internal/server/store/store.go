@@ -1109,6 +1109,32 @@ func (q *Q) LastCheckSuccess(ctx context.Context) (map[string]time.Time, error) 
 	return q.timesByHost(ctx, `SELECT fqdn, max(finished_at) FROM events WHERE kind = 'check' AND status = 'success' GROUP BY fqdn`)
 }
 
+// LastCheck is a host's newest repository check: whether it failed, and restic's exit code.
+type LastCheck struct {
+	Failed     bool
+	ResticExit int
+}
+
+// LastChecks returns, per host, its agent's newest repository check (decision 030).
+func (q *Q) LastChecks(ctx context.Context) (map[string]LastCheck, error) {
+	rows, err := q.db.Query(ctx, `SELECT DISTINCT ON (fqdn) fqdn, status, restic_exit FROM events WHERE kind = 'check'
+		ORDER BY fqdn, finished_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]LastCheck{}
+	for rows.Next() {
+		var f, status string
+		var exit int
+		if err := rows.Scan(&f, &status, &exit); err != nil {
+			return nil, err
+		}
+		out[f] = LastCheck{Failed: status == "failed", ResticExit: exit}
+	}
+	return out, rows.Err()
+}
+
 func (q *Q) timesByHost(ctx context.Context, sql string, args ...any) (map[string]time.Time, error) {
 	rows, err := q.db.Query(ctx, sql, args...)
 	if err != nil {

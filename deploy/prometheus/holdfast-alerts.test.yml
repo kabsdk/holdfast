@@ -90,6 +90,27 @@ tests:
             exp_annotations:
               summary: "web01: its last forget-and-prune failed (holdfast prunes web01 says why)"
 
+  # A failed repository check raises a ticket at once, saying whether the repository was locked; a check that passed
+  # does not.
+  - interval: 1m
+    input_series:
+      - series: 'holdfast_check_last_run_failed{host="web01",reason="locked"}'
+        values: '1x10'
+      - series: 'holdfast_check_last_run_failed{host="db01",reason="error"}'
+        values: '1x10'
+      - series: 'holdfast_check_last_run_failed{host="app01",reason=""}'
+        values: '0x10'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: HoldfastCheckFailed
+        exp_alerts:
+          - exp_labels: {severity: ticket, host: web01, reason: locked}
+            exp_annotations:
+              summary: "web01: its last repository check found the repository locked (holdfast agent events web01)"
+          - exp_labels: {severity: ticket, host: db01, reason: error}
+            exp_annotations:
+              summary: "db01: its last repository check failed, and the repository may be damaged (holdfast agent events db01)"
+
   # Snapshots that disappeared page at once; snapshots Holdfast did not make raise a ticket after an hour.
   - interval: 1m
     input_series:

@@ -23,8 +23,10 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -66,6 +68,11 @@ type Runner struct {
 	// file of the certificate and key restic connects with (--tls-client-cert): the agent's, at the gateway
 	// (decision 041). Paths, not secrets.
 	CACert, TLSClientCert string
+	// UnlockStale removes stale locks with restic unlock, after a command that met one (exit 11), which then runs once
+	// more, and after a restic killed by a signal (staleLocks). OnUnlock, if set, gets restic's report of each unlock
+	// that removed a lock.
+	UnlockStale bool
+	OnUnlock    func(report string)
 }
 
 // Source is the repository a copy reads: its location and its password file. Its credentials go in Env
@@ -79,6 +86,7 @@ type Source struct {
 type Error struct {
 	Code   int
 	Stderr string
+	Killed bool // restic was killed by a signal, so it had no time to remove its lock (Code is -1)
 }
 
 func (e *Error) Error() string {
@@ -119,8 +127,20 @@ func (r Runner) env() []string {
 	return append(env, r.Env...)
 }
 
-// run executes restic and returns stdout; the last 8 KiB of stderr go into the error.
+// run executes restic and returns stdout; the last 8 KiB of stderr go into the error. With UnlockStale, a command that
+// met a stale lock runs once more after restic unlock removed it (staleLocks).
 func (r Runner) run(ctx context.Context, args ...string) ([]byte, error) {
+	var stdout bytes.Buffer
+	err := r.exec(ctx, &stdout, args...)
+	if r.staleLocks(ctx, args, err) {
+		stdout.Reset()
+		err = r.exec(ctx, &stdout, args...)
+	}
+	return stdout.Bytes(), err
+}
+
+// exec runs restic once, with its stdout going to w.
+func (r Runner) exec(ctx context.Context, w io.Writer, args ...string) error {
 	// Global flags go before the subcommand: after "--" restic would read them as paths.
 	for _, o := range r.Options {
 		args = append([]string{"-o", o}, args...)
@@ -142,19 +162,60 @@ func (r Runner) run(ctx context.Context, args ...string) ([]byte, error) {
 	// exited within a minute.
 	cmd.Cancel = func() error { return cmd.Process.Signal(os.Interrupt) }
 	cmd.WaitDelay = time.Minute
-	var stdout bytes.Buffer
 	stderr := &tailBuffer{max: 8192}
-	cmd.Stdout = &stdout
-	cmd.Stderr = stderr
+	cmd.Stdout, cmd.Stderr = w, stderr
 	err := cmd.Run()
-	if err != nil {
-		var ee *exec.ExitError
-		if errors.As(err, &ee) {
-			return stdout.Bytes(), &Error{Code: ee.ExitCode(), Stderr: stderr.String()}
-		}
-		return stdout.Bytes(), err
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		ws, _ := ee.Sys().(syscall.WaitStatus)
+		return &Error{Code: ee.ExitCode(), Stderr: stderr.String(), Killed: ws.Signaled()}
 	}
-	return stdout.Bytes(), nil
+	return err
+}
+
+// removedLocks is restic unlock's report, "successfully removed 2 locks". It prints nothing when no lock was stale.
+var removedLocks = regexp.MustCompile(`successfully removed (\d+) lock`)
+
+// staleLocks deals, with UnlockStale, with the locks a failed command met or left, and says whether to run it once
+// more. restic never removes a stale lock by itself: a command that meets one fails with exit 11 every time, until
+// restic unlock removes it. So:
+//   - after exit 11, it runs restic unlock, and says yes if that removed a lock;
+//   - after a restic killed by a signal (SIGKILL, the OOM killer, a broken pipe), which had no time to remove its own
+//     lock, it runs restic unlock, and says no.
+//
+// restic unlock removes stale locks only (never --remove-all): one older than 30 minutes, while a running restic
+// renews its own every 5, or one made on this host by a process that is gone. A live lock stays, and the command
+// fails as before. On shutdown (ctx done) it does nothing: the agent removes stale locks when it starts again.
+func (r Runner) staleLocks(ctx context.Context, args []string, err error) bool {
+	var re *Error
+	if !r.UnlockStale || r.NoLock || len(args) == 0 || args[0] == "unlock" || ctx.Err() != nil || !errors.As(err, &re) {
+		return false
+	}
+	switch {
+	case re.Code == ExitLocked:
+		n, _ := r.RemoveStaleLocks(ctx)
+		return n > 0
+	case re.Killed:
+		_, _ = r.RemoveStaleLocks(ctx)
+	}
+	return false
+}
+
+// RemoveStaleLocks runs restic unlock, which removes stale locks only, and gives its report to OnUnlock when it removed
+// one. It returns how many it removed.
+func (r Runner) RemoveStaleLocks(ctx context.Context) (int, error) {
+	out, err := r.Unlock(ctx)
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	if m := removedLocks.FindStringSubmatch(out); m != nil {
+		n, _ = strconv.Atoi(m[1])
+	}
+	if n > 0 && r.OnUnlock != nil {
+		r.OnUnlock(out)
+	}
+	return n, nil
 }
 
 // Version returns restic's version, such as "0.19.1".
@@ -753,37 +814,15 @@ func (r Runner) RestoreWith(ctx context.Context, snapshot string, o RestoreOptio
 }
 
 // Dump writes one file of a snapshot to w, as restic dump does: a PostgreSQL dump on its way into pg_restore
-// (decision 055). Nothing is written to disk.
+// (decision 055). Nothing is written to disk. A dump that meets a stale lock runs once more after restic unlock removed
+// it (staleLocks): restic takes its lock before it writes anything, so w has had nothing yet.
 func (r Runner) Dump(ctx context.Context, snapshot, path string, w io.Writer) error {
 	args := []string{"dump", snapshot, path}
-	for _, o := range r.Options {
-		args = append([]string{"-o", o}, args...)
+	err := r.exec(ctx, w, args...)
+	if r.staleLocks(ctx, args, err) {
+		err = r.exec(ctx, w, args...)
 	}
-	if r.CACert != "" {
-		args = append([]string{"--cacert", r.CACert}, args...)
-	}
-	if r.TLSClientCert != "" {
-		args = append([]string{"--tls-client-cert", r.TLSClientCert}, args...)
-	}
-	if r.NoLock {
-		args = append([]string{"--no-lock"}, args...)
-	} else if r.RetryLock > 0 {
-		args = append([]string{"--retry-lock", r.RetryLock.String()}, args...)
-	}
-	cmd := exec.CommandContext(ctx, r.bin(), args...)
-	cmd.Env = r.env()
-	cmd.Cancel = func() error { return cmd.Process.Signal(os.Interrupt) }
-	cmd.WaitDelay = time.Minute
-	stderr := &tailBuffer{max: 8192}
-	cmd.Stdout, cmd.Stderr = w, stderr
-	if err := cmd.Run(); err != nil {
-		var ee *exec.ExitError
-		if errors.As(err, &ee) {
-			return &Error{Code: ee.ExitCode(), Stderr: stderr.String()}
-		}
-		return err
-	}
-	return nil
+	return err
 }
 
 // SnapshotInfo returns one snapshot.

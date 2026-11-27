@@ -50,12 +50,18 @@ replaces it under the same name and tag, `v0.1-dev`, and installs as an upgrade 
   always with a reason, in primary, off-site or both; Prune now; rolling a repository back from S3 versions, picking
   what was deleted or overwritten to bring back, while the gateway holds the agent's writes; restoring onto another
   host.
+- **Stale restic locks clear themselves** (decision 059). When restic finds a repository locked, the agent or the
+  server runs `restic unlock`, which removes stale locks only, and tries once more; the server's daily run removes
+  them before it starts, and audits it. A dry run of a PostgreSQL dump reads the whole dump, so restic is no longer cut
+  off and leaves no lock behind. `HoldfastCheckFailed` raises a ticket as soon as an agent's repository check fails,
+  and says whether the repository was locked.
 - Optional off-site copies, on the same pages as primary: a job's off-site retention follows its primary retention
   until one is saved off-site, and Match primary makes it follow again (decision 053). The problems `offsite_copy`
   and `offsite_lag` show under the host and are alerted. Without them, the Overview and Settings say that site B is
   not set up, and nothing else mentions it (decision 057).
 - Logins through OIDC with three roles, or `holdfast ui-login` for root without an identity provider. A page opened
-  without a session goes straight to the login, without flashing a “not logged in” error on the way.
+  without a session goes straight to the login, without flashing a “not logged in” error on the way, nor a call the
+  browser cut off as it left (Firefox's “NetworkError when attempting to fetch resource.”).
 - Recovery of the server itself from one recovery file and the bucket.
 - Packages for Ubuntu, Debian and the Red Hat family on x86_64, the one-line installer `install.sh`, and the
   Ansible collection `kabsdk.holdfast`, whose agent role sets the PostgreSQL client in `agent.yaml`.

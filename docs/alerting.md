@@ -54,7 +54,7 @@ Each rule has a `severity` label:
 | Severity | Meaning | Examples |
 | --- | --- | --- |
 | `page` | Backups are not happening, or are at risk. Act now. | `HoldfastServerDown`, `HoldfastBackupStale`, `HoldfastBackupNotInBucket`, `HoldfastSnapshotsDisappeared`, `HoldfastRepositoryKeyAdded` |
-| `ticket` | Look into it today. | `HoldfastBackupFailed`, `HoldfastAgentOffline`, `HoldfastCatalogueFailing`, `HoldfastEscrowNotWritten` |
+| `ticket` | Look into it today. | `HoldfastBackupFailed`, `HoldfastCheckFailed`, `HoldfastAgentOffline`, `HoldfastCatalogueFailing`, `HoldfastEscrowNotWritten` |
 | `none` | `Watchdog`: always firing, for the dead man's switch. | |
 
 `make rules-test` checks that the rules parse and pass their unit tests.

@@ -104,11 +104,21 @@ unprivileged user (decision 055)
     checks its own repository: once a day, right after a backup, inside its one-restic-at-a-time loop,
     reading a rotating 1/30 of the data (decision 030). `holdfast check` asks every agent to check now. Its report
     names the part it read, `read_data_subset` such as `25/30`; the agent's recent runs say so, as a check of the
-    repository: "its structure, and data part 25 of 30", and so does `holdfast agent events`.
+    repository: "its structure, and data part 25 of 30", and so does `holdfast agent events`. A check that fails
+    raises `HoldfastCheckFailed` at once, which says whether restic found the repository locked or found an error
+    (`holdfast_check_last_run_failed`, decision 059); `HoldfastMaintenanceStale` fires after 3 days without one that
+    passed.
   - The server tests each host's storage contract once a day. It checks a repository itself only before
     it prunes it.
   - A backup or a check that runs past its timeout is stopped and reported as failed, so the host's other
     jobs can run. The timeout is the schedule's longest gap, and at least an hour.
+  - Stale locks (decision 059). restic never removes a lock that a killed restic left behind, and every command that
+    needs the repository fails on it until `restic unlock` removes it. So when restic finds the repository locked,
+    the agent and the server run `restic unlock`, which removes stale locks only (one not renewed for 30 minutes,
+    while a running restic renews its own every 5, or one made on the same machine by a process that is gone), and
+    run the command once more. After a restic killed by a signal, the agent runs `restic unlock` at once. The server's
+    forget-and-prune removes stale locks before its first step too, unless the host's clock is more than 5 minutes
+    off the server's, and audits each removal as `repository.stale_locks_removed`.
 - The storage witness (decision 045, in place of M1's `holdfast-freshness`): after every backup, and at least once a
   day, it reads the host's repository with restic and the maintenance key, straight from S3, not through the gateway.
   So "the agent says the backup is done" and "the bucket holds it" are judged apart: a snapshot an agent reported that
@@ -344,7 +354,8 @@ would keep.
    recorded as failed and raises `HoldfastRetentionFailing`.
 
 - It runs in the middle of the host's longest quiet stretch, so it rarely meets a backup, and it waits for
-  a backup's lock rather than failing. A run missed while the server was down waits for the next day's slot.
+  a backup's lock rather than failing. It removes stale locks first (decision 059). A run missed while the server
+  was down waits for the next day's slot.
 - Only the server runs forget and prune, with its maintenance key; agents never do.
 - `holdfast retention run <agent>` starts the same run now, with the same protection.
   `maintenance.retention: off` in `server.yaml` turns the daily run off.
@@ -989,16 +1000,18 @@ host.
   roles and globals restore this way only: Holdfast never creates roles.
 
 Loading a dump streams it from restic through `pg_restore`, which writes it as SQL, into `psql --single-transaction`
-with `ON_ERROR_STOP`, as the restore user: one transaction, stopping at the first error, nothing written to disk.
-`psql` commits only once `pg_restore` has finished well. The agent's client is often newer than the server (one
-client for every server it backs up, P001), and pg_restore's own session settings may be ones an older server does
-not know: the agent leaves those out, such as `transaction_timeout` on a server older than PostgreSQL 17. A dry run
-reads the dump with `pg_restore --list` and writes nothing.
+with `ON_ERROR_STOP`, as the restore user: one transaction, stopping at the first error, nothing written to disk. `psql`
+commits only once `pg_restore` has finished well and restic has read the dump to its end. The agent's client is often
+newer than the server (one client for every server it backs up, P001), and pg_restore's own session settings may be ones
+an older server does not know: the agent leaves those out, such as `transaction_timeout` on a server older than
+PostgreSQL 17. A dry run reads the whole dump and writes nothing: `pg_restore --list` reads its table of contents, and
+the agent reads the rest and drops it, so a dump that cannot be read to its end fails the dry run (decision 059). When
+`pg_restore` or `psql` fails, restic is stopped with SIGINT, which removes its lock.
 
 The dump streams from restic into pg_restore, through no file on disk, and pg_restore waits at most 5 minutes for a
 lock. A restore never names another database, never runs on another agent (`--to-host`), and from an off-site copy is
-never in place. Without a restore user on the connection, a dump restores as a file only. A dry run reads the dump with
-`pg_restore --list`, and writes nothing.
+never in place. Without a restore user on the connection, a dump restores as a file only. A dry run reads the whole dump,
+and writes nothing.
 
 **A dump snapshot**, made by a dump job before 0.6.0 (§4.6), is one file: it is restored into a new directory only.
 Loading it is the admin's job, on the host.
