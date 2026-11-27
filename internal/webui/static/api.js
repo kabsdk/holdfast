@@ -15,6 +15,13 @@ export class APIError extends Error {
   }
 }
 
+// leaving is set once a 401 has sent the browser to the login. From then on no call settles, so the page goes on
+// showing what it showed ("Loading Holdfast…") until the browser has left, never an error on the way: not "not logged
+// in", and not a call the browser cuts off as it leaves, which Firefox reports as "NetworkError when attempting to
+// fetch resource." (the page asks for /me and /settings at once, and only one of them gets the 401 first).
+let leaving = false;
+const never = () => new Promise(() => {});
+
 async function req(method, path, body) {
   if (onOffsite() && path.startsWith('/api/v1/') && !path.startsWith('/api/v1/offsite/')) path = '/api/v1/offsite' + path.slice('/api/v1'.length);
   const opts = { method, credentials: 'same-origin', headers: {} };
@@ -22,14 +29,19 @@ async function req(method, path, body) {
     opts.headers['Content-Type'] = 'application/json';
     opts.body = JSON.stringify(body);
   }
-  const r = await fetch(path, opts);
-  if (r.status === 401) {
-    // Not logged in: off to the login, and the call never settles, so the page goes on showing what it showed
-    // ("Loading Holdfast…") until the browser has left, never a "not logged in" error on the way.
-    location.href = '/auth/login?next=' + encodeURIComponent('/' + location.hash);
-    return new Promise(() => {});
+  if (leaving) return never();
+  let r, text;
+  try {
+    r = await fetch(path, opts);
+    if (r.status === 401 && !leaving) {
+      leaving = true;
+      location.href = '/auth/login?next=' + encodeURIComponent('/' + location.hash);
+    }
+    if (!leaving) text = await r.text();
+  } catch (err) {
+    if (!leaving) throw err;
   }
-  const text = await r.text();
+  if (leaving) return never();
   let data = null;
   try { data = text ? JSON.parse(text) : null; } catch { data = { error: text }; }
   if (!r.ok) throw new APIError(r.status, data);

@@ -3,19 +3,32 @@ package e2e
 import (
 	"context"
 	"crypto/rand"
-	"net/url"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
 
+	"github.com/kabsdk/holdfast/internal/agent"
 	"github.com/kabsdk/holdfast/internal/restic"
 	"github.com/minio/minio-go/v7"
-	"github.com/minio/minio-go/v7/pkg/credentials"
 )
+
+// locks lists the lock files in a host's repository, straight from the bucket.
+func (e *env) locks(fqdn string) []string {
+	e.t.Helper()
+	var out []string
+	for o := range s3(e.t).ListObjects(context.Background(), e.bucket, minio.ListObjectsOptions{Prefix: "repos/" + fqdn + "/locks/"}) {
+		if o.Err == nil {
+			out = append(out, strings.TrimPrefix(o.Key, "repos/"+fqdn+"/locks/"))
+		}
+	}
+	return out
+}
 
 // resticCmd is restic as a process the test can freeze, with the same repository and identity as r.
 func resticCmd(r restic.Runner, args ...string) *exec.Cmd {
@@ -60,18 +73,7 @@ func TestCheckLockIsExclusive(t *testing.T) {
 	}
 	must(t, backup(host, src))
 
-	u, _ := url.Parse(s3Endpoint)
-	root, err := minio.New(u.Host, &minio.Options{Creds: credentials.NewStaticV4(s3User, s3Pass, ""), Region: "us-east-1"})
-	must(t, err)
-	locks := func() []string {
-		var out []string
-		for o := range root.ListObjects(ctx, e.bucket, minio.ListObjectsOptions{Prefix: "repos/" + fqdn + "/locks/"}) {
-			if o.Err == nil {
-				out = append(out, strings.TrimPrefix(o.Key, "repos/"+fqdn+"/locks/"))
-			}
-		}
-		return out
-	}
+	locks := func() []string { return e.locks(fqdn) }
 	// frozen starts restic and stops it once its lock is in the bucket.
 	frozen := func(r restic.Runner, args ...string) *exec.Cmd {
 		t.Helper()
@@ -148,5 +150,110 @@ func TestCheckLockIsExclusive(t *testing.T) {
 	}
 	if got := locks(); len(got) != 0 {
 		t.Fatalf("locks left after both finished: %v", got)
+	}
+}
+
+// staleLock leaves the lock of a restic killed while it held it, as the OOM killer or a broken pipe leaves one: a
+// restic check, whose lock is exclusive, killed with SIGKILL once its lock is in the bucket. restic counts it stale
+// (made on this host, by a process that is gone), and never removes it by itself.
+func (e *env) staleLock(r restic.Runner, fqdn string) {
+	e.t.Helper()
+	cmd := resticCmd(r, "check", "--read-data")
+	must(e.t, cmd.Start())
+	deadline := time.Now().Add(time.Minute)
+	for len(e.locks(fqdn)) == 0 {
+		if time.Now().After(deadline) {
+			_ = cmd.Process.Kill()
+			e.t.Fatal("restic check never took a lock")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	must(e.t, cmd.Process.Kill())
+	_ = cmd.Wait()
+	if l := e.locks(fqdn); len(l) != 1 {
+		e.t.Fatalf("the killed check should leave its one lock: %v", l)
+	}
+}
+
+// TestStaleLocksClearThemselves: a lock that a killed restic left behind blocks, until restic unlock removes it, the
+// host's backups (an exclusive lock does), its repository check and the server's forget and prune. Found in the lab: a
+// restic cut off by a dry-run restore left a lock that failed every check and prune for days. Each of them now removes
+// stale locks when restic finds the repository locked, and runs once more; the server's run also removes them before
+// its first step, and audits it. None needs an operator.
+func TestStaleLocksClearThemselves(t *testing.T) {
+	e := newEnv(t)
+	const fqdn = "stale01.example.com"
+	src := filepath.Join(t.TempDir(), "data")
+	must(t, os.MkdirAll(src, 0o755))
+	buf := make([]byte, 32<<20) // so that a check --read-data runs long enough to be caught with its lock
+	_, _ = rand.Read(buf)
+	must(t, os.WriteFile(filepath.Join(src, "random.bin"), buf, 0o644))
+	a := e.enrollAgent(fqdn, e.addHost(fqdn, "data", "--path", src, "--daily", "03:00", "--keep-last", "1"))
+	cfg, err := agent.LoadConfig(a.cfgPath)
+	must(t, err)
+	cfg.RetryLock = 2 * time.Second // a backup waits 15 minutes for a lock by default
+	must(t, agent.WriteConfig(a.cfgPath, cfg))
+	e.runAgent(a)
+	e.waitProgress(fqdn, "first_backup_done", 2*time.Minute)
+	maint := e.resticFor(e.escrow()[fqdn])
+	noLocks := func(after string) {
+		t.Helper()
+		if l := e.locks(fqdn); len(l) != 0 {
+			t.Fatalf("locks left after %s: %v", after, l)
+		}
+	}
+
+	// A backup behind a stale exclusive lock.
+	e.staleLock(maint, fqdn)
+	if ev := e.runJob(fqdn, "data"); ev.Status != "success" {
+		t.Fatalf("a backup behind a stale lock: %+v", ev)
+	}
+	noLocks("the backup")
+
+	// The agent's repository check.
+	e.staleLock(maint, fqdn)
+	var checks []struct{ FQDN, Status, Command, Error string }
+	must(t, json.Unmarshal(e.cli("check"), &checks))
+	if len(checks) != 1 || checks[0].Command == "" {
+		t.Fatalf("check: %+v", checks)
+	}
+	waitFor(t, "the agent's check", 2*time.Minute, func() bool {
+		for _, ev := range e.events(fqdn) {
+			if ev.Kind == "check" && ev.CommandID == checks[0].Command {
+				if ev.Status != "success" {
+					t.Fatalf("a check behind a stale lock: %+v", ev)
+				}
+				return true
+			}
+		}
+		return false
+	})
+	noLocks("the check")
+	if m := metrics(t, e.url+"/metrics"); m[`holdfast_check_last_run_failed{host="stale01.example.com",reason=""}`] != 0 {
+		t.Fatalf("the check passed, so no failed check is exported: %v", m[`holdfast_check_last_run_failed{host="stale01.example.com",reason=""}`])
+	}
+
+	// The server's forget and prune: Prune now, which forgets what --keep-last 1 drops of the two backups.
+	e.staleLock(maint, fqdn)
+	var pre struct {
+		Confirm string `json:"confirm"`
+		Count   int    `json:"count"`
+	}
+	must(t, json.Unmarshal(e.cli("prune-now", fqdn), &pre))
+	if pre.Count == 0 {
+		t.Fatalf("Prune now has nothing to forget: %+v", pre)
+	}
+	start := time.Now()
+	if run := e.run("prune-now", fqdn, "--confirm", pre.Confirm, "-m", "e2e: behind a stale lock"); run.Status != "success" || len(run.Forgotten) != pre.Count || !run.Pruned {
+		t.Fatalf("Prune now behind a stale lock: %+v", run)
+	}
+	if took := time.Since(start); took > 5*time.Minute {
+		t.Fatalf("Prune now waited %s: the server removes stale locks before its first step, without waiting for them", took)
+	}
+	noLocks("Prune now")
+	var audit []auditRow
+	must(t, json.Unmarshal(e.cli("audit", "--host", fqdn), &audit))
+	if !slices.ContainsFunc(audit, func(a auditRow) bool { return a.Action == "repository.stale_locks_removed" }) {
+		t.Fatal("the server's removal of a stale lock must be in the audit log")
 	}
 }

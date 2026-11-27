@@ -495,16 +495,25 @@ func (a *Agent) pgPipe(ctx context.Context, r restic.Runner, sn restic.Snapshot,
 	} else {
 		copied <- false
 	}
-	// pg_restore may finish before the dump does: --list reads only the table of contents. Then nothing reads the pipe
-	// any more, and restic's writes must fail rather than wait.
+	// pg_restore may stop reading before the dump ends: --list reads only the table of contents, and a load that
+	// fails stops at its error. What it leaves is read here and dropped, so restic is never cut off: a restic whose
+	// output is closed dies of SIGPIPE at its next write, with no time to remove its lock, and that lock then blocks
+	// the host's checks and the server's prunes. After a pg_restore or a psql that failed, restic is also stopped
+	// (SIGINT, so it removes its lock). After a pg_restore that finished well, restic reads the dump to its end: a dry
+	// run so reads all of it, and psql commits only once the whole dump was read.
+	dctx, stopDump := context.WithCancel(cctx)
+	defer stopDump()
 	waited := make(chan error, 1)
 	var loadGone bool
 	go func() {
 		loadGone = <-copied
 		err := restore.Wait()
-		_ = pr.CloseWithError(errPGRestoreExited)
+		if err != nil || loadGone {
+			stopDump()
+		}
+		_, readErr := io.Copy(io.Discard, pr) // ends when restic has: restic's error, or none
 		if load != nil {
-			if err == nil {
+			if err == nil && readErr == nil {
 				_ = loadIn.Close() // the end of the SQL: psql commits
 			} else {
 				_ = load.Process.Kill() // no COMMIT: the server rolls the transaction back
@@ -512,7 +521,7 @@ func (a *Agent) pgPipe(ctx context.Context, r restic.Runner, sn restic.Snapshot,
 		}
 		waited <- err
 	}()
-	dumpErr := r.Dump(cctx, sn.ID, "/"+spec.File, pw)
+	dumpErr := r.Dump(dctx, sn.ID, "/"+spec.File, pw)
 	_ = pw.CloseWithError(dumpErr)
 	restoreWaitErr := <-waited
 	var loadWaitErr error
@@ -530,10 +539,10 @@ func (a *Agent) pgPipe(ctx context.Context, r restic.Runner, sn restic.Snapshot,
 		return fmt.Errorf("loading the dump: %s", tail(loadErr, loadWaitErr))
 	case restoreWaitErr != nil:
 		return fmt.Errorf("pg_restore: %s", tail(restoreErr, restoreWaitErr))
+	case dumpErr != nil:
+		return fmt.Errorf("reading the dump from the repository: %v", dumpErr)
 	case loadWaitErr != nil:
 		return fmt.Errorf("loading the dump: %s", tail(loadErr, loadWaitErr))
-	case dumpErr != nil && !o.list:
-		return fmt.Errorf("reading the dump from the repository: %v", dumpErr)
 	}
 	return nil
 }
@@ -554,9 +563,6 @@ func pgCopySQL(dst io.Writer, src io.Reader, serverNum int) error {
 		}
 	}
 }
-
-// errPGRestoreExited is what restic's writes into the pipe get once pg_restore has exited.
-var errPGRestoreExited = errors.New("pg_restore has exited")
 
 // pgSafetyDump backs up the database an in-place restore replaces, as a snapshot of the job tagged pre-restore, and
 // reports it as a pre_restore event. It returns the snapshot's ID.

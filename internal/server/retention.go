@@ -432,8 +432,9 @@ func (s *Server) maintain(ctx context.Context, run *store.MaintenanceRun, pick p
 		return err
 	}
 	defer cleanup()
-	r.RetryLock = maintRetryLock
 	q := s.st.Q()
+	r.RetryLock = maintRetryLock
+	s.unlockStale(ctx, &r, run)
 	if len(ids) > 0 {
 		forgotten, err := s.forget(ctx, r, run.FQDN, ids)
 		run.Forgotten = forgotten
@@ -486,6 +487,33 @@ func (s *Server) maintain(ctx context.Context, run *store.MaintenanceRun, pick p
 	}
 	return q.Audit(ctx, store.AuditEntry{Actor: run.Actor, Source: "system", Action: "repository.pruned", FQDN: run.FQDN,
 		Detail: map[string]any{"run": run.ID, "kind": run.Kind, "freed": rep.Freed, "remaining": rep.Remaining}})
+}
+
+// unlockSkew is how far a host's clock may be off the server's for the server to remove the host's stale locks.
+const unlockSkew = 5 * time.Minute
+
+// unlockStale removes the repository's stale locks before a run's first step, and has restic remove them again when a
+// step finds the repository locked, which then runs once more (restic.Runner.UnlockStale). A lock that a restic left
+// behind when it was killed blocks every forget, check and prune, and an exclusive one the host's backups, until
+// restic unlock removes it: restic never does by itself. restic unlock removes stale locks only: one older than 30
+// minutes, while a running restic renews its own every 5. It reads a lock's time, which the host's clock wrote, so
+// the server leaves the locks alone while the host's clock is more than unlockSkew off its own
+// (HoldfastAgentClockSkew fires at a minute). Each unlock that removed a lock is audited.
+func (s *Server) unlockStale(ctx context.Context, r *restic.Runner, run *store.MaintenanceRun) {
+	q := s.st.Q()
+	if a, err := q.GetAgent(ctx, run.FQDN); err == nil && time.Duration(max(a.ClockOffsetMS, -a.ClockOffsetMS))*time.Millisecond > unlockSkew {
+		s.log.Warn("stale restic locks are left alone: the host's clock is off the server's", "host", run.FQDN, "offset_ms", a.ClockOffsetMS)
+		return
+	}
+	r.UnlockStale = true
+	r.OnUnlock = func(rep string) {
+		s.log.Info("removed stale restic locks", "host", run.FQDN, "restic", rep)
+		_ = q.Audit(ctx, store.AuditEntry{Actor: run.Actor, Source: "system", Action: "repository.stale_locks_removed", FQDN: run.FQDN,
+			Detail: map[string]any{"run": run.ID, "restic": rep}})
+	}
+	if _, err := r.RemoveStaleLocks(ctx); err != nil {
+		s.log.Warn("removing stale restic locks", "host", run.FQDN, "err", err)
+	}
 }
 
 // forget has restic forget exactly these snapshots. Their catalogue rows are marked first, so a refresh in

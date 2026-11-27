@@ -429,6 +429,12 @@ SELECT setval('shop.customer_id_seq', 7000);`)
 	if ev := restore(snap, "--to-database", "--dry-run"); ev.Status != "success" || ev.Detail["dry_run"] != "true" {
 		t.Fatalf("dry run: %+v", ev)
 	}
+	// pg_restore --list reads only the table of contents of this 2 MB dump; restic still reads the dump to its end, and
+	// removes its lock. A restic cut off there died of SIGPIPE at its next write, and its lock stayed behind (found in
+	// the lab: it failed every check and prune).
+	if l := e.locks(name); len(l) != 0 {
+		t.Fatalf("the dry run left locks in the repository: %v", l)
+	}
 	ev := restore(snap, "--to-database", "-m", "e2e: check the dump")
 	newDB := ev.Detail["database"]
 	if ev.Status != "success" || !regexp.MustCompile(`^app-restore-\d{8}-\d{4}$`).MatchString(newDB) || ev.Detail["owner"] != "app" || ev.Detail["tables"] != "2" {
@@ -488,6 +494,23 @@ SELECT setval('shop.customer_id_seq', 7000);`)
 	}
 	if !inPlaceAudited {
 		t.Fatalf("the restore in place, with its reason, must be in the audit log: %+v", e.audit(name))
+	}
+
+	// A load that fails stops restic too, and leaves no lock: psql stops at the first DROP, which a view that the dump
+	// does not hold depends on. It ran in one transaction, so app is as it was.
+	pg.sql(t, "app", "CREATE VIEW public.blocker AS SELECT id FROM orders;")
+	out, err := e.cliErr("restore", name, snap, "--in-place", "--confirm", "app", "-m", "e2e: a load that fails", "--wait")
+	var failed restoreResult
+	_ = json.NewDecoder(bytes.NewReader(out)).Decode(&failed) // the restore's JSON, then the CLI's error
+	if err == nil || failed.Status != "failed" || !strings.Contains(failed.Error, "depend") {
+		t.Fatalf("an in-place restore that psql stops: %v\n%s", err, tail(string(out), 2000))
+	}
+	if n := pg.sql(t, "app", "SELECT count(*) FROM orders"); n != "20000" {
+		t.Fatalf("app has %s orders after a load that failed, not its 20000", n)
+	}
+	pg.sql(t, "app", "DROP VIEW public.blocker;")
+	if l := e.locks(name); len(l) != 0 {
+		t.Fatalf("the load that failed left locks in the repository: %v", l)
 	}
 
 	// A database dropped with its owner role: its dump still restores beside it, owned by the restore user, without the

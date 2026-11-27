@@ -90,6 +90,16 @@ groups:
         annotations:
           summary: "{{ $labels.host }}: restic check has not succeeded for 3 days"
 
+      - alert: HoldfastCheckFailed
+        # The agent's newest repository check failed. Locked: a restic elsewhere held the repository for longer than
+        # the agent waits (retry_lock), and no stale lock was left to remove. Error: restic check found something wrong,
+        # which can mean damage in the repository. The next check runs after the next day's backup; a check that
+        # keeps failing also raises HoldfastMaintenanceStale after 3 days.
+        expr: holdfast_check_last_run_failed == 1
+        labels: {severity: ticket}
+        annotations:
+          summary: '{{ $labels.host }}: {{ if eq $labels.reason "locked" }}its last repository check found the repository locked{{ else }}its last repository check failed, and the repository may be damaged{{ end }} (holdfast agent events {{ $labels.host }})'
+
       - alert: HoldfastSnapshotsDisappeared
         # Snapshots left the repository, and Holdfast did not delete them (decision 032). They can still be
         # recovered from S3's old versions until the bucket's lifecycle rule expires them.

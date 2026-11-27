@@ -966,7 +966,12 @@ func (a *Agent) runner() restic.Runner {
 	if err := a.savePinned(); err != nil {
 		a.log.Warn("restic cannot reach the gateway without the pinned server certificate", "err", err)
 	}
-	return a.gatewayRunner(a.cfg.FQDN, filepath.Join(a.cfg.CredentialsDir, "repo.pass"), a.path("cache"))
+	r := a.gatewayRunner(a.cfg.FQDN, filepath.Join(a.cfg.CredentialsDir, "repo.pass"), a.path("cache"))
+	// A lock that a restic left behind when it was killed blocks this host's checks, and an exclusive one its backups,
+	// until it is removed: restic never removes a stale lock by itself. restic unlock removes stale ones only.
+	r.UnlockStale = true
+	r.OnUnlock = func(rep string) { a.log.Info("removed stale restic locks", "restic", rep) }
+	return r
 }
 
 // gatewayRunner is restic on a repository at the server's gateway: the agent's own certificate says who it is, and

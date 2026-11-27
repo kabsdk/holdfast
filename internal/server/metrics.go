@@ -6,6 +6,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/kabsdk/holdfast/internal/restic"
 )
 
 // handleMetrics exposes Prometheus text format. Ages are left to Prometheus
@@ -141,6 +143,26 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		for _, f := range names {
 			t := last[f]
 			fmt.Fprintf(&b, "holdfast_maintenance_last_success_timestamp_seconds{host=%q,kind=\"check\"} %s\n", f, ts(&t))
+		}
+	}
+	if last, err := q.LastChecks(ctx); err == nil {
+		gauge("holdfast_check_last_run_failed", "1 if the agent's newest repository check failed: reason locked if restic found the repository locked, error otherwise.")
+		names := make([]string, 0, len(last))
+		for f := range last {
+			if !retired[f] {
+				names = append(names, f)
+			}
+		}
+		sort.Strings(names)
+		for _, f := range names {
+			c, failed, reason := last[f], 0, ""
+			if c.Failed {
+				failed, reason = 1, "error"
+				if c.ResticExit == restic.ExitLocked {
+					reason = "locked"
+				}
+			}
+			fmt.Fprintf(&b, "holdfast_check_last_run_failed{host=%q,reason=%q} %d\n", f, reason, failed)
 		}
 	}
 	if runs, err := q.RetentionHealth(ctx); err == nil {

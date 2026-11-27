@@ -45,8 +45,16 @@ func TestLoginAndRoles(t *testing.T) {
 	if nav := textOf(t, ada, "nav.side"); !strings.Contains(nav, "Access") {
 		t.Fatalf("an admin everywhere gets the Access page: %s", nav)
 	}
+	// Nor does it show a call that the browser cuts off as it leaves for the provider: the page asks for /me and
+	// /settings at once, /me sends it to the login, and Firefox fails /settings on the way ("NetworkError when
+	// attempting to fetch resource."). Chrome fails it the same way here.
 	wes := newBrowser(t)
+	cutOffAsTheBrowserLeaves(t, wes, "/api/v1/settings")
+	watchFor(t, wes, "holdfast-e2e-failed-fetch", "failed to fetch")
 	uiLogin(t, wes, "wes")
+	if sawText(t, wes, "holdfast-e2e-failed-fetch") {
+		t.Fatal("the UI showed a call that the browser cut off on its way to the login")
+	}
 	run(t, wes, "the overview", chromedp.WaitVisible(`section.list .hostrow`, chromedp.ByQuery))
 	if fleet := textOf(t, wes, "section.list"); !strings.Contains(fleet, web) || strings.Contains(fleet, db) {
 		t.Fatalf("wes must see web01 only:\n%s", fleet)

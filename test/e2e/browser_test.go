@@ -10,9 +10,13 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/chromedp/cdproto/fetch"
+	"github.com/chromedp/cdproto/network"
 	cdppage "github.com/chromedp/cdproto/page"
 	"github.com/chromedp/chromedp"
 )
@@ -83,6 +87,42 @@ func watchFor(t *testing.T, ctx context.Context, key, needle string) {
 		_, err := cdppage.AddScriptToEvaluateOnNewDocument(js).Do(c)
 		return err
 	}))
+}
+
+// cutOffAsTheBrowserLeaves fails the page's first call to path as a browser fails a call still under way when it leaves
+// the page: the call is held until the page sends the browser to the login, then fails (net::ERR_FAILED, which fetch
+// reports as "Failed to fetch") while the page still shows, half a second before the browser goes on. Firefox does
+// that to the page's other calls on its way to the login, and says "NetworkError when attempting to fetch resource.".
+func cutOffAsTheBrowserLeaves(t *testing.T, ctx context.Context, path string) {
+	t.Helper()
+	held := make(chan fetch.RequestID, 1)
+	var first atomic.Bool
+	var cut sync.Once
+	chromedp.ListenTarget(ctx, func(ev any) {
+		p, ok := ev.(*fetch.EventRequestPaused)
+		if !ok {
+			return
+		}
+		go func() {
+			if strings.HasPrefix(p.Request.URL, uiURL+path) && first.CompareAndSwap(false, true) {
+				held <- p.RequestID
+				return
+			}
+			if strings.HasPrefix(p.Request.URL, uiURL+"/auth/login") {
+				cut.Do(func() {
+					select {
+					case id := <-held:
+						_ = chromedp.Run(ctx, fetch.FailRequest(id, network.ErrorReasonFailed))
+						time.Sleep(500 * time.Millisecond) // an error the page shows for it shows now
+					case <-time.After(10 * time.Second):
+					}
+				})
+			}
+			_ = chromedp.Run(ctx, fetch.ContinueRequest(p.RequestID))
+		}()
+	})
+	run(t, ctx, "hold "+path+" until the browser leaves for the login", fetch.Enable().WithPatterns([]*fetch.RequestPattern{
+		{URLPattern: uiURL + path + "*"}, {URLPattern: uiURL + "/auth/login*"}}))
 }
 
 // sawText says whether a page of the current origin noted its text under key (watchFor).

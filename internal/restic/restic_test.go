@@ -3,6 +3,7 @@ package restic
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -175,5 +176,75 @@ func TestVersionAndUnlock(t *testing.T) {
 	}
 	if got := read(t, log); !strings.Contains(got, "ARGS unlock") || strings.Contains(got, "remove-all") {
 		t.Fatalf("unlock must only remove stale locks: %s", got)
+	}
+}
+
+// TestStaleLocks: with UnlockStale, a command that finds the repository locked runs restic unlock (stale locks only),
+// and once more if that removed one; a live lock leaves it failed after one unlock; a restic killed by a signal gets
+// its lock removed, and is not run again. Without UnlockStale nothing of that happens.
+func TestStaleLocks(t *testing.T) {
+	ctx := context.Background()
+	// The fake fails its first check with exit 11, and passes the next; unlock says what $UNLOCKED says.
+	body := `state="$(dirname "$0")/state"
+case "$*" in
+  *unlock*) [ -n "$UNLOCKED" ] && echo "$UNLOCKED"; exit 0 ;;
+  *check*) if [ -e "$state" ]; then exit 0; fi; touch "$state"; echo "unable to create lock in backend: repository is already locked" >&2; exit 11 ;;
+  *dump*) kill -9 $$ ;;
+esac
+`
+	args := func(log string) []string {
+		var out []string
+		for _, l := range strings.Split(read(t, log), "\n") {
+			if a, ok := strings.CutPrefix(l, "ARGS "); ok {
+				out = append(out, strings.Fields(a)[0])
+			}
+		}
+		return out
+	}
+
+	t.Setenv("UNLOCKED", "successfully removed 1 locks")
+	bin, log := fake(t, body)
+	var reports []string
+	r := Runner{Bin: bin, UnlockStale: true, OnUnlock: func(rep string) { reports = append(reports, rep) }}
+	if err := r.Check(ctx, ""); err != nil {
+		t.Fatalf("a check after a stale lock was removed: %v", err)
+	}
+	if got := strings.Join(args(log), " "); got != "check unlock check" {
+		t.Fatalf("runs: %s", got)
+	}
+	if len(reports) != 1 || reports[0] != "successfully removed 1 locks" {
+		t.Fatalf("OnUnlock got %q", reports)
+	}
+
+	// A live lock: unlock removes nothing, and the check fails once, as before.
+	t.Setenv("UNLOCKED", "")
+	bin, log = fake(t, body)
+	r = Runner{Bin: bin, UnlockStale: true}
+	if err := r.Check(ctx, ""); ExitCode(err) != ExitLocked {
+		t.Fatalf("a check behind a live lock: %v", err)
+	}
+	if got := strings.Join(args(log), " "); got != "check unlock" {
+		t.Fatalf("runs behind a live lock: %s", got)
+	}
+
+	// Without UnlockStale: no unlock.
+	bin, log = fake(t, body)
+	if err := (Runner{Bin: bin}).Check(ctx, ""); ExitCode(err) != ExitLocked {
+		t.Fatalf("a locked check: %v", err)
+	}
+	if got := strings.Join(args(log), " "); got != "check" {
+		t.Fatalf("runs without UnlockStale: %s", got)
+	}
+
+	// A restic killed by a signal: its stale lock is removed, and the command is not run again.
+	t.Setenv("UNLOCKED", "successfully removed 1 locks")
+	bin, log = fake(t, body)
+	r = Runner{Bin: bin, UnlockStale: true}
+	var re *Error
+	if err := r.Dump(ctx, "abc", "/x", io.Discard); !errors.As(err, &re) || !re.Killed {
+		t.Fatalf("a killed dump: %v", err)
+	}
+	if got := strings.Join(args(log), " "); got != "dump unlock" {
+		t.Fatalf("runs after a killed dump: %s", got)
 	}
 }
