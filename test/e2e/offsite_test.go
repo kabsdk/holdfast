@@ -171,7 +171,8 @@ func TestOffsite(t *testing.T) {
 	if !slices.ContainsFunc(pend.Pending, func(p struct{ ID, Reason string }) bool { return p.ID == s3 && p.Reason == "offsite_copy" }) {
 		t.Fatalf("the snapshot not copied yet must wait: %+v", pend)
 	}
-	e.cli("retention", "run", fqdn)
+	// --wait: the run goes on to check and prune after its forget, and a Delete now meanwhile is refused (conflict).
+	e.run("retention", "run", fqdn)
 	waitFor(t, "the daily run to forget what was copied", 2*time.Minute, func() bool {
 		return slices.Equal(presentIDs(e.snaps(fqdn, "--refresh")), sortedIDs(s3, s4))
 	})
@@ -183,7 +184,7 @@ func TestOffsite(t *testing.T) {
 		return ok3 && ok4
 	})
 	waitFor(t, "nothing left to copy", time.Minute, func() bool { o := e.offsiteOf(fqdn); return o != nil && o.Pending == 0 })
-	e.cli("retention", "run", fqdn)
+	e.run("retention", "run", fqdn)
 	waitFor(t, "the held snapshot to go", 2*time.Minute, func() bool { return slices.Equal(presentIDs(e.snaps(fqdn, "--refresh")), []string{s4}) })
 	if got := presentIDs(e.snaps(fqdn, "--offsite", "--refresh")); len(got) != 4 {
 		t.Fatalf("off-site keeps its copies under its own retention, which has not run: %v", got)
