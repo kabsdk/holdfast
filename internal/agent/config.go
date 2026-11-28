@@ -29,6 +29,10 @@ type Config struct {
 	PollTimeout    time.Duration `yaml:"poll_timeout"`
 	Tick           time.Duration `yaml:"tick"`       // scheduler resolution
 	RetryLock      time.Duration `yaml:"retry_lock"` // how long a backup waits for maintenance's lock
+	// CheckRetryAfter is how long after a repository check that did not pass its first retry waits; each further
+	// retry waits twice as long (decision 060). Unset: an hour. Enroll does not write it, so an older agent, which
+	// reads agent.yaml strictly, still loads the file.
+	CheckRetryAfter time.Duration `yaml:"check_retry_after,omitempty"`
 	// Restore bounds what a restore may do on this host (decision 030). Only root here can
 	// change them: the server cannot.
 	Restore proto.RestoreBounds `yaml:"restore"`

@@ -257,3 +257,75 @@ func TestStaleLocksClearThemselves(t *testing.T) {
 		t.Fatal("the server's removal of a stale lock must be in the audit log")
 	}
 }
+
+// TestCheckRetriedAfterALiveLock: the daily check meets a lock that is still held, here a backup frozen with its lock
+// in the bucket as a restic running elsewhere holds one, and fails as locked; HoldfastCheckFailed's metric says so.
+// Once the lock is gone, the retry after the next backup, check_retry_after later, reads the same part of the data,
+// passes, and clears the metric, with no operator (decision 060).
+func TestCheckRetriedAfterALiveLock(t *testing.T) {
+	e := newEnvWith(t, envOpts{DailyChecks: true})
+	const fqdn = "retry01.example.com"
+	src := smallSource(t)
+	a := e.enrollAgent(fqdn, e.addHost(fqdn, "data", "--path", src, "--every", "1m"))
+	cfg, err := agent.LoadConfig(a.cfgPath)
+	must(t, err)
+	cfg.RetryLock = 2 * time.Second        // a check waits 15 minutes for a lock by default
+	cfg.CheckRetryAfter = 20 * time.Second // and its retry an hour
+	must(t, agent.WriteConfig(a.cfgPath, cfg))
+
+	// The held lock: a backup's, which the agent's backups share and its check cannot.
+	more := filepath.Join(t.TempDir(), "more")
+	must(t, os.MkdirAll(more, 0o755))
+	must(t, os.WriteFile(filepath.Join(more, "f"), []byte("held"), 0o644))
+	holder := resticCmd(e.resticAsAgent(a, e.escrow()[fqdn]), "backup", "--host", fqdn, "--tag", "job=data", "--", more)
+	must(t, holder.Start())
+	waitFor(t, "the holder's lock in the bucket", time.Minute, func() bool { return len(e.locks(fqdn)) > 0 })
+	must(t, holder.Process.Signal(syscall.SIGSTOP))
+	t.Cleanup(func() { _ = holder.Process.Signal(syscall.SIGCONT); _ = holder.Process.Kill(); _ = holder.Wait() })
+
+	e.runAgent(a)
+	checks := func() []event {
+		var out []event
+		for _, ev := range e.events(fqdn) {
+			if ev.Kind == "check" {
+				out = append(out, ev)
+			}
+		}
+		return out
+	}
+	waitFor(t, "the daily check", 3*time.Minute, func() bool { return len(checks()) > 0 })
+	failed := checks()[0]
+	if failed.Status != "failed" || failed.Detail["reason"] != "locked" || failed.Detail["next_is_retry"] != "true" || failed.Detail["next_check"] == "" {
+		t.Fatalf("a check behind a held lock must fail as locked, with a retry to come: %+v", failed)
+	}
+	failedMetric := `holdfast_check_last_run_failed{host="` + fqdn + `",reason="locked"}`
+	if m := metrics(t, e.url+"/metrics"); m[failedMetric] != 1 {
+		t.Fatalf("%s = %v, want 1", failedMetric, m[failedMetric])
+	}
+
+	// The holder stops as restic does on Ctrl-C, and removes its lock.
+	must(t, holder.Process.Signal(os.Interrupt))
+	must(t, holder.Process.Signal(syscall.SIGCONT))
+	_ = holder.Wait()
+	waitFor(t, "the holder's lock to go", time.Minute, func() bool { return len(e.locks(fqdn)) == 0 })
+
+	var retry event
+	waitFor(t, "the retry after the next backup", 3*time.Minute, func() bool {
+		retry = checks()[0]
+		return retry.Detail["retry"] != ""
+	})
+	if retry.Status != "success" || retry.Detail["retry"] != "1" || retry.Detail["read_data_subset"] != failed.Detail["read_data_subset"] ||
+		retry.Detail["retry_of"] == "" {
+		t.Fatalf("the retry must read the part that failed, and pass: %+v (the failed check: %+v)", retry, failed)
+	}
+	if took := retry.Started.Sub(failed.Finished); took < cfg.CheckRetryAfter {
+		t.Fatalf("the retry started %s after the failure, before check_retry_after (%s)", took, cfg.CheckRetryAfter)
+	}
+	m := metrics(t, e.url+"/metrics")
+	if v, ok := m[`holdfast_check_last_run_failed{host="`+fqdn+`",reason=""}`]; !ok || v != 0 {
+		t.Fatalf("the retry passed, so no failed check is exported: %v", m)
+	}
+	if m[failedMetric] != 0 {
+		t.Fatalf("%s is still exported after the retry passed", failedMetric)
+	}
+}

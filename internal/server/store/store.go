@@ -1109,16 +1109,28 @@ func (q *Q) LastCheckSuccess(ctx context.Context) (map[string]time.Time, error) 
 	return q.timesByHost(ctx, `SELECT fqdn, max(finished_at) FROM events WHERE kind = 'check' AND status = 'success' GROUP BY fqdn`)
 }
 
-// LastCheck is a host's newest repository check: whether it failed, and restic's exit code.
+// LastCheck is a host's newest repository check that ended: whether it failed, restic's exit code, and whether any
+// check since the last one that passed failed for another reason than a lock (decision 060).
 type LastCheck struct {
 	Failed     bool
 	ResticExit int
+	Errored    bool
 }
 
-// LastChecks returns, per host, its agent's newest repository check (decision 030).
+// resticExitLocked is restic's exit code for a repository it found locked (restic.ExitLocked).
+const resticExitLocked = 11
+
+// LastChecks returns, per host, its agent's newest repository check that ended, passed or failed (decision 030). A
+// check stopped with the agent (interrupted) says nothing of the repository, so it neither raises nor clears a
+// failure. Errored keeps a failure that may be damage from turning into a lock when its retry meets one (decision 060).
 func (q *Q) LastChecks(ctx context.Context) (map[string]LastCheck, error) {
-	rows, err := q.db.Query(ctx, `SELECT DISTINCT ON (fqdn) fqdn, status, restic_exit FROM events WHERE kind = 'check'
-		ORDER BY fqdn, finished_at DESC`)
+	rows, err := q.db.Query(ctx, `WITH newest AS (
+			SELECT DISTINCT ON (fqdn) fqdn, status, restic_exit FROM events
+			WHERE kind = 'check' AND status IN ('success', 'failed') ORDER BY fqdn, finished_at DESC),
+		passed AS (SELECT fqdn, max(finished_at) AS at FROM events WHERE kind = 'check' AND status = 'success' GROUP BY fqdn)
+		SELECT n.fqdn, n.status, n.restic_exit, EXISTS (SELECT 1 FROM events f WHERE f.fqdn = n.fqdn AND f.kind = 'check'
+			AND f.status = 'failed' AND f.restic_exit <> $1 AND f.finished_at > COALESCE(p.at, '-infinity'))
+		FROM newest n LEFT JOIN passed p ON p.fqdn = n.fqdn`, resticExitLocked)
 	if err != nil {
 		return nil, err
 	}
@@ -1127,10 +1139,11 @@ func (q *Q) LastChecks(ctx context.Context) (map[string]LastCheck, error) {
 	for rows.Next() {
 		var f, status string
 		var exit int
-		if err := rows.Scan(&f, &status, &exit); err != nil {
+		var errored bool
+		if err := rows.Scan(&f, &status, &exit, &errored); err != nil {
 			return nil, err
 		}
-		out[f] = LastCheck{Failed: status == "failed", ResticExit: exit}
+		out[f] = LastCheck{Failed: status == "failed", ResticExit: exit, Errored: errored}
 	}
 	return out, rows.Err()
 }

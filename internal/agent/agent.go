@@ -79,7 +79,7 @@ type Agent struct {
 	toAck     []string
 	done      map[string]time.Time // command IDs already run, so a re-sent command runs once
 	running   *proto.Running
-	lastCheck time.Time // when the last repository check started
+	check     checkState // check.json: when the daily check last started, and what a check that did not pass left
 	factsOnce sync.Once
 	base      proto.Facts // facts that do not change while the agent runs
 
@@ -148,11 +148,9 @@ func (a *Agent) load() {
 		_ = json.Unmarshal(b, &a.done)
 	}
 	if b, err := os.ReadFile(a.path("check.json")); err == nil {
-		var c struct {
-			Last time.Time `json:"last"`
-		}
+		var c checkState // an older agent's file has last only: nothing is pending
 		if json.Unmarshal(b, &c) == nil {
-			a.lastCheck = c.Last
+			a.check = c
 		}
 	}
 	if b, err := os.ReadFile(a.path("paused.json")); err == nil {
@@ -887,7 +885,7 @@ func (a *Agent) execCommand(ctx context.Context, c proto.Command) {
 		}
 		a.runBackup(ctx, *job, c.ID, nil, 0, 0)
 	case proto.CommandCheckNow:
-		a.runCheck(ctx, c.ID)
+		a.runCheck(ctx, c.ID, false)
 	case proto.CommandPGTest:
 		a.runPGTest(ctx, c)
 	case proto.CommandRestore:
@@ -1123,17 +1121,122 @@ func (a *Agent) recoverInterrupted(ctx context.Context) {
 
 /* ---------------- the repository check (decision 030) ---------------- */
 
-// checkIfDue runs the daily repository check after a backup that succeeded, at most once in 23 hours.
-// It runs in the agent's one-restic-at-a-time loop. restic check takes an exclusive lock, but here it can
-// never meet this host's own backups.
+// checkState is check.json (decision 060): when the daily check last started, and what a check that did not pass
+// left to do. Last moves only when a daily check starts, so a retry or a check on request never pushes the next daily
+// check out.
+type checkState struct {
+	Last     time.Time `json:"last"`               // when the daily check last started: the next is due 23 hours later
+	Part     string    `json:"part,omitempty"`     // the part of the data the next check reads, n/m; empty: the date's
+	Failed   string    `json:"failed,omitempty"`   // why the newest check did not pass (checkReason); empty: it passed
+	FailedAt time.Time `json:"failed_at,omitzero"` // when it ended
+	Retries  int       `json:"retries,omitempty"`  // retries started since the last daily check
+	RetryAt  time.Time `json:"retry_at,omitzero"`  // a retry runs after the first backup at or after it; zero: none is due
+}
+
+// part is the part of the data the next check reads, n/cycle: the one that has not passed yet, or the date's when there
+// is none, or when the cycle changed under it (restic refuses 25/10).
+func (c checkState) part(now time.Time, cycle int) string {
+	var n, m int
+	if _, err := fmt.Sscanf(c.Part, "%d/%d", &n, &m); err == nil && m == cycle && n >= 1 && n <= m {
+		return c.Part
+	}
+	return fmt.Sprintf("%d/%d", now.YearDay()%cycle+1, cycle)
+}
+
+// nextPart is the part after n/m, which the next check reads once n/m has passed.
+func nextPart(p string) string {
+	var n, m int
+	if _, err := fmt.Sscanf(p, "%d/%d", &n, &m); err != nil || m < 1 {
+		return ""
+	}
+	return fmt.Sprintf("%d/%d", n%m+1, m)
+}
+
+// checkRetries is how many retries a check that did not pass gets, by why (decision 060). A lock that is still held
+// goes away by itself, and a retry reads no data until it does. An error, or a check stopped with the agent, is tried
+// once more, on the same part of the data: damage fails again and keeps alerting. A check that ran out of time or was
+// killed would only cost as much again.
+func checkRetries(reason string) int {
+	switch reason {
+	case "locked":
+		return 3
+	case "damaged", "error", "interrupted":
+		return 1
+	}
+	return 0
+}
+
+// checkReason says why a check did not pass: locked (restic exit 11, a lock that is still held), killed (by a signal,
+// such as the OOM killer), damaged (restic found errors in the repository), or error (anything else, such as the
+// network).
+func checkReason(err error) string {
+	var re *restic.Error
+	switch {
+	case restic.ExitCode(err) == restic.ExitLocked:
+		return "locked"
+	case errors.As(err, &re) && re.Killed:
+		return "killed"
+	case strings.Contains(err.Error(), "repository contains errors"):
+		return "damaged"
+	}
+	return "error"
+}
+
+// retryAt is when the next retry of a check that did not pass is due, or zero when it gets none: an hour after it
+// ended (check_retry_after), then two, then four.
+func (a *Agent) retryAt(c checkState, reason string, end time.Time) time.Time {
+	if c.Retries >= checkRetries(reason) {
+		return time.Time{}
+	}
+	wait := a.cfg.CheckRetryAfter
+	if wait <= 0 {
+		wait = time.Hour
+	}
+	return end.Add(wait << c.Retries)
+}
+
+// slotFrom is the first scheduled backup at or after t, after which a check due at t runs; zero without one.
+func (a *Agent) slotFrom(t time.Time) time.Time {
+	var first time.Time
+	if a.hc == nil {
+		return first
+	}
+	for _, j := range a.hc.Jobs {
+		loc, err := j.Schedule.Location(time.Local)
+		if err != nil {
+			loc = time.Local
+		}
+		if s, ok := j.Schedule.Next(t.Add(-time.Nanosecond), loc); ok && (first.IsZero() || s.Before(first)) {
+			first = s
+		}
+	}
+	return first
+}
+
+func (a *Agent) saveCheck(c checkState) {
+	b, _ := json.Marshal(c)
+	if err := writeFileAtomic(a.path("check.json"), b, 0o600); err != nil {
+		a.log.Error("writing check.json", "err", err)
+	}
+}
+
+// checkIfDue runs a repository check after a backup that succeeded: the daily one, at most once in 23 hours, or the
+// retry of one that did not pass, once it is due (decision 060). It runs in the agent's one-restic-at-a-time loop.
+// restic check takes an exclusive lock, but here it can never meet this host's own backups.
 func (a *Agent) checkIfDue(ctx context.Context, st *jobState) {
 	a.mu.Lock()
 	on := a.hc != nil && a.hc.Check != nil && a.hc.Check.CycleDays > 0
 	ok := st != nil && (st.LastStatus == proto.StatusSuccess || st.LastStatus == proto.StatusWarning)
-	last := a.lastCheck
+	c := a.check
 	a.mu.Unlock()
-	if on && ok && a.now().Sub(last) >= 23*time.Hour {
-		a.runCheck(ctx, "")
+	if !on || !ok {
+		return
+	}
+	switch now := a.now(); {
+	case now.Sub(c.Last) >= 23*time.Hour:
+		a.runCheck(ctx, "", false)
+	case !c.RetryAt.IsZero() && !now.Before(c.RetryAt):
+		a.runCheck(ctx, "", true)
 	}
 }
 
@@ -1149,25 +1252,42 @@ func (a *Agent) checkTimeout() time.Duration {
 	return t
 }
 
-// runCheck runs restic check --read-data-subset n/cycle, with n turning daily, and reports it. A check
-// that fails is reported as failed: the repository may be damaged. It returns false on shutdown.
-func (a *Agent) runCheck(ctx context.Context, commandID string) bool {
+// runCheck runs restic check --read-data-subset n/cycle and reports it: the daily check (commandID empty, retry
+// false), the retry of one that did not pass, or a check on request. Every check reads the part of the data that has
+// not passed yet, and only a check that passes moves on to the next part, so a damaged part keeps failing until it is
+// repaired (decision 060). A check that fails is reported as failed: the repository may be damaged. It returns false
+// on shutdown.
+func (a *Agent) runCheck(ctx context.Context, commandID string, retry bool) bool {
 	a.verifyCredentials()
 	started := a.now().UTC()
 	a.mu.Lock()
 	cycle := 30 // a check on request reads a subset too, even with daily checks off
-	if a.hc != nil && a.hc.Check != nil && a.hc.Check.CycleDays > 0 {
+	daily := a.hc != nil && a.hc.Check != nil && a.hc.Check.CycleDays > 0
+	if daily {
 		cycle = a.hc.Check.CycleDays
 	}
 	r, rev, timeout := a.runner(), a.revision(), a.checkTimeout()
-	a.lastCheck = started
+	c := a.check
+	subset, retryOf := c.part(started, cycle), c.FailedAt
+	switch {
+	case retry:
+		c.Retries++
+	case commandID == "":
+		c.Last, c.Retries = started, 0 // the daily check: the next is due 23 hours from now, with retries of its own
+	}
+	// Written before restic starts, as if the agent were stopped during the check: after a restart it neither checks
+	// again at once nor forgets that a check is due, and a retry keeps the retries its failure has left.
+	pending := c.Failed
+	if pending == "" {
+		pending = "interrupted"
+	}
+	c.RetryAt = a.retryAt(c, pending, started)
+	a.check = c
 	a.running = &proto.Running{Kind: proto.KindCheck, Since: started}
-	b, _ := json.Marshal(map[string]time.Time{"last": started})
 	a.mu.Unlock()
-	_ = writeFileAtomic(a.path("check.json"), b, 0o600)
+	a.saveCheck(c)
 	a.mark(runMarker{Kind: proto.KindCheck, CommandID: commandID, Started: started, Revision: rev})
 
-	subset := fmt.Sprintf("%d/%d", started.YearDay()%cycle+1, cycle)
 	rctx, cancel := context.WithTimeout(ctx, timeout)
 	err := r.Check(rctx, subset)
 	timedOut := errors.Is(rctx.Err(), context.DeadlineExceeded)
@@ -1175,20 +1295,45 @@ func (a *Agent) runCheck(ctx context.Context, commandID string) bool {
 	if ctx.Err() != nil {
 		return false
 	}
-	// The part of the data it read: n of cycle, a different one each day, so all of it is read once per cycle.
 	ev := proto.Event{Kind: proto.KindCheck, CommandID: commandID, Status: proto.StatusSuccess, Started: started, Finished: a.now().UTC(), Revision: rev,
 		Detail: map[string]string{"read_data_subset": subset}}
+	if retry {
+		ev.Detail["retry"] = fmt.Sprint(c.Retries)
+		if !retryOf.IsZero() {
+			ev.Detail["retry_of"] = retryOf.UTC().Format(time.RFC3339)
+		}
+	}
+	reason := ""
 	switch {
 	case timedOut:
+		reason = "timeout"
 		ev.Status, ev.ResticExit = proto.StatusFailed, restic.ExitCode(err)
 		ev.Error = fmt.Sprintf("the check of subset %s ran for %s and was stopped", subset, timeout)
 		a.unlockStale(ctx)
 	case err != nil:
+		reason = checkReason(err)
 		ev.Status, ev.ResticExit, ev.Error = proto.StatusFailed, restic.ExitCode(err), "check of subset "+subset+": "+err.Error()
 	}
 	a.mu.Lock()
+	if reason == "" {
+		c.Part, c.Failed, c.FailedAt, c.Retries, c.RetryAt = nextPart(subset), "", time.Time{}, 0, time.Time{}
+	} else {
+		c.Part, c.Failed, c.FailedAt = subset, reason, ev.Finished
+		c.RetryAt = a.retryAt(c, reason, ev.Finished)
+		// What comes next, for the agent's recent runs: a retry, or the next daily check, after the first backup due.
+		next, isRetry := c.RetryAt, true
+		if next.IsZero() && daily {
+			next, isRetry = c.Last.Add(23*time.Hour), false
+		}
+		ev.Detail["reason"] = reason
+		if s := a.slotFrom(next); !next.IsZero() && !s.IsZero() {
+			ev.Detail["next_check"], ev.Detail["next_is_retry"] = s.UTC().Format(time.RFC3339), fmt.Sprint(isRetry)
+		}
+	}
+	a.check = c
 	a.running = nil
 	a.mu.Unlock()
+	a.saveCheck(c)
 	a.spool(ev)
 	_ = os.Remove(a.path("running.json"))
 	return true

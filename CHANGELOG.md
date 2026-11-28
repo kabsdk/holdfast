@@ -50,6 +50,14 @@ replaces it under the same name and tag, `v0.1-dev`, and installs as an upgrade 
   always with a reason, in primary, off-site or both; Prune now; rolling a repository back from S3 versions, picking
   what was deleted or overwritten to bring back, while the gateway holds the agent's writes; restoring onto another
   host.
+- **A check that did not pass is retried** (decision 060), after the first backup at least an hour later
+  (`check_retry_after`), on the same part of the data: a lock still held up to 3 times, 1, 2 and 4 hours apart, an
+  error once, a timeout or a killed restic not at all. A retry does not move the daily check. Every check reads the
+  part that has not passed, so a damaged part keeps `HoldfastCheckFailed` up until it is repaired, and only a pass
+  moves on. A failed check says in a few words what it found and what comes next, "locked by another restic · retry
+  after the 13:30 backup", with restic's own output in the tooltip and in `--json`, and a retry shows under By, in the
+  UI and in `holdfast agent events`, which gains a BY column. `holdfast_check_last_run_failed` ignores a check stopped
+  with the agent, and stays `error` while any check since the last pass found an error.
 - **Stale restic locks clear themselves** (decision 059). When restic finds a repository locked, the agent or the
   server runs `restic unlock`, which removes stale locks only, and tries once more; the server's daily run removes
   them before it starts, and audits it. A dry run of a PostgreSQL dump reads the whole dump, so restic is no longer cut

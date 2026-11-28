@@ -9,6 +9,7 @@ restic_bin: /usr/libexec/holdfast/restic
 poll_timeout: 25s
 tick: 1s
 retry_lock: 15m
+# check_retry_after: 1h   # a repository check that did not pass is retried after a backup this long after it, then 2x, 4x
 
 # What a restore may do here (spec §5.4). By default only into new directories under root.
 restore:

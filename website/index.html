@@ -412,7 +412,7 @@ figure.shot img { display: block; width: 100%; height: auto; border: 1px solid v
       <li><strong>If the server is down</strong> at a backup's time, the backup fails, as it goes through the gateway. While one of its retries is still to come, about an hour, the retry runs as soon as the server answers again. After a longer outage the job runs at its next slot, or sooner with <strong>Back up now</strong>.</li>
       <li><strong>A backup or check that runs too long</strong> is stopped at the schedule's longest gap (at least an hour) and reported as failed, so the host's other jobs can run. A first backup too big for one gap finishes over several runs: restic saves its index as it goes, so what a stopped run uploaded is not sent again.</li>
       <li><strong>One restic at a time per host.</strong> Backups, checks and restores queue on the host. A backup that meets the daily clean-up's lock on its repository waits up to 15 minutes (<code>retry_lock</code>), then fails and is retried like any failed run.</li>
-      <li><strong>Each agent checks its own repository</strong> once a day, right after a backup, reading a rotating 1/30 of the data, so all of it is read once a month. The agent's recent runs say which part each check read.</li>
+      <li><strong>Each agent checks its own repository</strong> once a day, right after a backup, reading a rotating 1/30 of the data, so all of it is read once a month. The agent's recent runs say which part each check read. A check that did not pass is retried after a backup at least an hour later, on the same part of the data: a lock still held up to 3 times, an error once. A damaged part is read again by every check until it passes, so its alert stays up; one that passes clears it.</li>
     </ul>
   </div>
 
@@ -1663,7 +1663,7 @@ holdfast whoami                         <span class="c"># who you are and what y
       <thead><tr><th>What</th><th>When</th><th>Where to see it</th></tr></thead>
       <tbody>
         <tr><td>Backups</td><td>On each job's schedule; failed ones retried after 5, 15 and 45 minutes.</td><td><code>holdfast agent events</code></td></tr>
-        <tr><td>Repository check</td><td>Each agent, once a day after a backup, reading 1/30 of the data.</td><td><code>HoldfastCheckFailed</code>; <code>HoldfastMaintenanceStale</code></td></tr>
+        <tr><td>Repository check</td><td>Each agent, once a day after a backup, reading 1/30 of the data. One that did not pass is retried after a later backup, on the same part.</td><td><code>HoldfastCheckFailed</code>; <code>HoldfastMaintenanceStale</code></td></tr>
         <tr><td>Forget, check and prune</td><td>Once a day per host, in the middle of its longest quiet stretch.</td><td><code>holdfast prunes</code></td></tr>
         <tr><td>Storage contract test</td><td>Once a day per host.</td><td><code>holdfast agent show</code></td></tr>
         <tr><td>Repository size</td><td>Once a day per host, with the old versions S3 keeps.</td><td>The host's page; <code>holdfast_repository_bytes</code></td></tr>
@@ -2038,6 +2038,7 @@ systemctl restart holdfast-server</code></pre></div>
         <tr><td>server, ca_sha256</td><td>Written at enrollment.</td></tr>
         <tr><td>state_dir, credentials_dir, restic_bin</td><td>Defaults <code>/var/lib/holdfast-agent</code>, <code>/etc/holdfast/credentials</code>, <code>/usr/libexec/holdfast/restic</code>.</td></tr>
         <tr><td>poll_timeout, tick, retry_lock</td><td>The long poll (25s), the scheduler's resolution (1s), how long a backup waits for the clean-up's lock (15m).</td></tr>
+        <tr><td>check_retry_after</td><td>How long after a repository check that did not pass its first retry waits (1h); each further retry waits twice as long.</td></tr>
         <tr><td>restore.root</td><td>Where new restore folders go. Default <code>/var/restore</code>.</td></tr>
         <tr><td>restore.allow_in_place, .allow_other_directories, .allow_other_hosts</td><td>What restores may do on this host. All false by default.</td></tr>
         <tr><td>postgresql.bin_dir</td><td>The directory with <code>pg_dump</code>, <code>pg_dumpall</code>, <code>pg_restore</code> and <code>psql</code>. Without it the agent takes no PostgreSQL job.</td></tr>

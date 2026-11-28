@@ -108,6 +108,19 @@ unprivileged user (decision 055)
     raises `HoldfastCheckFailed` at once, which says whether restic found the repository locked or found an error
     (`holdfast_check_last_run_failed`, decision 059); `HoldfastMaintenanceStale` fires after 3 days without one that
     passed.
+  - A check that did not pass is retried after the first backup that succeeds at least an hour later
+    (`check_retry_after` in `agent.yaml`, decision 060): a lock that is still held up to 3 times, 1, 2 and 4 hours
+    apart; an error, or a check stopped with the agent, once; one that ran out of time or was killed not at all. A
+    retry does not move the daily check. Every check, retry, daily or on request, reads the part of the data that has
+    not passed, and only a pass moves on to the next part, so a damaged part keeps failing until it is repaired; a
+    part is dropped when `check_cycle_days` changes. The agent keeps this in `check.json`, written before each check
+    starts.
+  - A check that did not pass says why, `reason` (`locked`, `damaged`, `error`, `timeout`, `killed`), and what comes
+    next, `next_check` (the backup it waits for) and `next_is_retry`; a retry says `retry` and `retry_of`. The agent's
+    recent runs and `holdfast agent events` say it in a few words, such as "locked by another restic · retry after the
+    13:30 backup", with restic's own output in the tooltip and in `--json`, and a retry under By.
+  - `holdfast_check_last_run_failed` reads the newest check that ended: one stopped with the agent neither raises nor
+    clears it, and its reason stays `error` while any check since the last pass failed for another reason than a lock.
   - The server tests each host's storage contract once a day. It checks a repository itself only before
     it prunes it.
   - A backup or a check that runs past its timeout is stopped and reported as failed, so the host's other
@@ -540,8 +553,9 @@ off-site one through `s3:` with the off-site key, so restic needs only that key.
 with `init --copy-chunker-params`, so copies deduplicate. A copy keeps its host name, tags and time, and names its
 source snapshot (`original`). Each copy is a run in the host's off-site history, so it counts as made by Holdfast. A
 copy that the off-site retention or Delete here too removed is not made again. Once a day, after a copy, the
-off-site repository is checked as an agent checks its own (1/`check_cycle_days` of the data), and its daily run
-forgets and prunes behind the 7-day protection.
+off-site repository is checked, reading 1/`check_cycle_days` of the data, the date's part; unlike an agent's check, it
+is not retried and does not read a failed part again (decision 060). Its daily run forgets and prunes behind the 7-day
+protection.
 
 **Deleting.** Off-site copies are forgotten only by their own retention, after the 7-day protection, or by an
 admin's Prune now or Delete now there. Deleting a snapshot in primary never deletes its copy: the copy is marked

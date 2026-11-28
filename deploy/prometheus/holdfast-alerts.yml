@@ -91,10 +91,12 @@ groups:
           summary: "{{ $labels.host }}: restic check has not succeeded for 3 days"
 
       - alert: HoldfastCheckFailed
-        # The agent's newest repository check failed. Locked: a restic elsewhere held the repository for longer than
-        # the agent waits (retry_lock), and no stale lock was left to remove. Error: restic check found something wrong,
-        # which can mean damage in the repository. The next check runs after the next day's backup; a check that
-        # keeps failing also raises HoldfastMaintenanceStale after 3 days.
+        # The agent's newest repository check that ended failed. Locked: a restic elsewhere held the repository for
+        # longer than the agent waits (retry_lock), and no stale lock was left to remove. Error: restic check found
+        # something wrong, which can mean damage in the repository; it stays error until a check passes. The agent
+        # retries after its next backup at least an hour later, on the same part of the data (decision 060): a lock up
+        # to 3 times, an error once; the alert clears when a check passes. A check that keeps failing also raises
+        # HoldfastMaintenanceStale after 3 days.
         expr: holdfast_check_last_run_failed == 1
         labels: {severity: ticket}
         annotations:
