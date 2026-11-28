@@ -3,6 +3,7 @@
 package main
 
 import (
+	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -411,15 +412,7 @@ func hostCmd() *cobra.Command {
 		return nil
 	}})
 	c.AddCommand(&cobra.Command{Use: "events <agent>", Short: "Recent runs on a host", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, a []string) error {
-		var evs []struct {
-			Kind       string            `json:"kind"`
-			JobID      string            `json:"job_id"`
-			Status     string            `json:"status"`
-			SnapshotID string            `json:"snapshot_id"`
-			Error      string            `json:"error"`
-			Finished   time.Time         `json:"finished"`
-			Detail     map[string]string `json:"detail"`
-		}
+		var evs []eventRow
 		raw, err := call("GET", "/api/v1/agents/"+url.PathEscape(a[0])+"/events", nil, &evs)
 		if err != nil {
 			return err
@@ -429,21 +422,30 @@ func hostCmd() *cobra.Command {
 			return nil
 		}
 		w := table()
-		fmt.Fprintln(w, "FINISHED\tKIND\tJOB\tSTATUS\tSNAPSHOT\tDETAIL")
-		for _, e := range evs {
+		fmt.Fprintln(w, "FINISHED\tKIND\tJOB\tSTATUS\tSNAPSHOT\tBY\tDETAIL")
+		newest := slices.IndexFunc(evs, func(e eventRow) bool { return e.Kind == "check" && e.Status != "interrupted" })
+		for i, e := range evs {
 			id := e.SnapshotID
 			if len(id) > 8 {
 				id = id[:8]
 			}
-			job, detail := e.JobID, e.Error
+			job, detail, by := e.JobID, e.Error, cmp.Or(e.InitiatedBy, "schedule")
 			if e.Kind == "check" {
-				// A check is of the repository: its structure, and the part of the data it read (spec §3.4a).
+				// A check is of the repository: its structure, and the part of the data it read (spec §3.4a). A failed
+				// one says in a few words what it found and what comes next; restic's own output is in --json
+				// (decision 060).
 				job = "the repository"
-				if detail == "" {
+				switch {
+				case e.Status == "failed":
+					detail = checkFailedText(e.Detail, e.Error, i == newest)
+				case detail == "":
 					detail = checkedText(e.Detail["read_data_subset"])
 				}
+				if e.Detail["retry"] != "" {
+					by = "retry"
+				}
 			}
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", e.Finished.Local().Format("2006-01-02 15:04:05"), e.Kind, job, e.Status, id, detail)
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", e.Finished.Local().Format("2006-01-02 15:04:05"), e.Kind, job, e.Status, id, by, detail)
 		}
 		return w.Flush()
 	}})
@@ -554,6 +556,54 @@ func hostSlotsCmd() *cobra.Command {
 		}}
 	cmd.Flags().IntVar(&n, "count", 7, "how many slots per job, the newest last, up to 30")
 	return cmd
+}
+
+// eventRow is one of an agent's recent runs, as holdfast agent events prints it.
+type eventRow struct {
+	Kind        string            `json:"kind"`
+	JobID       string            `json:"job_id"`
+	Status      string            `json:"status"`
+	SnapshotID  string            `json:"snapshot_id"`
+	Error       string            `json:"error"`
+	InitiatedBy string            `json:"initiated_by"`
+	Finished    time.Time         `json:"finished"`
+	Detail      map[string]string `json:"detail"`
+}
+
+// checkFailedText says in a few words what a failed check found, from the reason the agent gives, and, for the newest
+// check, what comes next: a retry or the daily check, after the backup it waits for (decision 060). restic's own output
+// is in --json.
+func checkFailedText(d map[string]string, errText string, newest bool) string {
+	found := ""
+	switch d["reason"] {
+	case "locked":
+		found = "locked by another restic"
+	case "damaged":
+		found = "damaged data"
+		if n, m, ok := strings.Cut(d["read_data_subset"], "/"); ok {
+			found = fmt.Sprintf("damaged data in part %s of %s", n, m)
+		}
+	case "timeout":
+		found = "ran out of time"
+	case "killed":
+		found = "restic was killed"
+	case "error":
+		found = "restic failed"
+	default: // an agent from before decision 060 says no reason
+		found, _, _ = strings.Cut(errText, "\n")
+	}
+	next, err := time.Parse(time.RFC3339, d["next_check"])
+	if !newest || err != nil {
+		return found
+	}
+	what, at := "next check", next.Local().Format("15:04")
+	if d["next_is_retry"] == "true" {
+		what = "retry"
+	}
+	if y, m, day := next.Local().Date(); y != time.Now().Year() || m != time.Now().Month() || day != time.Now().Day() {
+		at = next.Local().Format("2006-01-02 15:04")
+	}
+	return fmt.Sprintf("%s · %s after the %s backup", found, what, at)
 }
 
 // checkedText says what a check read, from its read_data_subset, n/cycle: the repository's structure, and that part of

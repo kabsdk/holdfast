@@ -234,6 +234,7 @@ type envOpts struct {
 	UI            bool      // serve the UI listener on uiAddr with no identity provider: root logs in with ui-login
 	Webhook       string    // notify.webhook_url and heartbeat_url: the server's alerts go there
 	Offsite       bool      // a second bucket, and offsite: in server.yaml (decision 041)
+	DailyChecks   bool      // maintenance.check daily: agents check their repository after a backup (decision 030)
 }
 
 func newEnv(t *testing.T) *env { return newEnvWith(t, envOpts{}) }
@@ -295,6 +296,9 @@ func newEnvWith(t *testing.T, o envOpts) *env {
 		"escrow":      map[string]any{"age_recipient": id.Recipient().String()},
 		"tls":         map[string]any{"cert_file": o.TLS.cert, "key_file": o.TLS.key},
 		"ca_sha256":   o.TLS.pin,
+	}
+	if o.DailyChecks {
+		set["maintenance"].(map[string]any)["check"] = "daily"
 	}
 	if o.Offsite {
 		// The off-site bucket, made as the primary one is, with a key of its own.

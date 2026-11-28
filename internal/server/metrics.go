@@ -146,7 +146,7 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if last, err := q.LastChecks(ctx); err == nil {
-		gauge("holdfast_check_last_run_failed", "1 if the agent's newest repository check failed: reason locked if restic found the repository locked, error otherwise.")
+		gauge("holdfast_check_last_run_failed", "1 if the agent's newest repository check that ended failed: reason locked if restic found the repository locked and no check since the last pass failed otherwise, error otherwise.")
 		names := make([]string, 0, len(last))
 		for f := range last {
 			if !retired[f] {
@@ -158,7 +158,7 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 			c, failed, reason := last[f], 0, ""
 			if c.Failed {
 				failed, reason = 1, "error"
-				if c.ResticExit == restic.ExitLocked {
+				if c.ResticExit == restic.ExitLocked && !c.Errored { // a lock met by the retry of an error is still an error
 					reason = "locked"
 				}
 			}

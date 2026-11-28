@@ -231,8 +231,29 @@ function checked(e, cycle) {
   return cycle > 1 ? `its structure, and a ${ordinal(cycle)} of the data` : 'its structure, and all of the data';
 }
 
+// A failed check says in a few words what it found, and, while it is the newest check, what comes next: a retry or the
+// daily check, after the backup it waits for. restic's own output is in its tooltip, and a retry says so under By
+// (decision 060).
+function found(e) {
+  const d = e.detail || {};
+  const m = /^(\d+)\/(\d+)$/.exec(d.read_data_subset || '');
+  if (d.reason === 'locked') return 'locked by another restic';
+  if (d.reason === 'damaged') return m ? `damaged data in part ${m[1]} of ${m[2]}` : 'damaged data';
+  if (d.reason === 'timeout') return 'ran out of time';
+  if (d.reason === 'killed') return 'restic was killed';
+  if (d.reason === 'error') return 'restic failed';
+  return (e.error || '').split('\n')[0] || 'failed'; // an agent from before decision 060 says no reason
+}
+const today = (t) => new Date(t).toDateString() === new Date().toDateString();
+function checkFailed(e, newest) {
+  const d = e.detail || {};
+  const next = newest && d.next_check ? ` · ${d.next_is_retry === 'true' ? 'retry' : 'next check'} after the ${today(d.next_check) ? clock(d.next_check) : fmtTime(d.next_check)} backup` : '';
+  return html`<span class="tipline" tabindex="0" data-tip=${"restic's output\n" + (e.error || '')}>${found(e)}</span>${next}`;
+}
+
 function Runs({ host, events, cycle }) {
   const groups = fold(events).slice(0, 8);
+  const newest = events.find((e) => e.kind === 'check' && e.status !== 'interrupted');
   const cols = 'auto auto minmax(12rem,auto) auto auto';
   const pill = (st) => (st === 'success' ? 'ok' : st === 'warning' ? 'warning' : st === 'skipped' ? '' : 'error');
   return html`<section class="list" aria-labelledby="runs-h">
@@ -242,13 +263,13 @@ function Runs({ host, events, cycle }) {
       ${groups.map((g) => {
         const e = g.e;
         const what = e.kind === 'backup' ? (g.n > 1 ? `${g.n} backups` : 'backup') : e.kind.replace(/_/g, ' ');
-        const detail = e.error || (e.kind === 'check' ? 'sound: ' + checked(e, cycle) : '') || (e.detail && e.detail.directory ? 'into ' + e.detail.directory : '') || (e.detail && e.detail.database ? 'into database ' + e.detail.database : '') || (g.n > 1 && e.status === 'success' ? 'all OK' : '');
+        const detail = e.kind === 'check' && e.status === 'failed' ? checkFailed(e, e === newest) : e.error || (e.kind === 'check' ? 'sound: ' + checked(e, cycle) : '') || (e.detail && e.detail.directory ? 'into ' + e.detail.directory : '') || (e.detail && e.detail.database ? 'into database ' + e.detail.database : '') || (g.n > 1 && e.status === 'success' ? 'all OK' : '');
         return html`<div class="gt" style=${'--cols:' + cols + ';align-items:baseline'}>
           <span class="num muted">${g.n > 1 ? `${fmtDay(e.finished)} ${clock(g.from)}–${clock(e.finished)}` : fmtTime(e.finished)}</span>
           <span>${e.kind === 'check' ? html`<span class="muted">the repository</span>` : e.job_id}</span>
           <span style="min-width:0"><${Pill} kind=${pill(e.status)}>${e.status === 'success' ? what : `${what} ${e.status}${g.n > 1 ? ' ×' + g.n : ''}`}<//> <span class="muted wrap">${detail}</span></span>
           <span>${e.snapshot_id ? html`<${Snap} fqdn=${host.fqdn} id=${e.snapshot_id} />` : html`<span class="muted">—</span>`}</span>
-          <span class="muted">${e.initiated_by || 'schedule'}</span>
+          <span class="muted">${e.detail?.retry ? 'retry' : e.initiated_by || 'schedule'}</span>
         </div>`;
       })}</div></div>`}
   </section>`;
